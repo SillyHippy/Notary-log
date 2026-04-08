@@ -159,25 +159,28 @@ export function NewEntry() {
     let stopped = false;
     const reader = new BrowserPDF417Reader();
 
-    reader.decodeFromVideoDevice(undefined, liveVideoRef.current, (result, err, controls) => {
-      if (stopped) return;
-      if (result) {
-        stopped = true;
-        controls.stop();
-        scannerControlsRef.current = null;
-        const fields = parseAAMVA(result.getText());
-        if (Object.keys(fields).length > 0) {
-          applyExtractedFields(fields as Record<string, string>);
-          setScanResult({ method: 'barcode', success: true });
-          setLiveScanSuccess(true);
-          toast({ title: 'Barcode Scanned!', description: 'License data extracted. Review the fields and continue.' });
-        } else {
-          toast({ title: 'Barcode Read but Empty', description: 'Could not parse license data. Try photo mode.', variant: 'destructive' });
-          setScanMode('idle');
+    reader.decodeFromConstraints(
+      { video: { facingMode: { ideal: 'environment' } } },
+      liveVideoRef.current,
+      (result, _err, controls) => {
+        if (stopped) return;
+        if (result) {
+          stopped = true;
+          controls.stop();
+          scannerControlsRef.current = null;
+          const fields = parseAAMVA(result.getText());
+          if (Object.keys(fields).length > 0) {
+            applyExtractedFields(fields as Record<string, string>);
+            setScanResult({ method: 'barcode', success: true });
+            setLiveScanSuccess(true);
+            toast({ title: 'Barcode Scanned!', description: 'License data extracted. Review the fields and continue.' });
+          } else {
+            toast({ title: 'Barcode Read but Empty', description: 'Could not parse license data. Try photo mode.', variant: 'destructive' });
+            setScanMode('idle');
+          }
         }
-      }
-      // NotFoundException (no barcode yet) is normal during scanning — ignore
-    }).then(controls => {
+        // NotFoundException (no barcode yet) is normal during scanning — ignore
+      }).then(controls => {
       if (!stopped) scannerControlsRef.current = controls;
     }).catch(() => {
       if (!stopped) {
