@@ -74,6 +74,7 @@ export function NewEntry() {
   const sigCanvasRef = useRef<HTMLCanvasElement>(null);
   const signaturePadRef = useRef<SignaturePad | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const liveStreamRef = useRef<MediaStream | null>(null);
   const scannerControlsRef = useRef<{ stop: () => void } | null>(null);
 
   const form = useForm<EntryFormValues>({
@@ -144,57 +145,89 @@ export function NewEntry() {
   const stopLiveScan = useCallback(() => {
     scannerControlsRef.current?.stop();
     scannerControlsRef.current = null;
+    liveStreamRef.current?.getTracks().forEach(t => t.stop());
+    liveStreamRef.current = null;
+    if (liveVideoRef.current) {
+      liveVideoRef.current.srcObject = null;
+    }
   }, []);
 
-  // Start live barcode scan using ZXing continuous video decode
+  // Start live barcode scan: get camera stream ourselves, then decode frames via canvas
   const startLiveScan = async () => {
-    setScanMode('barcode-live');
     setLiveScanSuccess(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      liveStreamRef.current = stream;
+      setScanMode('barcode-live');
+    } catch {
+      toast({ title: 'Camera Error', description: 'Could not open camera. Use Upload Photos or Upload Image instead.', variant: 'destructive' });
+    }
   };
 
-  // ZXing attaches to the video element after it renders
+  // Once barcode-live mode is active and the video element is mounted, attach stream and start frame loop
   useEffect(() => {
-    if (scanMode !== 'barcode-live' || !liveVideoRef.current) return;
+    if (scanMode !== 'barcode-live' || !liveVideoRef.current || !liveStreamRef.current) return;
+
+    const videoEl = liveVideoRef.current;
+    videoEl.srcObject = liveStreamRef.current;
+    videoEl.setAttribute('playsinline', 'true');
 
     let stopped = false;
     const reader = new BrowserPDF417Reader();
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    let lastAttempt = 0;
 
-    reader.decodeFromConstraints(
-      { video: { facingMode: { ideal: 'environment' } } },
-      liveVideoRef.current,
-      (result, _err, controls) => {
-        if (stopped) return;
-        if (result) {
-          stopped = true;
-          controls.stop();
-          scannerControlsRef.current = null;
-          const fields = parseAAMVA(result.getText());
-          if (Object.keys(fields).length > 0) {
-            applyExtractedFields(fields as Record<string, string>);
-            setScanResult({ method: 'barcode', success: true });
-            setLiveScanSuccess(true);
-            toast({ title: 'Barcode Scanned!', description: 'License data extracted. Review the fields and continue.' });
-          } else {
-            toast({ title: 'Barcode Read but Empty', description: 'Could not parse license data. Try photo mode.', variant: 'destructive' });
-            setScanMode('idle');
+    const tick = () => {
+      if (stopped) return;
+      const now = Date.now();
+      if (now - lastAttempt >= 400 && videoEl.readyState >= videoEl.HAVE_ENOUGH_DATA && videoEl.videoWidth > 0) {
+        lastAttempt = now;
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+        try {
+          const result = reader.decodeFromCanvas(canvas);
+          if (result) {
+            stopped = true;
+            stopLiveScan();
+            const fields = parseAAMVA(result.getText());
+            if (Object.keys(fields).length > 0) {
+              applyExtractedFields(fields as Record<string, string>);
+              setScanResult({ method: 'barcode', success: true });
+              setLiveScanSuccess(true);
+              toast({ title: 'Barcode Scanned!', description: 'License data extracted. Review the fields and continue.' });
+            } else {
+              toast({ title: 'Barcode Read but Empty', description: 'Could not parse license data. Try photo mode.', variant: 'destructive' });
+              setScanMode('idle');
+            }
+            return;
           }
+        } catch {
+          // NotFoundException is normal while scanning — keep looping
         }
-        // NotFoundException (no barcode yet) is normal during scanning — ignore
-      }).then(controls => {
-      if (!stopped) scannerControlsRef.current = controls;
+      }
+      requestAnimationFrame(tick);
+    };
+
+    videoEl.play().then(() => {
+      if (!stopped) requestAnimationFrame(tick);
     }).catch(() => {
       if (!stopped) {
-        toast({ title: 'Camera Error', description: 'Could not open camera. Use Upload Photos instead.', variant: 'destructive' });
+        toast({ title: 'Camera Error', description: 'Could not start video. Try Upload Photos instead.', variant: 'destructive' });
         setScanMode('idle');
       }
     });
 
     return () => {
       stopped = true;
-      scannerControlsRef.current?.stop();
-      scannerControlsRef.current = null;
+      liveStreamRef.current?.getTracks().forEach(t => t.stop());
+      liveStreamRef.current = null;
+      if (liveVideoRef.current) liveVideoRef.current.srcObject = null;
     };
-  }, [scanMode]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scanMode, stopLiveScan]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Start photo capture mode (manual stream → OCR)
   const startPhotoCapture = async () => {
