@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -6,11 +6,10 @@ import * as z from 'zod';
 import SignaturePad from 'signature_pad';
 import { BrowserPDF417Reader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
-import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser } from 'lucide-react';
+import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -59,7 +58,9 @@ export function NewEntry() {
   
   const [currentStep, setCurrentStep] = useState(0);
   const [isScanning, setIsScanning] = useState(false);
-  const [scanMethod, setScanMethod] = useState<'camera' | 'upload' | null>(null);
+  // scanMode: 'idle' = show buttons | 'barcode-live' = live ZXing scan | 'photo-capture' = manual photo + OCR
+  const [scanMode, setScanMode] = useState<'idle' | 'barcode-live' | 'photo-capture'>('idle');
+  const [liveScanSuccess, setLiveScanSuccess] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [idFrontImage, setIdFrontImage] = useState<string | undefined>();
   const [idBackImage, setIdBackImage] = useState<string | undefined>();
@@ -67,11 +68,13 @@ export function NewEntry() {
   const [needsReview, setNeedsReview] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const liveVideoRef = useRef<HTMLVideoElement>(null);
+  const photoVideoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sigCanvasRef = useRef<HTMLCanvasElement>(null);
   const signaturePadRef = useRef<SignaturePad | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const scannerControlsRef = useRef<{ stop: () => void } | null>(null);
 
   const form = useForm<EntryFormValues>({
     resolver: zodResolver(entrySchema),
@@ -123,36 +126,90 @@ export function NewEntry() {
     }
   }, [currentStep]);
 
-  // Stop camera when unmounting
+  // Stop everything when unmounting
   useEffect(() => {
-    return () => stopCamera();
+    return () => {
+      scannerControlsRef.current?.stop();
+      stopPhotoCamera();
+    };
   }, []);
 
-  const stopCamera = () => {
+  const stopPhotoCamera = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
   };
 
-  const startCamera = async () => {
+  const stopLiveScan = useCallback(() => {
+    scannerControlsRef.current?.stop();
+    scannerControlsRef.current = null;
+  }, []);
+
+  // Start live barcode scan using ZXing continuous video decode
+  const startLiveScan = async () => {
+    setScanMode('barcode-live');
+    setLiveScanSuccess(false);
+  };
+
+  // ZXing attaches to the video element after it renders
+  useEffect(() => {
+    if (scanMode !== 'barcode-live' || !liveVideoRef.current) return;
+
+    let stopped = false;
+    const reader = new BrowserPDF417Reader();
+
+    reader.decodeFromVideoDevice(undefined, liveVideoRef.current, (result, err, controls) => {
+      if (stopped) return;
+      if (result) {
+        stopped = true;
+        controls.stop();
+        scannerControlsRef.current = null;
+        const fields = parseAAMVA(result.getText());
+        if (Object.keys(fields).length > 0) {
+          applyExtractedFields(fields as Record<string, string>);
+          setScanResult({ method: 'barcode', success: true });
+          setLiveScanSuccess(true);
+          toast({ title: 'Barcode Scanned!', description: 'License data extracted. Review the fields and continue.' });
+        } else {
+          toast({ title: 'Barcode Read but Empty', description: 'Could not parse license data. Try photo mode.', variant: 'destructive' });
+          setScanMode('idle');
+        }
+      }
+      // NotFoundException (no barcode yet) is normal during scanning — ignore
+    }).then(controls => {
+      if (!stopped) scannerControlsRef.current = controls;
+    }).catch(() => {
+      if (!stopped) {
+        toast({ title: 'Camera Error', description: 'Could not open camera. Use Upload Photos instead.', variant: 'destructive' });
+        setScanMode('idle');
+      }
+    });
+
+    return () => {
+      stopped = true;
+      scannerControlsRef.current?.stop();
+      scannerControlsRef.current = null;
+    };
+  }, [scanMode]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start photo capture mode (manual stream → OCR)
+  const startPhotoCapture = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       streamRef.current = stream;
-      setScanMethod('camera');
-      setIsScanning(true);
-    } catch (err) {
-      toast({ title: 'Camera Error', description: 'Could not access camera. Please use upload.', variant: 'destructive' });
-      setScanMethod('upload');
+      setScanMode('photo-capture');
+    } catch {
+      toast({ title: 'Camera Error', description: 'Could not open camera. Use Upload Photos instead.', variant: 'destructive' });
     }
   };
 
-  // Attach stream to video element after it renders
+  // Attach stream to photo video element after it renders
   useEffect(() => {
-    if (scanMethod === 'camera' && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
+    if (scanMode === 'photo-capture' && photoVideoRef.current && streamRef.current) {
+      photoVideoRef.current.srcObject = streamRef.current;
     }
-  }, [scanMethod]);
+  }, [scanMode]);
 
   const applyExtractedFields = (fields: Record<string, string>) => {
     if (fields.fullName) form.setValue('signerFullName', fields.fullName);
@@ -162,23 +219,6 @@ export function NewEntry() {
     if (fields.dob) form.setValue('signerDOB', fields.dob);
     if (fields.idNumber) form.setValue('idNumber', fields.idNumber);
     if (fields.expirationDate) form.setValue('idExpirationDate', fields.expirationDate);
-  };
-
-  const tryPDF417 = async (imageSrc: string): Promise<boolean> => {
-    try {
-      const reader = new BrowserPDF417Reader();
-      const result = await reader.decodeFromImageUrl(imageSrc);
-      const fields = parseAAMVA(result.getText());
-      if (Object.keys(fields).length > 0) {
-        applyExtractedFields(fields);
-        setScanResult({ method: 'barcode', success: true });
-        toast({ title: 'Barcode Scanned', description: 'Driver license data extracted successfully.' });
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
   };
 
   const extractFieldsFromOCRText = (text: string): Record<string, string> => {
@@ -247,23 +287,18 @@ export function NewEntry() {
     return { text: data.text, confidence: data.confidence };
   };
 
-  const processImage = async (imageSrc: string, isBack: boolean) => {
+  // Photo mode: run OCR only (barcode already handled by live scan)
+  const processImageOCR = async (imageSrc: string) => {
     setIsScanning(true);
     try {
-      // Always attempt PDF417 first (works for any image — back of most US driver licenses).
-      const barcodeSuccess = await tryPDF417(imageSrc);
-
-      if (!barcodeSuccess) {
-        // Barcode failed: fall back to OCR on either side
-        const { text, confidence } = await tryOCR(imageSrc);
-        if (confidence < 70) {
-          setNeedsReview(true);
-          toast({ title: 'Low Confidence Scan', description: 'OCR confidence is low. Please verify the extracted fields.', variant: 'destructive' });
-        } else if (isBack) {
-          toast({ title: 'No Barcode Found', description: 'OCR applied. Please verify the extracted fields.' });
-        }
-        setScanResult({ method: 'ocr', text, confidence });
+      const { text, confidence } = await tryOCR(imageSrc);
+      if (confidence < 70) {
+        setNeedsReview(true);
+        toast({ title: 'Low Confidence Scan', description: 'OCR confidence is low. Please verify the extracted fields.', variant: 'destructive' });
+      } else {
+        toast({ title: 'Text Extracted', description: 'OCR complete. Review the extracted fields.' });
       }
+      setScanResult({ method: 'ocr', text, confidence });
     } catch (err) {
       console.error(err);
       toast({ title: 'Scan Failed', description: 'Could not process the image. Please enter details manually.', variant: 'destructive' });
@@ -271,9 +306,9 @@ export function NewEntry() {
     setIsScanning(false);
   };
 
-  const handleCapture = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
+  const handlePhotoCapture = () => {
+    if (photoVideoRef.current && canvasRef.current) {
+      const video = photoVideoRef.current;
       const canvas = canvasRef.current;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -281,15 +316,14 @@ export function NewEntry() {
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
-        
         if (!idFrontImage) {
           setIdFrontImage(dataUrl);
-          processImage(dataUrl, false);
+          toast({ title: 'Front captured', description: 'Now point at the BACK of the ID for OCR.' });
         } else {
           setIdBackImage(dataUrl);
-          processImage(dataUrl, true);
-          stopCamera();
-          setScanMethod(null);
+          processImageOCR(dataUrl);
+          stopPhotoCamera();
+          setScanMode('idle');
         }
       }
     }
@@ -303,7 +337,7 @@ export function NewEntry() {
         const dataUrl = event.target?.result as string;
         if (isBack) setIdBackImage(dataUrl);
         else setIdFrontImage(dataUrl);
-        processImage(dataUrl, isBack);
+        processImageOCR(dataUrl);
       };
       reader.readAsDataURL(file);
     }
@@ -413,66 +447,156 @@ export function NewEntry() {
       <div className="flex-1 overflow-hidden flex flex-col">
         {/* STEP 0: ID SCAN */}
         {currentStep === 0 && (
-          <div className="flex-1 flex flex-col space-y-6">
-            <div className="bg-primary/5 border border-primary/20 rounded-xl p-6 text-center">
-              <ScanLine className="w-12 h-12 text-primary mx-auto mb-4" />
-              <h2 className="text-xl font-bold mb-2">Scan Signer ID</h2>
-              <p className="text-muted-foreground max-w-md mx-auto mb-6">
-                Scan the front and back of the signer's ID to automatically extract their information and speed up data entry.
-              </p>
-              
-              <div className="flex flex-wrap justify-center gap-4">
-                <Button onClick={startCamera} className="gap-2" size="lg">
-                  <Camera className="w-5 h-5" /> Open Camera
-                </Button>
-                <div className="relative">
-                  <Button variant="outline" size="lg" className="gap-2 w-full">
-                    <Upload className="w-5 h-5" /> Upload Image
+          <div className="flex-1 flex flex-col space-y-4">
+
+            {/* ── IDLE: Choose how to scan ── */}
+            {scanMode === 'idle' && !liveScanSuccess && (
+              <div className="bg-primary/5 border border-primary/20 rounded-xl p-6 text-center">
+                <ScanLine className="w-12 h-12 text-primary mx-auto mb-4" />
+                <h2 className="text-xl font-bold mb-2">Scan Signer ID</h2>
+                <p className="text-muted-foreground max-w-md mx-auto mb-6 text-sm">
+                  Point the camera at the <strong>barcode on the back</strong> of the license for instant fill-in. Use photo mode if the barcode won't read.
+                </p>
+                <div className="flex flex-col sm:flex-row justify-center gap-3">
+                  <Button onClick={startLiveScan} className="gap-2" size="lg">
+                    <ScanLine className="w-5 h-5" /> Scan Barcode
                   </Button>
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    className="absolute inset-0 opacity-0 cursor-pointer" 
-                    onChange={(e) => handleFileUpload(e, !!idFrontImage)}
-                  />
+                  <Button onClick={startPhotoCapture} variant="outline" size="lg" className="gap-2">
+                    <Camera className="w-5 h-5" /> Take Photos (OCR)
+                  </Button>
+                  <div className="relative">
+                    <Button variant="ghost" size="lg" className="gap-2 w-full">
+                      <Upload className="w-5 h-5" /> Upload Image
+                    </Button>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={(e) => handleFileUpload(e, !!idFrontImage)}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {scanMethod === 'camera' && (
-              <div className="relative rounded-xl overflow-hidden bg-black aspect-video max-w-2xl mx-auto w-full">
-                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                <div className="absolute inset-0 border-4 border-primary/50 m-8 rounded-lg pointer-events-none"></div>
-                <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
-                  <Button variant="destructive" size="icon" className="rounded-full w-12 h-12" onClick={() => { stopCamera(); setScanMethod(null); }}>
-                    <X className="w-6 h-6" />
+            {/* ── LIVE BARCODE SCAN MODE ── */}
+            {scanMode === 'barcode-live' && !liveScanSuccess && (
+              <div className="flex flex-col gap-3">
+                <div className="relative rounded-xl overflow-hidden bg-black w-full mx-auto" style={{ aspectRatio: '4/3', maxHeight: '60vh' }}>
+                  {/* ZXing manages its own stream on this element */}
+                  <video ref={liveVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                  {/* Scan window overlay */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <div className="border-2 border-primary rounded-lg w-4/5 h-1/3 relative">
+                      <span className="absolute -top-6 left-0 right-0 text-center text-white text-xs font-semibold drop-shadow">
+                        Point at barcode on BACK of ID
+                      </span>
+                      {/* Animated scan line */}
+                      <div className="absolute left-0 right-0 h-0.5 bg-primary/80 animate-bounce top-1/2" />
+                    </div>
+                  </div>
+                  {/* Scanning indicator */}
+                  <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Scanning…
+                  </div>
+                  {/* Close button */}
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="absolute top-3 right-3 rounded-full w-9 h-9"
+                    onClick={() => { stopLiveScan(); setScanMode('idle'); }}
+                  >
+                    <X className="w-4 h-4" />
                   </Button>
-                  <Button size="icon" className="rounded-full w-16 h-16" onClick={handleCapture}>
-                    <Camera className="w-8 h-8" />
+                </div>
+                {/* Fallback to photo mode */}
+                <div className="text-center">
+                  <p className="text-muted-foreground text-xs mb-2">Barcode not reading?</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => { stopLiveScan(); startPhotoCapture(); }}
+                  >
+                    <Camera className="w-4 h-4" /> Take Photos Instead (OCR)
                   </Button>
                 </div>
               </div>
             )}
-            
+
+            {/* ── BARCODE SUCCESS ── */}
+            {liveScanSuccess && (
+              <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl p-6 text-center">
+                <CheckCircle2 className="w-12 h-12 text-green-600 dark:text-green-400 mx-auto mb-3" />
+                <h2 className="text-xl font-bold mb-1 text-green-800 dark:text-green-300">Barcode Scanned!</h2>
+                <p className="text-green-700 dark:text-green-400 text-sm mb-4">
+                  License data was extracted. Review and correct the fields on the next step.
+                </p>
+                <div className="flex justify-center gap-3">
+                  <Button onClick={() => setCurrentStep(1)} className="gap-2">
+                    <Check className="w-4 h-4" /> Review Signer Info
+                  </Button>
+                  <Button variant="ghost" onClick={() => { setLiveScanSuccess(false); setScanMode('idle'); }} size="sm">
+                    Rescan
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* ── PHOTO CAPTURE MODE ── */}
+            {scanMode === 'photo-capture' && (
+              <div className="flex flex-col gap-3">
+                <div className="relative rounded-xl overflow-hidden bg-black w-full mx-auto" style={{ aspectRatio: '4/3', maxHeight: '60vh' }}>
+                  <video ref={photoVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 border-4 border-primary/40 m-6 rounded-lg pointer-events-none" />
+                  <div className="absolute top-3 left-3 bg-black/60 text-white text-xs px-2 py-1 rounded-full font-semibold">
+                    {!idFrontImage ? 'Capture: FRONT of ID' : 'Capture: BACK of ID (for OCR)'}
+                  </div>
+                  {/* Buttons */}
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      className="rounded-full w-11 h-11"
+                      onClick={() => { stopPhotoCamera(); setScanMode('idle'); }}
+                    >
+                      <X className="w-5 h-5" />
+                    </Button>
+                    <Button size="icon" className="rounded-full w-16 h-16" onClick={handlePhotoCapture}>
+                      <Camera className="w-7 h-7" />
+                    </Button>
+                  </div>
+                </div>
+                {isScanning && (
+                  <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Running OCR…
+                  </div>
+                )}
+              </div>
+            )}
+
             <canvas ref={canvasRef} className="hidden" />
 
-            <div className="grid grid-cols-2 gap-4">
-              {idFrontImage && (
-                <div className="relative rounded-lg overflow-hidden border">
-                  <img src={idFrontImage} alt="ID Front" className="w-full h-32 object-cover" />
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center font-medium">Front Captured</div>
-                </div>
-              )}
-              {idBackImage && (
-                <div className="relative rounded-lg overflow-hidden border">
-                  <img src={idBackImage} alt="ID Back" className="w-full h-32 object-cover" />
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center font-medium">Back Captured</div>
-                </div>
-              )}
-            </div>
+            {/* Captured photo thumbnails */}
+            {(idFrontImage || idBackImage) && (
+              <div className="grid grid-cols-2 gap-3">
+                {idFrontImage && (
+                  <div className="relative rounded-lg overflow-hidden border">
+                    <img src={idFrontImage} alt="ID Front" className="w-full h-28 object-cover" />
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center font-medium">Front</div>
+                  </div>
+                )}
+                {idBackImage && (
+                  <div className="relative rounded-lg overflow-hidden border">
+                    <img src={idBackImage} alt="ID Back" className="w-full h-28 object-cover" />
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center font-medium">Back</div>
+                  </div>
+                )}
+              </div>
+            )}
 
-            <div className="flex justify-end mt-auto pt-6">
-              <Button variant="ghost" onClick={() => setCurrentStep(1)} className="text-muted-foreground">
+            <div className="flex justify-end mt-auto pt-4">
+              <Button variant="ghost" onClick={() => setCurrentStep(1)} className="text-muted-foreground text-sm">
                 Skip Scanning <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
