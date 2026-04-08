@@ -14,16 +14,12 @@ export interface SignerFields {
 
 export function parseAAMVA(raw: string): Partial<SignerFields> {
   const fields: Partial<SignerFields> = {};
+  const lines = raw.split('\n');
 
-  const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const lines = normalized.split('\n');
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
+  for (const line of lines) {
     if (line.length < 3) continue;
     const code = line.substring(0, 3);
     const value = line.substring(3).trim();
-    if (!value) continue;
 
     switch (code) {
       case 'DAA':
@@ -56,11 +52,6 @@ export function parseAAMVA(raw: string): Partial<SignerFields> {
         break;
       case 'DAQ':
         fields.idNumber = value;
-        break;
-      case 'DCF':
-        if (!fields.idNumber) {
-          fields.idNumber = value;
-        }
         break;
       case 'DBA':
         if (value.length === 8) {
