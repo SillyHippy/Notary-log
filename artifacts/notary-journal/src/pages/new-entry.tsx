@@ -254,6 +254,7 @@ export function NewEntry() {
     if (fields.state) form.setValue('signerState', fields.state);
     if (fields.dob) form.setValue('signerDOB', fields.dob);
     if (fields.idNumber) form.setValue('idNumber', fields.idNumber);
+    if (fields.idIssuingState) form.setValue('idIssuingState', fields.idIssuingState);
     if (fields.expirationDate) form.setValue('idExpirationDate', fields.expirationDate);
   };
 

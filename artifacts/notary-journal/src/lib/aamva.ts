@@ -8,18 +8,32 @@ export interface SignerFields {
   postalCode: string;
   dob: string;
   idNumber: string;
+  idIssuingState: string;
   expirationDate: string;
   country: string;
 }
 
 export function parseAAMVA(raw: string): Partial<SignerFields> {
   const fields: Partial<SignerFields> = {};
-  const lines = raw.split('\n');
 
-  for (const line of lines) {
+  // Normalize line endings (some states use \r\n or \r)
+  const normalized = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+
+  for (const rawLine of lines) {
+    let line = rawLine.trim();
     if (line.length < 3) continue;
+
+    // Oklahoma (and some other states) concatenate the "DL" subfile designator
+    // directly before the first field with no newline: e.g. "DLDAQJ1234567"
+    // Strip known 2-letter subfile prefixes (DL, ZA-ZZ) when followed by a field code
+    if (/^(DL|DM|DZ|Z[A-Z])[A-Z]{3}/.test(line)) {
+      line = line.substring(2);
+    }
+
     const code = line.substring(0, 3);
     const value = line.substring(3).trim();
+    if (!value) continue;
 
     switch (code) {
       case 'DAA':
@@ -40,7 +54,9 @@ export function parseAAMVA(raw: string): Partial<SignerFields> {
         fields.city = value;
         break;
       case 'DAJ':
+        // Address state — for a driver's license this is also the issuing state
         fields.state = value;
+        fields.idIssuingState = value;
         break;
       case 'DAK':
         fields.postalCode = value.substring(0, 5);
@@ -52,6 +68,12 @@ export function parseAAMVA(raw: string): Partial<SignerFields> {
         break;
       case 'DAQ':
         fields.idNumber = value;
+        break;
+      case 'DCF':
+        // Fallback for states that store license number in Document Discriminator
+        if (!fields.idNumber) {
+          fields.idNumber = value;
+        }
         break;
       case 'DBA':
         if (value.length === 8) {
