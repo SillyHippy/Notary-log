@@ -138,17 +138,21 @@ export function NewEntry() {
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        setScanMethod('camera');
-        setIsScanning(true);
-      }
+      streamRef.current = stream;
+      setScanMethod('camera');
+      setIsScanning(true);
     } catch (err) {
       toast({ title: 'Camera Error', description: 'Could not access camera. Please use upload.', variant: 'destructive' });
       setScanMethod('upload');
     }
   };
+
+  // Attach stream to video element after it renders
+  useEffect(() => {
+    if (scanMethod === 'camera' && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [scanMethod]);
 
   const applyExtractedFields = (fields: Record<string, string>) => {
     if (fields.fullName) form.setValue('signerFullName', fields.fullName);
