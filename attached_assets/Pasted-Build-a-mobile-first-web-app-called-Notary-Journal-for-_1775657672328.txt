@@ -1,0 +1,365 @@
+Build a mobile-first web app called “Notary Journal” for in-person notarizations only. This is a local-first electronic notary journal meant to reduce typing and replace a paper logbook. Do not build remote online notarization, no video recording, no online meeting features, and no backend database. The app should run entirely in the browser and store data locally on the device, with optional backup/export to the user’s Google Drive.
+
+Core purpose:
+
+Help a notary create journal entries quickly by scanning a driver’s license or state ID, extracting relevant information, auto-filling fields, capturing the signer’s signature by finger or stylus, and saving the entry in chronological order.
+
+Platform and style:
+
+- Responsive mobile-first web app optimized for Android phones and tablets first, but also usable on desktop.
+
+- Clean, fast, plain professional UI, no flashy gradients, no generic AI styling.
+
+- Large touch targets, simple layout, one-handed phone use.
+
+- Must work offline after initial load as much as possible.
+
+- Use local storage or IndexedDB for local-first persistence.
+
+- No backend.
+
+- Optional Google Drive backup/export only.
+
+Primary workflow:
+
+1. Tap “New Entry”.
+
+2. Choose document type / notarial act type.
+
+3. Capture ID:
+
+   - Let the notary use the camera to photograph the front and back of a driver’s license or state ID.
+
+   - If possible, detect and decode the PDF417 barcode on the back of US driver’s licenses first because that is more accurate than OCR when available.
+
+   - Fall back to OCR on front/back images if barcode decode fails.
+
+4. Extract and auto-fill fields such as:
+
+   - Full legal name
+
+   - Address
+
+   - Date of birth if available
+
+   - ID number
+
+   - ID issuing state
+
+   - ID expiration date
+
+5. Show extracted data in editable form fields so the notary can review and correct everything before saving.
+
+6. Let the notary enter or confirm:
+
+   - Date and time
+
+   - Type of notarial act
+
+   - Document description
+
+   - Fee charged
+
+   - Location/city/state
+
+   - Notes
+
+7. Signature capture:
+
+   - Let the signer sign directly on screen with finger or stylus.
+
+   - Save signature as an image attached to that journal entry.
+
+8. Save entry:
+
+   - Save entries in chronological order with a generated sequential journal entry number.
+
+   - Entries should be viewable later in a searchable journal list.
+
+9. Backup/export:
+
+   - Allow export of one entry or all entries as PDF, CSV, and JSON.
+
+   - Allow optional backup of exports and attached images/signatures to Google Drive using Google authentication and Google Drive Picker/API from the browser.
+
+   - Google Drive is a backup/export target, not the primary data store.
+
+Data model for each journal entry:
+
+- entryNumber (auto-increment, sequential)
+
+- createdAt
+
+- updatedAt
+
+- notarizationDate
+
+- notarizationTime
+
+- signerFullName
+
+- signerAddress
+
+- signerDOB
+
+- idType
+
+- idNumber
+
+- idIssuingState
+
+- idExpirationDate
+
+- documentType
+
+- documentDescription
+
+- notarialActType
+
+- feeCharged
+
+- locationCity
+
+- locationState
+
+- notes
+
+- signatureImage
+
+- idFrontImage
+
+- idBackImage
+
+- extractedRawText
+
+- extractionMethod (barcode, OCR, manual)
+
+- status (draft, completed)
+
+- hash or checksum for basic tamper detection on local entries
+
+Required features:
+
+- Dashboard/home screen with:
+
+  - New Entry button
+
+  - Recent entries
+
+  - Search and filter
+
+  - Export and backup actions
+
+- Journal list screen:
+
+  - Sort by newest/oldest
+
+  - Search by signer name, document type, date, entry number
+
+- Entry detail screen:
+
+  - View all fields
+
+  - View ID photos
+
+  - View signature
+
+  - Export single entry
+
+- Entry form screen:
+
+  - Mobile-friendly, sectioned layout
+
+  - Editable extracted data
+
+  - Manual override for all fields
+
+- Signature pad:
+
+  - Clear signature
+
+  - Save signature
+
+- Backup screen:
+
+  - Connect Google Drive
+
+  - Choose a backup folder
+
+  - Export selected files to Drive
+
+  - Show backup history locally
+
+- Settings screen:
+
+  - Notary name
+
+  - Commission number
+
+  - Commission expiration
+
+  - Default city/state
+
+  - Export preferences
+
+  - Privacy notice
+
+  - Local data backup / restore
+
+ID scanning details:
+
+- Prioritize barcode decoding from the back of US driver’s licenses if available.
+
+- Use OCR as fallback on ID images.
+
+- Build extraction logic for common license fields and map them to form fields.
+
+- Always show confidence/needs review state.
+
+- Never auto-save extracted values without user confirmation.
+
+- Preserve raw extracted text for audit/reference.
+
+- If the camera permission is denied, allow image upload from device gallery.
+
+Editing and integrity rules:
+
+- New entries can be edited until marked completed.
+
+- Once marked completed, lock the entry by default.
+
+- Allow “amendment note” rather than silent overwriting.
+
+- Maintain a visible edit history locally for each entry if changes are made before completion.
+
+- Keep entries in chronological order and display entry numbers clearly.
+
+- Add a basic hash/checksum to completed entries so the app can warn if local data appears altered.
+
+- Do not market this as legally compliant or certified; present it as an electronic journal assistant for in-person notarization workflows.
+
+Offline/local-first requirements:
+
+- Use IndexedDB instead of relying only on localStorage if possible.
+
+- Cache app shell for offline use.
+
+- Queue exports until back online if needed.
+
+- Keep all data local unless the user explicitly exports or backs up to Google Drive.
+
+Google Drive integration:
+
+- Use Google OAuth in-browser.
+
+- Use Google Drive Picker/API so the user can select or create a backup folder in their own Drive.
+
+- Export files into a clear folder structure such as:
+
+  /Notary-Journal-Backup/YYYY/MM/
+
+- Save PDFs, CSVs, JSON exports, signatures, and optionally ID images.
+
+- Never require a custom backend server for Drive backup.
+
+- Include clear permission prompts and error handling if Google auth fails.
+
+PDF export requirements:
+
+- Single-entry PDF should look like a professional journal record.
+
+- Include all saved fields, signature image, timestamps, and thumbnails/links for ID images.
+
+- Multi-entry export should support date range filtering.
+
+- CSV export should flatten records for spreadsheet use.
+
+- JSON export should preserve the full structure.
+
+Security/privacy requirements:
+
+- All data stays local by default.
+
+- Add optional app passcode or unlock PIN for opening the journal.
+
+- Blur or mask sensitive ID numbers in list views.
+
+- Require confirmation before deleting entries.
+
+- Provide a local backup import/restore option from JSON.
+
+- Include a warning that the user is responsible for reviewing extracted ID data.
+
+Suggested tech approach:
+
+- Frontend only web app.
+
+- Use IndexedDB for storage.
+
+- Use a signature pad library for handwritten signature capture.
+
+- Use barcode decoding for PDF417 if feasible.
+
+- Use OCR for fallback text extraction.
+
+- Use service worker / PWA behavior if practical.
+
+- Use Google Drive Picker/API for backup/export.
+
+- Prefer libraries that work in-browser without a backend.
+
+Nice-to-have features:
+
+- Dark mode toggle
+
+- Quick duplicate entry for repeat clients
+
+- Voice note field
+
+- GPS autofill for location
+
+- “No fee” quick button
+
+- Commission stamp/info auto-fill in footer of exported PDF
+
+- Printable journal format
+
+UX requirements:
+
+- Minimize typing as much as possible.
+
+- Default to the camera-based scan flow first.
+
+- Big buttons for “Scan ID”, “Capture Signature”, “Save Entry”, “Export”, “Backup to Drive”.
+
+- Every extracted field must be editable.
+
+- Make the signer signature experience simple and full-screen on mobile.
+
+- Make the app feel like a practical field tool, not a generic dashboard.
+
+Deliverables:
+
+- Build the full front-end app.
+
+- Include realistic sample data.
+
+- Include comments or docs explaining where to insert Google OAuth credentials if needed.
+
+- Include clear setup instructions for local testing and deployment.
+
+- If some APIs or features cannot work without extra credentials or platform limitations, stub them cleanly and label them clearly.
+
+Important constraints:
+
+- No backend database.
+
+- No remote online notarization.
+
+- No video/audio recording.
+
+- No claims of legal certification/compliance.
+
+- Google Drive only for backup/export.
+
+- Optimize for speed and low typing on a phone/tablet.
