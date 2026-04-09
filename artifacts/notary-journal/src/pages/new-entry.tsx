@@ -82,6 +82,7 @@ export function NewEntry() {
   const [needsReview, setNeedsReview] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [locationDetected, setLocationDetected] = useState(false);
 
   const liveVideoRef = useRef<HTMLVideoElement>(null);
   const photoVideoRef = useRef<HTMLVideoElement>(null);
@@ -276,6 +277,7 @@ export function NewEntry() {
             `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
             { headers: { 'User-Agent': 'NotaryJournal/1.0' } }
           );
+          if (!res.ok) throw new Error(`Geocode failed: ${res.status}`);
           const data = await res.json();
           const addr = data.address ?? {};
           const city = addr.city || addr.town || addr.village || addr.county || '';
@@ -283,6 +285,8 @@ export function NewEntry() {
           const stateAbbr = STATE_ABBR[stateRaw] || stateRaw.substring(0, 2).toUpperCase();
           if (city) form.setValue('locationCity', city);
           if (stateAbbr) form.setValue('locationState', stateAbbr);
+          setLocationDetected(true);
+          setTimeout(() => setLocationDetected(false), 4000);
           toast({ title: 'Location detected', description: `${city}, ${stateAbbr}` });
         } catch {
           toast({ title: 'Location lookup failed', description: 'Could not determine city — please enter manually.', variant: 'destructive' });
@@ -837,22 +841,29 @@ export function NewEntry() {
                       )} />
                       
                       <div className="md:col-span-2 border-y py-4 my-2">
-                        <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-medium">Notarization Location *</span>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="gap-2 text-xs"
-                            onClick={detectLocation}
-                            disabled={isLocating}
-                          >
-                            {isLocating
-                              ? <><Loader2 className="w-3 h-3 animate-spin" /> Detecting…</>
-                              : <><MapPin className="w-3 h-3" /> Use My Location</>
-                            }
-                          </Button>
+                          {locationDetected ? (
+                            <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                              <Check className="w-3 h-3" /> Detected
+                            </span>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-2 text-xs"
+                              onClick={detectLocation}
+                              disabled={isLocating}
+                            >
+                              {isLocating
+                                ? <><Loader2 className="w-3 h-3 animate-spin" /> Detecting…</>
+                                : <><MapPin className="w-3 h-3" /> Use My Location</>
+                              }
+                            </Button>
+                          )}
                         </div>
+                        <p className="text-xs text-muted-foreground mb-3">Or detect automatically using your device's GPS</p>
                         <div className="grid grid-cols-2 gap-4">
                           <FormField control={form.control} name="locationCity" render={({ field }) => (
                             <FormItem>
