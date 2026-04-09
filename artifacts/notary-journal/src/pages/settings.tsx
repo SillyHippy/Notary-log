@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, Info } from 'lucide-react';
+import { Save, Lock, Download, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -16,8 +16,6 @@ import { exportAllCSV, exportAllJSON, exportAllPDF } from '@/lib/export';
 import {
   isGdriveConfigured,
   isGdriveReady,
-  getClientId,
-  setClientId,
   getStoredToken,
   getLastBackupTime,
   signInAndGetEmail,
@@ -75,8 +73,6 @@ export function Settings() {
   const [showRestoreList, setShowRestoreList] = useState(false);
   const [selectedFile, setSelectedFile] = useState<BackupFile | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
-  const [clientIdInput, setClientIdInput] = useState('');
-  const [showClientIdSetup, setShowClientIdSetup] = useState(false);
   const [gisReady, setGisReady] = useState(false);
   const gisCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -133,7 +129,6 @@ export function Settings() {
     // Load initial Google Drive state
     setIsConnected(!!getStoredToken());
     setLastBackup(getLastBackupTime());
-    setClientIdInput(getClientId());
   }, [form]);
 
   const hashPin = async (pin: string) => {
@@ -196,16 +191,6 @@ export function Settings() {
   };
 
   // ── Google Drive handlers ───────────────────────────────────────────────────
-
-  const handleSaveClientId = () => {
-    if (!clientIdInput.trim()) {
-      toast({ title: 'Client ID required', description: 'Please paste your Google OAuth Client ID.', variant: 'destructive' });
-      return;
-    }
-    setClientId(clientIdInput.trim());
-    setShowClientIdSetup(false);
-    toast({ title: 'Client ID saved', description: 'You can now connect Google Drive.' });
-  };
 
   const handleConnect = async () => {
     if (!gisReady) {
@@ -537,49 +522,11 @@ export function Settings() {
         </CardHeader>
         <CardContent className="space-y-5">
 
-          {/* Step 1: Client ID setup */}
-          {!configured && !showClientIdSetup && (
-            <div className="space-y-3">
-              <Alert className="bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
-                <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                <AlertTitle>One-time setup required</AlertTitle>
-                <AlertDescription className="text-sm space-y-1">
-                  <p>To use Google Drive backup, you need a free Google OAuth Client ID.</p>
-                  <p className="font-medium">How to get one:</p>
-                  <ol className="list-decimal list-inside space-y-0.5 text-xs mt-1">
-                    <li>Go to <span className="font-mono">console.cloud.google.com</span></li>
-                    <li>Create a project &rarr; Enable "Google Drive API"</li>
-                    <li>APIs &amp; Services &rarr; Credentials &rarr; Create OAuth Client ID</li>
-                    <li>Application type: "Web application"</li>
-                    <li>Add your app's URL to Authorized JavaScript Origins</li>
-                    <li>Copy the Client ID and paste it below</li>
-                  </ol>
-                </AlertDescription>
-              </Alert>
-              <Button variant="outline" className="gap-2" onClick={() => setShowClientIdSetup(true)} data-testid="button-setup-gdrive">
-                <Cloud className="w-4 h-4" /> Set Up Google Drive
-              </Button>
-            </div>
-          )}
-
-          {showClientIdSetup && (
-            <div className="space-y-3 p-4 border rounded-lg bg-muted/30 animate-in slide-in-from-top-2">
-              <Label htmlFor="clientId" className="text-sm font-medium">Google OAuth Client ID</Label>
-              <Input
-                id="clientId"
-                placeholder="123456789012-abcdefg.apps.googleusercontent.com"
-                value={clientIdInput}
-                onChange={e => setClientIdInput(e.target.value)}
-                data-testid="input-google-client-id"
-              />
-              <p className="text-xs text-muted-foreground">
-                Make sure your app's domain is listed as an Authorized JavaScript Origin in your Google Cloud project.
-              </p>
-              <div className="flex gap-2">
-                <Button size="sm" onClick={handleSaveClientId} data-testid="button-save-client-id">Save Client ID</Button>
-                <Button size="sm" variant="ghost" onClick={() => setShowClientIdSetup(false)}>Cancel</Button>
-              </div>
-            </div>
+          {/* Not configured: show admin note */}
+          {!configured && (
+            <p className="text-sm text-muted-foreground">
+              Google Drive backup is not enabled. Contact the app administrator to set it up.
+            </p>
           )}
 
           {/* Configured: show connection status */}
@@ -607,16 +554,13 @@ export function Settings() {
                 <div className="flex gap-2">
                   {!isConnected ? (
                     <Button size="sm" onClick={handleConnect} disabled={!gisReady} data-testid="button-connect-gdrive">
-                      {gisReady ? 'Connect' : 'Loading...'}
+                      {gisReady ? 'Connect Google Drive' : 'Loading...'}
                     </Button>
                   ) : (
                     <Button size="sm" variant="outline" onClick={handleDisconnect} data-testid="button-disconnect-gdrive">
                       Disconnect
                     </Button>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => setShowClientIdSetup(true)}>
-                    Change
-                  </Button>
                 </div>
               </div>
 

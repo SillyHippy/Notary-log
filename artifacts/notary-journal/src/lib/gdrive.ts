@@ -38,7 +38,6 @@ const TOKEN_KEY = 'gdrive_token';
 const TOKEN_EXPIRY_KEY = 'gdrive_token_expiry';
 const FOLDER_ID_KEY = 'gdrive_folder_id';
 const LATEST_FILE_ID_KEY = 'gdrive_latest_file_id';
-const CLIENT_ID_KEY = 'gdrive_client_id';
 const LAST_BACKUP_KEY = 'gdrive_last_backup';
 
 // ── Token client with mutable resolver refs ─────────────────────────────────
@@ -72,13 +71,8 @@ function buildTokenClient(clientId: string): GisTokenClient {
 
 // ── Public config API ───────────────────────────────────────────────────────
 
-export function getClientId(): string {
-  return import.meta.env.VITE_GOOGLE_CLIENT_ID || localStorage.getItem(CLIENT_ID_KEY) || '';
-}
-
-export function setClientId(id: string): void {
-  localStorage.setItem(CLIENT_ID_KEY, id.trim());
-  tokenClient = null; // force rebuild with new client ID
+function getClientId(): string {
+  return import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 }
 
 export function isGdriveConfigured(): boolean {
