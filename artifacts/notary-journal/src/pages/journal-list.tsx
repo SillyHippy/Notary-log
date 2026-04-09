@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'wouter';
 import { format } from 'date-fns';
-import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getAllEntries, searchEntries, type JournalEntry } from '@/lib/db';
+import { getAllEntries, searchEntries, deleteEntry, type JournalEntry } from '@/lib/db';
 
 type SortField = 'date' | 'name' | 'entry';
 type SortDir = 'asc' | 'desc';
@@ -26,6 +26,7 @@ export function JournalList() {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [isLoading, setIsLoading] = useState(true);
   const [showMasked, setShowMasked] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
   useEffect(() => {
     loadEntries(initialQuery);
@@ -50,6 +51,13 @@ export function JournalList() {
     } else {
       setLocation('/journal');
     }
+  };
+
+  const handleDeleteFromList = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    await deleteEntry(id);
+    setConfirmDeleteId(null);
+    setEntries(prev => prev.filter(en => en.id !== id));
   };
 
   const handleSort = (field: SortField) => {
@@ -236,7 +244,7 @@ export function JournalList() {
                 {filteredAndSorted.map((entry) => (
                   <tr 
                     key={entry.id} 
-                    className="hover:bg-muted/30 cursor-pointer transition-colors"
+                    className="group hover:bg-muted/30 cursor-pointer transition-colors"
                     onClick={() => setLocation(`/entry/${entry.id}`)}
                     data-testid={`row-entry-${entry.id}`}
                   >
@@ -264,8 +272,28 @@ export function JournalList() {
                         {entry.status}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <ChevronRight className="w-4 h-4 text-muted-foreground ml-auto" />
+                    <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+                      {confirmDeleteId === entry.id ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <span className="text-xs text-muted-foreground mr-1 whitespace-nowrap">Delete?</span>
+                          <Button variant="destructive" size="sm" className="h-7 px-2 gap-1 text-xs" onClick={e => handleDeleteFromList(e, entry.id!)}>
+                            <Check className="w-3 h-3" /> Yes
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); }}>
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          onClick={e => { e.stopPropagation(); setConfirmDeleteId(entry.id!); }}
+                          data-testid={`btn-delete-${entry.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}

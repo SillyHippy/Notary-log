@@ -4,7 +4,7 @@ import { format } from 'date-fns';
 import { type LucideIcon } from 'lucide-react';
 import { 
   ArrowLeft, Download, FileText, User, CreditCard, CheckCircle, 
-  Clock, ShieldAlert, ShieldCheck, PenTool, Edit3, Image as ImageIcon
+  Clock, ShieldAlert, ShieldCheck, PenTool, Edit3, Image as ImageIcon, Trash2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { getEntry, updateEntry, generateEntryHash, getSettings, type JournalEntry, type NotarySettings } from '@/lib/db';
+import { getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { exportEntryPDF, exportEntryCSV, exportEntryJSON } from '@/lib/export';
 
 export function EntryDetail() {
@@ -29,6 +29,7 @@ export function EntryDetail() {
   
   const [isAmending, setIsAmending] = useState(false);
   const [amendmentText, setAmendmentText] = useState('');
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -90,6 +91,13 @@ export function EntryDetail() {
     toast({ title: 'Amendment added', description: 'The entry has been successfully amended.' });
   };
 
+  const handleDelete = async () => {
+    if (!entry) return;
+    await deleteEntry(id);
+    toast({ title: 'Entry deleted', description: `Entry ${entry.entryNumber} has been permanently deleted.` });
+    setLocation('/journal');
+  };
+
   if (isLoading || !entry || !settings) {
     return <div className="p-8 animate-pulse flex flex-col gap-6">
       <div className="h-8 w-32 bg-muted rounded"></div>
@@ -130,6 +138,10 @@ export function EntryDetail() {
               <Edit3 className="w-4 h-4" /> Edit Draft
             </Button>
           )}
+
+          <Button variant="outline" size="sm" className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive" onClick={() => setShowDeleteDialog(true)}>
+            <Trash2 className="w-4 h-4" /> Delete
+          </Button>
           
           <div className="flex bg-muted/50 rounded-md p-1">
             <Button variant="ghost" size="sm" className="gap-1 h-8" onClick={() => exportEntryPDF(entry, settings)}>
@@ -353,6 +365,35 @@ export function EntryDetail() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="w-5 h-5" /> Delete Entry {entry.entryNumber}?
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 pt-1">
+                {entry.status !== 'draft' ? (
+                  <p className="text-sm font-medium text-destructive">
+                    This is a <strong>{entry.status}</strong> entry. Deleting a completed notary record is permanent and cannot be undone. Make sure you have exported a copy before proceeding.
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    This draft will be permanently deleted. This cannot be undone.
+                  </p>
+                )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+            <Button variant="destructive" className="gap-2" onClick={handleDelete}>
+              <Trash2 className="w-4 h-4" /> Yes, Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
