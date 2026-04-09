@@ -31,8 +31,10 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
   - Entry detail: all fields, integrity verification (SHA-256 hash), amendments, export
   - Settings: notary profile, PIN lock, dark mode toggle, export all
   - PDF/CSV/JSON export (single entry and bulk)
+  - Google Drive backup/restore (auto-backup after each entry, manual backup, restore with duplicate-skip merge)
+  - GPS auto-detect location for notarization address
   - PWA manifest + service worker for offline use
-  - AAMVA barcode format parser for driver's licenses
+  - AAMVA barcode format parser for driver's licenses (including Oklahoma concatenated subfile format)
 
 ### API Server (`artifacts/api-server`)
 - **Type**: Express 5 REST API
