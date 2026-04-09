@@ -68,6 +68,8 @@ export interface NotarySettings {
   pinEnabled: boolean;
   pinHash?: string;
   darkMode: boolean;
+  autoBackup?: boolean;
+  googleEmail?: string;
 }
 
 const DB_NAME = 'notary_journal_db';

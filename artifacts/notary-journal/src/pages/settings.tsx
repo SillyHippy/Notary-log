@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Database, Moon, Sun, AlertTriangle } from 'lucide-react';
+import { Save, Lock, Download, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -13,6 +13,20 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { getSettings, saveSettings, getAllEntries, type NotarySettings } from '@/lib/db';
 import { exportAllCSV, exportAllJSON, exportAllPDF } from '@/lib/export';
+import {
+  isGdriveConfigured,
+  isGdriveReady,
+  getClientId,
+  setClientId,
+  getStoredToken,
+  getLastBackupTime,
+  signInWithGoogle,
+  disconnectGdrive,
+  backupToDrive,
+  listBackupFiles,
+  restoreFromDrive,
+  type BackupFile,
+} from '@/lib/gdrive';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -27,6 +41,19 @@ const settingsSchema = z.object({
 
 type SettingsFormValues = z.infer<typeof settingsSchema>;
 
+function formatRelativeTime(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins === 1) return '1 minute ago';
+  if (mins < 60) return `${mins} minutes ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs === 1) return '1 hour ago';
+  if (hrs < 24) return `${hrs} hours ago`;
+  const days = Math.floor(hrs / 24);
+  return days === 1 ? '1 day ago' : `${days} days ago`;
+}
+
 export function Settings() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
@@ -35,6 +62,21 @@ export function Settings() {
   const [pinInput, setPinInput] = useState('');
   const [confirmPinInput, setConfirmPinInput] = useState('');
   const [entryCount, setEntryCount] = useState(0);
+
+  // Google Drive state
+  const [isConnected, setIsConnected] = useState(false);
+  const [autoBackup, setAutoBackup] = useState(false);
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const [lastBackup, setLastBackup] = useState<string | null>(null);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [backupFiles, setBackupFiles] = useState<BackupFile[]>([]);
+  const [showRestoreList, setShowRestoreList] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<BackupFile | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [clientIdInput, setClientIdInput] = useState('');
+  const [showClientIdSetup, setShowClientIdSetup] = useState(false);
+  const [gisReady, setGisReady] = useState(false);
+  const gisCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsSchema),
@@ -49,6 +91,21 @@ export function Settings() {
     }
   });
 
+  // Poll until GIS library loads (loaded async in index.html)
+  useEffect(() => {
+    if (isGdriveReady()) {
+      setGisReady(true);
+      return;
+    }
+    gisCheckRef.current = setInterval(() => {
+      if (isGdriveReady()) {
+        setGisReady(true);
+        if (gisCheckRef.current) clearInterval(gisCheckRef.current);
+      }
+    }, 500);
+    return () => { if (gisCheckRef.current) clearInterval(gisCheckRef.current); };
+  }, []);
+
   useEffect(() => {
     async function loadData() {
       const settings = await getSettings();
@@ -62,12 +119,18 @@ export function Settings() {
         pinHash: settings.pinHash,
         darkMode: settings.darkMode || false,
       });
-      
+      setAutoBackup(settings.autoBackup ?? false);
+
       const entries = await getAllEntries();
       setEntryCount(entries.length);
       setIsLoading(false);
     }
     loadData();
+
+    // Load initial Google Drive state
+    setIsConnected(!!getStoredToken());
+    setLastBackup(getLastBackupTime());
+    setClientIdInput(getClientId());
   }, [form]);
 
   const hashPin = async (pin: string) => {
@@ -80,7 +143,7 @@ export function Settings() {
 
   const onSubmit = async (data: SettingsFormValues) => {
     setIsSaving(true);
-    
+
     if (data.pinEnabled && showPinSetup) {
       if (pinInput.length !== 4) {
         toast({ title: 'Invalid PIN', description: 'PIN must be 4 digits', variant: 'destructive' });
@@ -95,20 +158,20 @@ export function Settings() {
       data.pinHash = await hashPin(pinInput);
       setShowPinSetup(false);
     }
-    
+
     if (!data.pinEnabled) {
       data.pinHash = undefined;
     }
 
-    await saveSettings(data as NotarySettings);
-    
-    // Apply dark mode
+    const current = await getSettings();
+    await saveSettings({ ...current, ...data } as NotarySettings);
+
     if (data.darkMode) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
-    
+
     toast({ title: 'Settings saved', description: 'Your preferences have been updated.' });
     setIsSaving(false);
   };
@@ -129,12 +192,137 @@ export function Settings() {
     exportAllJSON(entries);
   };
 
+  // ── Google Drive handlers ───────────────────────────────────────────────────
+
+  const handleSaveClientId = () => {
+    if (!clientIdInput.trim()) {
+      toast({ title: 'Client ID required', description: 'Please paste your Google OAuth Client ID.', variant: 'destructive' });
+      return;
+    }
+    setClientId(clientIdInput.trim());
+    setShowClientIdSetup(false);
+    toast({ title: 'Client ID saved', description: 'You can now connect Google Drive.' });
+  };
+
+  const handleConnect = async () => {
+    if (!gisReady) {
+      toast({ title: 'Not ready', description: 'Google services still loading. Please wait a moment and try again.' });
+      return;
+    }
+    try {
+      await signInWithGoogle();
+      setIsConnected(true);
+      toast({ title: 'Connected', description: 'Google Drive connected successfully.' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to connect';
+      toast({ title: 'Connection failed', description: msg, variant: 'destructive' });
+    }
+  };
+
+  const handleDisconnect = () => {
+    disconnectGdrive();
+    setIsConnected(false);
+    setBackupFiles([]);
+    setShowRestoreList(false);
+    toast({ title: 'Disconnected', description: 'Google Drive disconnected.' });
+  };
+
+  const handleAutoBackupToggle = async (checked: boolean) => {
+    setAutoBackup(checked);
+    const current = await getSettings();
+    await saveSettings({ ...current, autoBackup: checked });
+  };
+
+  const handleBackupNow = async () => {
+    setIsBackingUp(true);
+    try {
+      const entries = await getAllEntries();
+      const settings = await getSettings();
+      await backupToDrive(entries, settings);
+      const now = new Date().toISOString();
+      setLastBackup(now);
+      toast({ title: 'Backup complete', description: 'Journal backed up to Google Drive.' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Backup failed';
+      // If token expired, clear connected state
+      if (msg.includes('401') || msg.includes('403')) {
+        setIsConnected(false);
+      }
+      toast({ title: 'Backup failed', description: msg, variant: 'destructive' });
+    }
+    setIsBackingUp(false);
+  };
+
+  const handleShowRestoreList = async () => {
+    if (showRestoreList) {
+      setShowRestoreList(false);
+      return;
+    }
+    setIsLoadingFiles(true);
+    setShowRestoreList(true);
+    try {
+      const files = await listBackupFiles();
+      setBackupFiles(files);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to list backups';
+      toast({ title: 'Could not list backups', description: msg, variant: 'destructive' });
+      setShowRestoreList(false);
+    }
+    setIsLoadingFiles(false);
+  };
+
+  const handleRestore = async (file: BackupFile) => {
+    setSelectedFile(file);
+  };
+
+  const handleConfirmRestore = async () => {
+    if (!selectedFile) return;
+    setIsRestoring(true);
+    try {
+      const payload = await restoreFromDrive(selectedFile.id);
+      if (!payload.entries || !Array.isArray(payload.entries)) {
+        throw new Error('Invalid backup file format');
+      }
+
+      const { getAllEntries: getAll, createEntry } = await import('@/lib/db');
+      const existing = await getAll();
+      const existingNumbers = new Set(existing.map(e => e.entryNumber));
+
+      let imported = 0;
+      let skipped = 0;
+      for (const entry of payload.entries) {
+        if (existingNumbers.has(entry.entryNumber)) {
+          skipped++;
+          continue;
+        }
+        const { id: _id, ...rest } = entry as (typeof entry & { id?: number });
+        await createEntry(rest);
+        imported++;
+      }
+
+      toast({
+        title: 'Restore complete',
+        description: `Imported ${imported} entries. Skipped ${skipped} duplicates.`,
+      });
+      setSelectedFile(null);
+      setShowRestoreList(false);
+      const newEntries = await getAllEntries();
+      setEntryCount(newEntries.length);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Restore failed';
+      toast({ title: 'Restore failed', description: msg, variant: 'destructive' });
+    }
+    setIsRestoring(false);
+  };
+
   if (isLoading) {
     return <div className="p-8 animate-pulse flex flex-col gap-4">
       <div className="h-8 w-48 bg-muted rounded"></div>
       <div className="h-64 w-full bg-muted rounded"></div>
     </div>;
   }
+
+  const configured = isGdriveConfigured();
 
   return (
     <div className="p-6 lg:p-8 max-w-4xl mx-auto space-y-8">
@@ -165,7 +353,7 @@ export function Settings() {
                     </FormItem>
                   )}
                 />
-                
+
                 <FormField
                   control={form.control}
                   name="commissionNumber"
@@ -179,7 +367,7 @@ export function Settings() {
                     </FormItem>
                   )}
                 />
-                
+
                 <FormField
                   control={form.control}
                   name="commissionExpiration"
@@ -210,7 +398,7 @@ export function Settings() {
                     </FormItem>
                   )}
                 />
-                
+
                 <FormField
                   control={form.control}
                   name="defaultState"
@@ -269,22 +457,22 @@ export function Settings() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="pin">Enter 4-digit PIN</Label>
-                      <Input 
-                        id="pin" 
-                        type="password" 
-                        maxLength={4} 
-                        value={pinInput} 
+                      <Input
+                        id="pin"
+                        type="password"
+                        maxLength={4}
+                        value={pinInput}
                         onChange={e => setPinInput(e.target.value.replace(/[^0-9]/g, ''))}
                         data-testid="input-pin-setup"
                       />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="confirmPin">Confirm PIN</Label>
-                      <Input 
-                        id="confirmPin" 
-                        type="password" 
-                        maxLength={4} 
-                        value={confirmPinInput} 
+                      <Input
+                        id="confirmPin"
+                        type="password"
+                        maxLength={4}
+                        value={confirmPinInput}
                         onChange={e => setConfirmPinInput(e.target.value.replace(/[^0-9]/g, ''))}
                         data-testid="input-pin-confirm"
                       />
@@ -328,6 +516,195 @@ export function Settings() {
         </form>
       </Form>
 
+      {/* ── Cloud Backup Card ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cloud className="w-5 h-5 text-primary" />
+            Cloud Backup
+          </CardTitle>
+          <CardDescription>Back up your journal to Google Drive automatically</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+
+          {/* Step 1: Client ID setup */}
+          {!configured && !showClientIdSetup && (
+            <div className="space-y-3">
+              <Alert className="bg-amber-50 border-amber-200 text-amber-900 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
+                <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                <AlertTitle>One-time setup required</AlertTitle>
+                <AlertDescription className="text-sm space-y-1">
+                  <p>To use Google Drive backup, you need a free Google OAuth Client ID.</p>
+                  <p className="font-medium">How to get one:</p>
+                  <ol className="list-decimal list-inside space-y-0.5 text-xs mt-1">
+                    <li>Go to <span className="font-mono">console.cloud.google.com</span></li>
+                    <li>Create a project &rarr; Enable "Google Drive API"</li>
+                    <li>APIs &amp; Services &rarr; Credentials &rarr; Create OAuth Client ID</li>
+                    <li>Application type: "Web application"</li>
+                    <li>Add your app's URL to Authorized JavaScript Origins</li>
+                    <li>Copy the Client ID and paste it below</li>
+                  </ol>
+                </AlertDescription>
+              </Alert>
+              <Button variant="outline" className="gap-2" onClick={() => setShowClientIdSetup(true)} data-testid="button-setup-gdrive">
+                <Cloud className="w-4 h-4" /> Set Up Google Drive
+              </Button>
+            </div>
+          )}
+
+          {showClientIdSetup && (
+            <div className="space-y-3 p-4 border rounded-lg bg-muted/30 animate-in slide-in-from-top-2">
+              <Label htmlFor="clientId" className="text-sm font-medium">Google OAuth Client ID</Label>
+              <Input
+                id="clientId"
+                placeholder="123456789012-abcdefg.apps.googleusercontent.com"
+                value={clientIdInput}
+                onChange={e => setClientIdInput(e.target.value)}
+                data-testid="input-google-client-id"
+              />
+              <p className="text-xs text-muted-foreground">
+                Make sure your app's domain is listed as an Authorized JavaScript Origin in your Google Cloud project.
+              </p>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={handleSaveClientId} data-testid="button-save-client-id">Save Client ID</Button>
+                <Button size="sm" variant="ghost" onClick={() => setShowClientIdSetup(false)}>Cancel</Button>
+              </div>
+            </div>
+          )}
+
+          {/* Configured: show connection status */}
+          {configured && (
+            <>
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center gap-3">
+                  {isConnected
+                    ? <CheckCircle2 className="w-5 h-5 text-green-600" />
+                    : <CloudOff className="w-5 h-5 text-muted-foreground" />
+                  }
+                  <div>
+                    <p className="font-medium text-sm">{isConnected ? 'Google Drive connected' : 'Not connected'}</p>
+                    {isConnected && lastBackup && (
+                      <p className="text-xs text-muted-foreground">Last backup: {formatRelativeTime(lastBackup)}</p>
+                    )}
+                    {isConnected && !lastBackup && (
+                      <p className="text-xs text-muted-foreground">No backup yet</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {!isConnected ? (
+                    <Button size="sm" onClick={handleConnect} disabled={!gisReady} data-testid="button-connect-gdrive">
+                      {gisReady ? 'Connect' : 'Loading...'}
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={handleDisconnect} data-testid="button-disconnect-gdrive">
+                      Disconnect
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => setShowClientIdSetup(true)}>
+                    Change
+                  </Button>
+                </div>
+              </div>
+
+              {isConnected && (
+                <>
+                  {/* Auto-backup toggle */}
+                  <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
+                    <div className="space-y-0.5">
+                      <p className="text-sm font-medium flex items-center gap-2">
+                        <CloudUpload className="w-4 h-4 text-primary" />
+                        Auto-backup
+                      </p>
+                      <p className="text-xs text-muted-foreground">Silently back up to Drive after each new entry</p>
+                    </div>
+                    <Switch
+                      checked={autoBackup}
+                      onCheckedChange={handleAutoBackupToggle}
+                      data-testid="switch-auto-backup"
+                    />
+                  </div>
+
+                  {/* Manual backup + restore */}
+                  <div className="flex flex-wrap gap-3">
+                    <Button
+                      variant="outline"
+                      className="gap-2"
+                      onClick={handleBackupNow}
+                      disabled={isBackingUp}
+                      data-testid="button-backup-now"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isBackingUp ? 'animate-spin' : ''}`} />
+                      {isBackingUp ? 'Backing up...' : 'Backup Now'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="gap-2"
+                      onClick={handleShowRestoreList}
+                      disabled={isLoadingFiles}
+                      data-testid="button-restore-drive"
+                    >
+                      <RotateCcw className={`w-4 h-4 ${isLoadingFiles ? 'animate-spin' : ''}`} />
+                      {isLoadingFiles ? 'Loading...' : showRestoreList ? 'Hide Backups' : 'Restore from Drive'}
+                    </Button>
+                  </div>
+
+                  {/* Restore file list */}
+                  {showRestoreList && !isLoadingFiles && (
+                    <div className="border rounded-lg divide-y animate-in slide-in-from-top-2">
+                      {backupFiles.length === 0 ? (
+                        <p className="p-4 text-sm text-muted-foreground">No backup files found in your Drive.</p>
+                      ) : (
+                        backupFiles.map(file => (
+                          <div key={file.id} className="p-3 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{file.name}</p>
+                              <p className="text-xs text-muted-foreground">{formatRelativeTime(file.modifiedTime)}</p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleRestore(file)}
+                              data-testid={`button-restore-file-${file.id}`}
+                            >
+                              Restore
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {/* Restore confirmation */}
+                  {selectedFile && (
+                    <div className="p-4 border border-amber-300 rounded-lg bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 space-y-3 animate-in slide-in-from-top-2">
+                      <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                        Restore from "{selectedFile.name}"?
+                      </p>
+                      <p className="text-xs text-amber-800 dark:text-amber-300">
+                        Entries in the backup will be merged with your existing journal. Duplicate entry numbers will be skipped. Your current entries will not be deleted.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={handleConfirmRestore}
+                          disabled={isRestoring}
+                          data-testid="button-confirm-restore"
+                        >
+                          {isRestoring ? 'Restoring...' : 'Confirm Restore'}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setSelectedFile(null)}>Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Data & Export Card ────────────────────────────────────────── */}
       <Card>
         <CardHeader>
           <CardTitle>Data & Export</CardTitle>
@@ -341,7 +718,7 @@ export function Settings() {
               <p className="text-sm text-muted-foreground">{entryCount} entries saved locally on this device.</p>
             </div>
           </div>
-          
+
           <Alert variant="default" className="bg-blue-50 text-blue-900 border-blue-200 dark:bg-blue-950/50 dark:text-blue-200 dark:border-blue-900">
             <AlertTriangle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
             <AlertTitle>Data Privacy</AlertTitle>
@@ -363,7 +740,7 @@ export function Settings() {
           </div>
         </CardContent>
       </Card>
-      
+
       <div className="text-center text-sm text-muted-foreground pt-4 pb-8">
         <p>Notary Journal App v1.0.0</p>
       </div>

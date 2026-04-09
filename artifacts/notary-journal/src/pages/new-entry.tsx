@@ -18,8 +18,9 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { Checkbox } from '@/components/ui/checkbox';
 
-import { createEntry, generateEntryHash, getSettings, type JournalEntry } from '@/lib/db';
+import { createEntry, generateEntryHash, getSettings, getAllEntries, type JournalEntry } from '@/lib/db';
 import { parseAAMVA } from '@/lib/aamva';
+import { backupToDrive, getStoredToken } from '@/lib/gdrive';
 
 const entrySchema = z.object({
   signerFullName: z.string().min(1, 'Full name is required'),
@@ -501,6 +502,20 @@ export function NewEntry() {
       }
       
       toast({ title: 'Success', description: `Entry saved as ${status}.` });
+
+      // Silent auto-backup — runs in background, never blocks redirect
+      (async () => {
+        try {
+          const settings = await getSettings();
+          if (settings.autoBackup && getStoredToken()) {
+            const allEntries = await getAllEntries();
+            await backupToDrive(allEntries, settings);
+          }
+        } catch {
+          // Silent failure for auto-backup
+        }
+      })();
+
       setLocation(`/entry/${id}`);
     } catch (err) {
       console.error(err);
