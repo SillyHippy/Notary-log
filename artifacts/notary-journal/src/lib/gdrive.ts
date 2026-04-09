@@ -1,5 +1,17 @@
 import type { JournalEntry, NotarySettings } from './db';
 
+// ── Google Identity Services types ─────────────────────────────────────────
+
+interface GisTokenResponse {
+  access_token?: string;
+  error?: string;
+  expires_in?: number;
+}
+
+interface GisTokenClient {
+  requestAccessToken: (opts?: { prompt?: string }) => void;
+}
+
 declare global {
   interface Window {
     google: {
@@ -8,14 +20,16 @@ declare global {
           initTokenClient: (config: {
             client_id: string;
             scope: string;
-            callback: (response: { access_token?: string; error?: string; expires_in?: number }) => void;
-          }) => { requestAccessToken: (opts?: { prompt?: string }) => void };
+            callback: (response: GisTokenResponse) => void;
+          }) => GisTokenClient;
           revoke: (token: string, callback: () => void) => void;
         };
       };
     };
   }
 }
+
+// ── Constants & storage keys ────────────────────────────────────────────────
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER_NAME = 'Notary Journal Backups';
@@ -26,27 +40,61 @@ const FOLDER_ID_KEY = 'gdrive_folder_id';
 const CLIENT_ID_KEY = 'gdrive_client_id';
 const LAST_BACKUP_KEY = 'gdrive_last_backup';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let tokenClient: any = null;
+// ── Token client with mutable resolver refs ─────────────────────────────────
+// The GIS token client is initialized once with a callback that dispatches to
+// the *current* pendingResolve/pendingReject so each call gets its own Promise.
+
+let tokenClient: GisTokenClient | null = null;
+let pendingResolve: ((token: string) => void) | null = null;
+let pendingReject: ((err: Error) => void) | null = null;
+
+function buildTokenClient(clientId: string): GisTokenClient {
+  return window.google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: SCOPE,
+    callback: (resp: GisTokenResponse) => {
+      if (resp.error || !resp.access_token) {
+        pendingReject?.(new Error(resp.error || 'No access token returned'));
+      } else {
+        localStorage.setItem(TOKEN_KEY, resp.access_token);
+        localStorage.setItem(
+          TOKEN_EXPIRY_KEY,
+          String(Date.now() + (resp.expires_in ?? 3600) * 1000),
+        );
+        pendingResolve?.(resp.access_token);
+      }
+      pendingResolve = null;
+      pendingReject = null;
+    },
+  });
+}
+
+// ── Public config API ───────────────────────────────────────────────────────
 
 export function getClientId(): string {
   return import.meta.env.VITE_GOOGLE_CLIENT_ID || localStorage.getItem(CLIENT_ID_KEY) || '';
 }
 
-export function setClientId(id: string) {
+export function setClientId(id: string): void {
   localStorage.setItem(CLIENT_ID_KEY, id.trim());
-  tokenClient = null; // reset so it reinitializes with new client ID
+  tokenClient = null; // force rebuild with new client ID
 }
 
 export function isGdriveConfigured(): boolean {
   return !!getClientId();
 }
 
+export function isGdriveReady(): boolean {
+  return !!window.google?.accounts?.oauth2;
+}
+
+// ── Token management ────────────────────────────────────────────────────────
+
 export function getStoredToken(): string | null {
   const token = localStorage.getItem(TOKEN_KEY);
   const expiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
   if (!token || !expiry) return null;
-  if (Date.now() > parseInt(expiry) - 60_000) return null; // expire 1 min early
+  if (Date.now() > parseInt(expiry) - 60_000) return null; // expire 60 s early
   return token;
 }
 
@@ -54,21 +102,24 @@ export function getLastBackupTime(): string | null {
   return localStorage.getItem(LAST_BACKUP_KEY);
 }
 
-export function disconnectGdrive() {
+export function disconnectGdrive(): void {
   const token = localStorage.getItem(TOKEN_KEY);
-  if (token && window.google?.accounts?.oauth2) {
+  if (token && isGdriveReady()) {
     window.google.accounts.oauth2.revoke(token, () => {});
   }
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(TOKEN_EXPIRY_KEY);
   localStorage.removeItem(FOLDER_ID_KEY);
   tokenClient = null;
+  pendingResolve = null;
+  pendingReject = null;
 }
 
-export function isGdriveReady(): boolean {
-  return !!window.google?.accounts?.oauth2;
-}
-
+/**
+ * Trigger Google OAuth sign-in. Returns the access token.
+ * Can be called multiple times — each call gets its own Promise resolved by
+ * the mutable pendingResolve/pendingReject refs updated before every request.
+ */
 export function signInWithGoogle(): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!isGdriveReady()) {
@@ -80,20 +131,13 @@ export function signInWithGoogle(): Promise<string> {
       reject(new Error('Google Client ID not configured.'));
       return;
     }
+
+    // Update mutable refs BEFORE triggering the popup so the callback dispatches to this Promise
+    pendingResolve = resolve;
+    pendingReject = reject;
+
     if (!tokenClient) {
-      tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: SCOPE,
-        callback: (resp) => {
-          if (resp.error || !resp.access_token) {
-            reject(new Error(resp.error || 'No access token returned'));
-            return;
-          }
-          localStorage.setItem(TOKEN_KEY, resp.access_token);
-          localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + (resp.expires_in ?? 3600) * 1000));
-          resolve(resp.access_token);
-        },
-      });
+      tokenClient = buildTokenClient(clientId);
     }
     tokenClient.requestAccessToken({ prompt: '' });
   });
@@ -105,14 +149,32 @@ export async function getValidToken(): Promise<string> {
   return signInWithGoogle();
 }
 
-async function driveRequest(token: string, method: string, url: string, body?: unknown): Promise<Response> {
+/**
+ * Sign in and also fetch the user's email from Google's userinfo endpoint.
+ * Returns { token, email }.
+ */
+export async function signInAndGetEmail(): Promise<{ token: string; email: string }> {
+  const token = await signInWithGoogle();
+  let email = '';
+  try {
+    const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const info = await res.json();
+      email = info.email ?? '';
+    }
+  } catch {
+    // non-fatal — we still have the token
+  }
+  return { token, email };
+}
+
+// ── Drive helper utilities ──────────────────────────────────────────────────
+
+async function driveGet(token: string, url: string): Promise<Response> {
   const res = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: body != null ? JSON.stringify(body) : undefined,
+    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
@@ -121,34 +183,30 @@ async function driveRequest(token: string, method: string, url: string, body?: u
   return res;
 }
 
-async function getOrCreateFolder(token: string): Promise<string> {
-  const cached = localStorage.getItem(FOLDER_ID_KEY);
-  if (cached) return cached;
-
-  // Search for existing folder
-  const q = encodeURIComponent(`name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const searchRes = await driveRequest(token, 'GET', `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
-  const searchData = await searchRes.json();
-
-  if (searchData.files?.length > 0) {
-    const id: string = searchData.files[0].id;
-    localStorage.setItem(FOLDER_ID_KEY, id);
-    return id;
-  }
-
-  // Create folder
-  const createRes = await driveRequest(token, 'POST', 'https://www.googleapis.com/drive/v3/files', {
-    name: FOLDER_NAME,
-    mimeType: 'application/vnd.google-apps.folder',
+async function drivePost(token: string, url: string, body: unknown): Promise<Response> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
   });
-  const createData = await createRes.json();
-  localStorage.setItem(FOLDER_ID_KEY, createData.id);
-  return createData.id;
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`Drive API error ${res.status}: ${text}`);
+  }
+  return res;
 }
 
-async function uploadFile(token: string, folderId: string, name: string, content: string, existingId?: string): Promise<string> {
-  const metadata = { name, parents: existingId ? undefined : [folderId] };
-  const boundary = 'notary_boundary_' + Date.now();
+async function uploadMultipart(
+  token: string,
+  method: 'POST' | 'PATCH',
+  url: string,
+  metadata: Record<string, unknown>,
+  content: string,
+): Promise<string> {
+  const boundary = `notary_${Date.now()}`;
   const body = [
     `--${boundary}`,
     'Content-Type: application/json; charset=UTF-8',
@@ -161,12 +219,8 @@ async function uploadFile(token: string, folderId: string, name: string, content
     `--${boundary}--`,
   ].join('\r\n');
 
-  const url = existingId
-    ? `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`
-    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
-
   const res = await fetch(url, {
-    method: existingId ? 'PATCH' : 'POST',
+    method,
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': `multipart/related; boundary=${boundary}`,
@@ -178,15 +232,42 @@ async function uploadFile(token: string, folderId: string, name: string, content
     throw new Error(`Upload error ${res.status}: ${text}`);
   }
   const data = await res.json();
-  return data.id;
+  return data.id as string;
+}
+
+async function getOrCreateFolder(token: string): Promise<string> {
+  const cached = localStorage.getItem(FOLDER_ID_KEY);
+  if (cached) return cached;
+
+  const q = encodeURIComponent(
+    `name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+  );
+  const searchRes = await driveGet(token, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const searchData = await searchRes.json();
+
+  if (searchData.files?.length > 0) {
+    const id: string = searchData.files[0].id;
+    localStorage.setItem(FOLDER_ID_KEY, id);
+    return id;
+  }
+
+  const createRes = await drivePost(token, 'https://www.googleapis.com/drive/v3/files', {
+    name: FOLDER_NAME,
+    mimeType: 'application/vnd.google-apps.folder',
+  });
+  const createData = await createRes.json();
+  localStorage.setItem(FOLDER_ID_KEY, createData.id);
+  return createData.id;
 }
 
 async function findFile(token: string, folderId: string, name: string): Promise<string | null> {
   const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
-  const res = await driveRequest(token, 'GET', `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const res = await driveGet(token, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
   const data = await res.json();
-  return data.files?.[0]?.id ?? null;
+  return (data.files?.[0]?.id as string) ?? null;
 }
+
+// ── Public Drive operations ─────────────────────────────────────────────────
 
 export interface BackupPayload {
   version: number;
@@ -209,12 +290,31 @@ export async function backupToDrive(entries: JournalEntry[], settings: NotarySet
 
   // Overwrite the "latest" file
   const latestId = await findFile(token, folderId, LATEST_FILE_NAME);
-  await uploadFile(token, folderId, LATEST_FILE_NAME, content, latestId ?? undefined);
+  if (latestId) {
+    await uploadMultipart(
+      token, 'PATCH',
+      `https://www.googleapis.com/upload/drive/v3/files/${latestId}?uploadType=multipart`,
+      { name: LATEST_FILE_NAME },
+      content,
+    );
+  } else {
+    await uploadMultipart(
+      token, 'POST',
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+      { name: LATEST_FILE_NAME, parents: [folderId] },
+      content,
+    );
+  }
 
   // Also save a dated copy
   const dateStr = new Date().toISOString().split('T')[0];
   const datedName = `notary-journal-backup-${dateStr}.json`;
-  await uploadFile(token, folderId, datedName, content);
+  await uploadMultipart(
+    token, 'POST',
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+    { name: datedName, parents: [folderId] },
+    content,
+  );
 
   localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString());
 }
@@ -229,11 +329,12 @@ export async function listBackupFiles(): Promise<BackupFile[]> {
   const token = await getValidToken();
   const folderId = await getOrCreateFolder(token);
   const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
-  const res = await driveRequest(token, 'GET',
-    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc`
+  const res = await driveGet(
+    token,
+    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc`,
   );
   const data = await res.json();
-  return data.files ?? [];
+  return (data.files as BackupFile[]) ?? [];
 }
 
 export async function restoreFromDrive(fileId: string): Promise<BackupPayload> {
@@ -242,6 +343,5 @@ export async function restoreFromDrive(fileId: string): Promise<BackupPayload> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`Failed to download backup: ${res.status}`);
-  const data: BackupPayload = await res.json();
-  return data;
+  return (await res.json()) as BackupPayload;
 }

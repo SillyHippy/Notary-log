@@ -20,13 +20,14 @@ import {
   setClientId,
   getStoredToken,
   getLastBackupTime,
-  signInWithGoogle,
+  signInAndGetEmail,
   disconnectGdrive,
   backupToDrive,
   listBackupFiles,
   restoreFromDrive,
   type BackupFile,
 } from '@/lib/gdrive';
+import { importEntry } from '@/lib/db';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -65,6 +66,7 @@ export function Settings() {
 
   // Google Drive state
   const [isConnected, setIsConnected] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState('');
   const [autoBackup, setAutoBackup] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [lastBackup, setLastBackup] = useState<string | null>(null);
@@ -120,6 +122,7 @@ export function Settings() {
         darkMode: settings.darkMode || false,
       });
       setAutoBackup(settings.autoBackup ?? false);
+      setGoogleEmail(settings.googleEmail ?? '');
 
       const entries = await getAllEntries();
       setEntryCount(entries.length);
@@ -210,8 +213,11 @@ export function Settings() {
       return;
     }
     try {
-      await signInWithGoogle();
+      const { email } = await signInAndGetEmail();
       setIsConnected(true);
+      setGoogleEmail(email);
+      const current = await getSettings();
+      await saveSettings({ ...current, googleEmail: email });
       toast({ title: 'Connected', description: 'Google Drive connected successfully.' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to connect';
@@ -219,11 +225,14 @@ export function Settings() {
     }
   };
 
-  const handleDisconnect = () => {
+  const handleDisconnect = async () => {
     disconnectGdrive();
     setIsConnected(false);
+    setGoogleEmail('');
     setBackupFiles([]);
     setShowRestoreList(false);
+    const current = await getSettings();
+    await saveSettings({ ...current, googleEmail: '' });
     toast({ title: 'Disconnected', description: 'Google Drive disconnected.' });
   };
 
@@ -284,20 +293,21 @@ export function Settings() {
         throw new Error('Invalid backup file format');
       }
 
-      const { getAllEntries: getAll, createEntry } = await import('@/lib/db');
-      const existing = await getAll();
-      const existingNumbers = new Set(existing.map(e => e.entryNumber));
-
       let imported = 0;
       let skipped = 0;
       for (const entry of payload.entries) {
-        if (existingNumbers.has(entry.entryNumber)) {
-          skipped++;
-          continue;
+        // Strip the IDB auto-key `id` so the store assigns a fresh one, but keep entryNumber
+        const { id: _id, ...rest } = entry as typeof entry & { id?: number };
+        try {
+          await importEntry(rest);
+          imported++;
+        } catch (err) {
+          if (err instanceof Error && (err as Error & { code?: string }).code === 'DUPLICATE') {
+            skipped++;
+          } else {
+            throw err;
+          }
         }
-        const { id: _id, ...rest } = entry as (typeof entry & { id?: number });
-        await createEntry(rest);
-        imported++;
       }
 
       toast({
@@ -583,6 +593,9 @@ export function Settings() {
                   }
                   <div>
                     <p className="font-medium text-sm">{isConnected ? 'Google Drive connected' : 'Not connected'}</p>
+                    {isConnected && googleEmail && (
+                      <p className="text-xs text-muted-foreground">{googleEmail}</p>
+                    )}
                     {isConnected && lastBackup && (
                       <p className="text-xs text-muted-foreground">Last backup: {formatRelativeTime(lastBackup)}</p>
                     )}

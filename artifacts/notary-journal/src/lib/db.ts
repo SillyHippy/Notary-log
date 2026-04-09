@@ -188,6 +188,27 @@ export async function createEntry(entry: Omit<JournalEntry, 'id' | 'entryNumber'
   return id as number;
 }
 
+/**
+ * Import a journal entry from a backup, preserving its original entryNumber.
+ * Throws if an entry with the same entryNumber already exists.
+ */
+export async function importEntry(entry: Omit<JournalEntry, 'id'>): Promise<number> {
+  const db = await getDB();
+  const tx = db.transaction('entries', 'readwrite');
+  const store = tx.objectStore('entries');
+
+  // Check for duplicate entryNumber
+  const existing = await store.index('entryNumber').get(entry.entryNumber);
+  if (existing) {
+    await tx.done;
+    throw Object.assign(new Error(`Entry number ${entry.entryNumber} already exists`), { code: 'DUPLICATE' });
+  }
+
+  const id = await store.add({ ...entry });
+  await tx.done;
+  return id as number;
+}
+
 const IMMUTABLE_FIELDS: Array<keyof JournalEntry> = [
   'signerFullName', 'signerAddress', 'signerCity', 'signerState', 'signerDOB', 'signerPhone',
   'idType', 'idNumber', 'idIssuingState', 'idExpirationDate',
