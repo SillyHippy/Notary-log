@@ -31,12 +31,13 @@ declare global {
 
 // ── Constants & storage keys ────────────────────────────────────────────────
 
-const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const SCOPE = 'https://www.googleapis.com/auth/drive.file openid email';
 const FOLDER_NAME = 'Notary Journal Backups';
 const LATEST_FILE_NAME = 'notary-journal-latest.json';
 const TOKEN_KEY = 'gdrive_token';
 const TOKEN_EXPIRY_KEY = 'gdrive_token_expiry';
 const FOLDER_ID_KEY = 'gdrive_folder_id';
+const LATEST_FILE_ID_KEY = 'gdrive_latest_file_id';
 const CLIENT_ID_KEY = 'gdrive_client_id';
 const LAST_BACKUP_KEY = 'gdrive_last_backup';
 
@@ -110,6 +111,7 @@ export function disconnectGdrive(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(TOKEN_EXPIRY_KEY);
   localStorage.removeItem(FOLDER_ID_KEY);
+  localStorage.removeItem(LATEST_FILE_ID_KEY);
   tokenClient = null;
   pendingResolve = null;
   pendingReject = null;
@@ -276,7 +278,7 @@ export interface BackupPayload {
   settings: NotarySettings;
 }
 
-export async function backupToDrive(entries: JournalEntry[], settings: NotarySettings): Promise<void> {
+export async function backupToDrive(entries: JournalEntry[], settings: NotarySettings): Promise<string> {
   const token = await getValidToken();
   const folderId = await getOrCreateFolder(token);
 
@@ -288,23 +290,38 @@ export async function backupToDrive(entries: JournalEntry[], settings: NotarySet
   };
   const content = JSON.stringify(payload, null, 2);
 
-  // Overwrite the "latest" file
-  const latestId = await findFile(token, folderId, LATEST_FILE_NAME);
-  if (latestId) {
-    await uploadMultipart(
+  // Overwrite the "latest" file, using cached file ID when available to avoid
+  // a round-trip search on every backup
+  const cachedLatestId = localStorage.getItem(LATEST_FILE_ID_KEY);
+  let latestFileId: string;
+
+  if (cachedLatestId) {
+    latestFileId = await uploadMultipart(
       token, 'PATCH',
-      `https://www.googleapis.com/upload/drive/v3/files/${latestId}?uploadType=multipart`,
+      `https://www.googleapis.com/upload/drive/v3/files/${cachedLatestId}?uploadType=multipart`,
       { name: LATEST_FILE_NAME },
       content,
     );
   } else {
-    await uploadMultipart(
-      token, 'POST',
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
-      { name: LATEST_FILE_NAME, parents: [folderId] },
-      content,
-    );
+    // Fall back to name search on first run or after disconnect
+    const foundId = await findFile(token, folderId, LATEST_FILE_NAME);
+    if (foundId) {
+      latestFileId = await uploadMultipart(
+        token, 'PATCH',
+        `https://www.googleapis.com/upload/drive/v3/files/${foundId}?uploadType=multipart`,
+        { name: LATEST_FILE_NAME },
+        content,
+      );
+    } else {
+      latestFileId = await uploadMultipart(
+        token, 'POST',
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+        { name: LATEST_FILE_NAME, parents: [folderId] },
+        content,
+      );
+    }
   }
+  localStorage.setItem(LATEST_FILE_ID_KEY, latestFileId);
 
   // Also save a dated copy
   const dateStr = new Date().toISOString().split('T')[0];
@@ -317,6 +334,7 @@ export async function backupToDrive(entries: JournalEntry[], settings: NotarySet
   );
 
   localStorage.setItem(LAST_BACKUP_KEY, new Date().toISOString());
+  return latestFileId;
 }
 
 export interface BackupFile {
