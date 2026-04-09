@@ -41,6 +41,26 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Preview path**: `/api`
 - **Purpose**: Shared backend (currently minimal health check only)
 
+## Environment Variables
+
+### Notary Journal
+
+| Variable | Required | Description |
+|---|---|---|
+| `VITE_GOOGLE_CLIENT_ID` | For Drive backup | Google OAuth 2.0 Client ID for Google Drive backup. Set in Replit environment variables (shared). |
+
+**Setting up `VITE_GOOGLE_CLIENT_ID`:**
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Create a project → enable **Google Drive API**
+3. APIs & Services → Credentials → **Create OAuth Client ID** (Web application type)
+4. Under **Authorized JavaScript Origins**, add every domain the app runs on:
+   - Your Replit dev URL (e.g. `https://<repl>.janeway.replit.dev`)
+   - Your published domain (e.g. `https://<app>.replit.app`) when deployed
+5. Copy the Client ID (ends in `.apps.googleusercontent.com`) and store it as `VITE_GOOGLE_CLIENT_ID` in Replit's environment variables
+6. Restart the notary-journal workflow for the change to take effect
+
+Without this variable, the Cloud Backup section in Settings shows a "not enabled" message and Drive features are hidden. All other app features work without it.
+
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages
