@@ -245,7 +245,7 @@ export function JournalList() {
                   <tr 
                     key={entry.id} 
                     className="group hover:bg-muted/30 cursor-pointer transition-colors"
-                    onClick={() => setLocation(`/entry/${entry.id}`)}
+                    onClick={() => { if (confirmDeleteId === entry.id) return; setLocation(`/entry/${entry.id}`); }}
                     data-testid={`row-entry-${entry.id}`}
                   >
                     <td className="px-4 py-3 font-medium whitespace-nowrap">
@@ -274,20 +274,19 @@ export function JournalList() {
                     </td>
                     <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                       {confirmDeleteId === entry.id ? (
-                        <div className="flex items-center justify-end gap-1.5">
-                          <span className="text-xs text-muted-foreground mr-1 whitespace-nowrap hidden sm:inline">Delete?</span>
-                          <Button variant="destructive" size="sm" className="h-8 px-3 gap-1 text-xs" onClick={e => handleDeleteFromList(e, entry.id!)}>
-                            <Check className="w-3.5 h-3.5" /> Yes
+                        <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
+                          <Button variant="destructive" size="sm" className="h-9 px-3 gap-1 text-sm font-medium" onClick={e => handleDeleteFromList(e, entry.id!)}>
+                            <Check className="w-4 h-4" /> Delete
                           </Button>
-                          <Button variant="ghost" size="sm" className="h-8 px-2" onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); }}>
-                            <X className="w-3.5 h-3.5" />
+                          <Button variant="outline" size="sm" className="h-9 px-3 border-border bg-background text-foreground" onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); }}>
+                            Cancel
                           </Button>
                         </div>
                       ) : (
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          className="h-9 w-9 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-foreground/40 hover:text-destructive hover:bg-destructive/10"
                           onClick={e => { e.stopPropagation(); setConfirmDeleteId(entry.id!); }}
                           data-testid={`btn-delete-${entry.id}`}
                         >
