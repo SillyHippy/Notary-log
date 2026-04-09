@@ -274,24 +274,24 @@ export function JournalList() {
                     </td>
                     <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                       {confirmDeleteId === entry.id ? (
-                        <div className="flex items-center justify-end gap-1">
-                          <span className="text-xs text-muted-foreground mr-1 whitespace-nowrap">Delete?</span>
-                          <Button variant="destructive" size="sm" className="h-7 px-2 gap-1 text-xs" onClick={e => handleDeleteFromList(e, entry.id!)}>
-                            <Check className="w-3 h-3" /> Yes
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="text-xs text-muted-foreground mr-1 whitespace-nowrap hidden sm:inline">Delete?</span>
+                          <Button variant="destructive" size="sm" className="h-8 px-3 gap-1 text-xs" onClick={e => handleDeleteFromList(e, entry.id!)}>
+                            <Check className="w-3.5 h-3.5" /> Yes
                           </Button>
-                          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); }}>
-                            <X className="w-3 h-3" />
+                          <Button variant="ghost" size="sm" className="h-8 px-2" onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); }}>
+                            <X className="w-3.5 h-3.5" />
                           </Button>
                         </div>
                       ) : (
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          className="h-8 w-8 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                           onClick={e => { e.stopPropagation(); setConfirmDeleteId(entry.id!); }}
                           data-testid={`btn-delete-${entry.id}`}
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
                     </td>
