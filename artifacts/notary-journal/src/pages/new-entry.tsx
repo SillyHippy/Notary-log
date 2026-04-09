@@ -6,7 +6,7 @@ import * as z from 'zod';
 import SignaturePad from 'signature_pad';
 import { BrowserPDF417Reader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
-import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2 } from 'lucide-react';
+import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +52,20 @@ type ScanResult =
   | { method: 'barcode'; success: true }
   | { method: 'ocr'; text: string; confidence: number };
 
+const STATE_ABBR: Record<string, string> = {
+  'Alabama':'AL','Alaska':'AK','Arizona':'AZ','Arkansas':'AR','California':'CA',
+  'Colorado':'CO','Connecticut':'CT','Delaware':'DE','Florida':'FL','Georgia':'GA',
+  'Hawaii':'HI','Idaho':'ID','Illinois':'IL','Indiana':'IN','Iowa':'IA',
+  'Kansas':'KS','Kentucky':'KY','Louisiana':'LA','Maine':'ME','Maryland':'MD',
+  'Massachusetts':'MA','Michigan':'MI','Minnesota':'MN','Mississippi':'MS','Missouri':'MO',
+  'Montana':'MT','Nebraska':'NE','Nevada':'NV','New Hampshire':'NH','New Jersey':'NJ',
+  'New Mexico':'NM','New York':'NY','North Carolina':'NC','North Dakota':'ND','Ohio':'OH',
+  'Oklahoma':'OK','Oregon':'OR','Pennsylvania':'PA','Rhode Island':'RI','South Carolina':'SC',
+  'South Dakota':'SD','Tennessee':'TN','Texas':'TX','Utah':'UT','Vermont':'VT',
+  'Virginia':'VA','Washington':'WA','West Virginia':'WV','Wisconsin':'WI','Wyoming':'WY',
+  'District of Columbia':'DC',
+};
+
 export function NewEntry() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -67,6 +81,7 @@ export function NewEntry() {
   const [signatureImage, setSignatureImage] = useState<string | undefined>();
   const [needsReview, setNeedsReview] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
 
   const liveVideoRef = useRef<HTMLVideoElement>(null);
   const photoVideoRef = useRef<HTMLVideoElement>(null);
@@ -246,6 +261,42 @@ export function NewEntry() {
       photoVideoRef.current.srcObject = streamRef.current;
     }
   }, [scanMode]);
+
+  const detectLocation = () => {
+    if (!navigator.geolocation) {
+      toast({ title: 'Not supported', description: 'Your browser does not support location detection.', variant: 'destructive' });
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
+            { headers: { 'User-Agent': 'NotaryJournal/1.0' } }
+          );
+          const data = await res.json();
+          const addr = data.address ?? {};
+          const city = addr.city || addr.town || addr.village || addr.county || '';
+          const stateRaw: string = addr.state || '';
+          const stateAbbr = STATE_ABBR[stateRaw] || stateRaw.substring(0, 2).toUpperCase();
+          if (city) form.setValue('locationCity', city);
+          if (stateAbbr) form.setValue('locationState', stateAbbr);
+          toast({ title: 'Location detected', description: `${city}, ${stateAbbr}` });
+        } catch {
+          toast({ title: 'Location lookup failed', description: 'Could not determine city — please enter manually.', variant: 'destructive' });
+        } finally {
+          setIsLocating(false);
+        }
+      },
+      () => {
+        setIsLocating(false);
+        toast({ title: 'Location unavailable', description: 'Permission denied or GPS unavailable — please enter manually.', variant: 'destructive' });
+      },
+      { timeout: 10000, maximumAge: 60000 }
+    );
+  };
 
   const applyExtractedFields = (fields: Record<string, string>) => {
     if (fields.fullName) form.setValue('signerFullName', fields.fullName);
@@ -785,21 +836,39 @@ export function NewEntry() {
                         </FormItem>
                       )} />
                       
-                      <div className="md:col-span-2 grid grid-cols-2 gap-4 border-y py-4 my-2">
-                        <FormField control={form.control} name="locationCity" render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Location City *</FormLabel>
-                            <FormControl><Input {...field} /></FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )} />
-                        <FormField control={form.control} name="locationState" render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Location State *</FormLabel>
-                            <FormControl><Input {...field} maxLength={2} /></FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )} />
+                      <div className="md:col-span-2 border-y py-4 my-2">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-sm font-medium">Notarization Location *</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-2 text-xs"
+                            onClick={detectLocation}
+                            disabled={isLocating}
+                          >
+                            {isLocating
+                              ? <><Loader2 className="w-3 h-3 animate-spin" /> Detecting…</>
+                              : <><MapPin className="w-3 h-3" /> Use My Location</>
+                            }
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormField control={form.control} name="locationCity" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>City</FormLabel>
+                              <FormControl><Input {...field} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                          <FormField control={form.control} name="locationState" render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>State</FormLabel>
+                              <FormControl><Input {...field} maxLength={2} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                        </div>
                       </div>
 
                       <FormField control={form.control} name="feeCharged" render={({ field }) => (
