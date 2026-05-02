@@ -90,5 +90,16 @@ export function parseAAMVA(raw: string): Partial<SignerFields> {
     fields.fullName = `${fields.firstName} ${fields.lastName}`;
   }
 
+  // Oklahoma quirk: the barcode's DAQ field contains the full Document
+  // Discriminator (license number + DOB + issue date + suffix character),
+  // not just the license number printed on the card. The actual DL number
+  // is the leading 1 uppercase letter + 9 digits. Trim it back to that.
+  if (fields.idIssuingState === 'OK' && fields.idNumber && fields.idNumber.length > 10) {
+    const okMatch = fields.idNumber.match(/^[A-Z]\d{9}/);
+    if (okMatch) {
+      fields.idNumber = okMatch[0];
+    }
+  }
+
   return fields;
 }
