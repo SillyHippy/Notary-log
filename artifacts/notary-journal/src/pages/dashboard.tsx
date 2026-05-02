@@ -22,7 +22,6 @@ import {
   getStats, 
   getRecentEntries, 
   getSettings, 
-  seedInitialData,
   type JournalEntry,
   type NotarySettings
 } from '@/lib/db';
@@ -38,8 +37,7 @@ export function Dashboard() {
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      await seedInitialData();
-      
+
       const [statsData, recentData, settingsData] = await Promise.all([
         getStats(),
         getRecentEntries(5),
