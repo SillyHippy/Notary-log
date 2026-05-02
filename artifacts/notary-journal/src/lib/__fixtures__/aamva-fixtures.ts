@@ -81,7 +81,7 @@ const californiaDcfFallbackRaw = [
 const oklahomaShortIdRaw = [
   '@',
   '\x1e\rANSI 636026080002DL00410288',
-  'DAQA12345678',
+  'DAQA123456789',
   'DCSDOE',
   'DACJOHN',
   'DBB02021970',
@@ -201,7 +201,7 @@ export const fixtures: AamvaFixture[] = [
       'the printed 10-character license number should pass through unchanged.',
     raw: oklahomaShortIdRaw,
     expected: {
-      idNumber: 'A12345678',
+      idNumber: 'A123456789',
       idIssuingState: 'OK',
       state: 'OK',
     },
