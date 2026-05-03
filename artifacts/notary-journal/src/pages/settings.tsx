@@ -3,16 +3,24 @@ import { Link } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2 } from 'lucide-react';
+import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
+import { getSettings, saveSettings, getAllEntries, changePin, verifyPin, lock, verifyChain, importEntry, recomputeChainFrom, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
+import {
+  isPlatformAuthenticatorAvailable,
+  isBiometricEnabled,
+  enableBiometric,
+  clearBiometric,
+} from '@/lib/biometric';
+import { THRESHOLD_OPTIONS, DEFAULT_THRESHOLD_DAYS, clearSnooze } from '@/lib/backup-nudge';
 import { FEE_TYPES, type FeeType } from '@/lib/fees';
 import { exportAllCSV, exportAllJSON, exportAllPDF, parseBackupFile } from '@/lib/export';
 import {
@@ -81,6 +89,17 @@ export function Settings() {
   const [sealBusy, setSealBusy] = useState(false);
   const sealInputRef = useRef<HTMLInputElement>(null);
 
+  // Biometric unlock state
+  const [biometricSupported, setBiometricSupported] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  const [biometricEnrollPin, setBiometricEnrollPin] = useState('');
+  const [showBiometricEnroll, setShowBiometricEnroll] = useState(false);
+
+  // Backup-nudge preferences
+  const [backupReminderDays, setBackupReminderDays] = useState<number>(DEFAULT_THRESHOLD_DAYS);
+  const [manualBackupOnly, setManualBackupOnly] = useState(false);
+
   // Google Drive state
   const [isConnected, setIsConnected] = useState(false);
   const [googleEmail, setGoogleEmail] = useState('');
@@ -135,8 +154,19 @@ export function Settings() {
       });
       setAutoBackup(settings.autoBackup ?? false);
       setGoogleEmail(settings.googleEmail ?? '');
+      setBackupReminderDays(settings.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS);
+      setManualBackupOnly(!!settings.manualBackupOnly);
 
       hydrateFeeAndSealStateFrom(settings);
+
+      // Biometric availability + enrollment
+      try {
+        const supported = await isPlatformAuthenticatorAvailable();
+        setBiometricSupported(supported);
+        if (supported) setBiometricEnabled(await isBiometricEnabled());
+      } catch {
+        setBiometricSupported(false);
+      }
 
       const entries = await getAllEntries();
       setEntryCount(entries.length);
@@ -175,7 +205,15 @@ export function Settings() {
       if (!ok) {
         setChangePinError('Current PIN is incorrect.');
       } else {
-        toast({ title: 'PIN changed', description: 'Your journal has been re-encrypted with the new PIN.' });
+        // Invalidate biometric: the wrapped PIN is now stale and would fail
+        // to unlock anyway. The user can re-enroll with the new PIN.
+        try {
+          if (await isBiometricEnabled()) {
+            await clearBiometric();
+            setBiometricEnabled(false);
+          }
+        } catch {/* non-fatal */}
+        toast({ title: 'PIN changed', description: 'Your journal has been re-encrypted with the new PIN. Re-enable biometric unlock if you use it.' });
         setShowChangePin(false);
         setOldPin(''); setNewPin(''); setNewPinConfirm('');
       }
@@ -188,6 +226,62 @@ export function Settings() {
   const handleLockNow = () => {
     lock();
     window.location.reload();
+  };
+
+  const handleEnableBiometric = async () => {
+    setBiometricBusy(true);
+    try {
+      if (biometricEnrollPin.length !== 4) {
+        toast({ title: 'Enter your PIN', description: 'Confirm your current 4-digit PIN to enable biometric unlock.', variant: 'destructive' });
+        setBiometricBusy(false);
+        return;
+      }
+      // Verify the PIN against the canary before wrapping it — otherwise we'd
+      // happily store an incorrect PIN that would silently fail at unlock.
+      const verified = await verifyPin(biometricEnrollPin);
+      if (!verified) {
+        toast({ title: 'PIN incorrect', description: 'That PIN does not match your current PIN.', variant: 'destructive' });
+        setBiometricBusy(false);
+        return;
+      }
+      await enableBiometric(biometricEnrollPin);
+      setBiometricEnabled(true);
+      setShowBiometricEnroll(false);
+      setBiometricEnrollPin('');
+      toast({ title: 'Biometric unlock enabled', description: 'You can now unlock with Face ID, Touch ID, or your device biometric.' });
+    } catch (err) {
+      toast({ title: 'Biometric setup failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setBiometricBusy(false);
+  };
+
+  const handleDisableBiometric = async () => {
+    setBiometricBusy(true);
+    try {
+      await clearBiometric();
+      setBiometricEnabled(false);
+      toast({ title: 'Biometric unlock disabled' });
+    } catch (err) {
+      toast({ title: 'Could not disable biometric', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setBiometricBusy(false);
+  };
+
+  const handleBackupReminderChange = async (value: string) => {
+    const days = Number.parseInt(value, 10);
+    if (!Number.isFinite(days)) return;
+    setBackupReminderDays(days);
+    const current = await getSettings();
+    await saveSettings({ ...current, backupReminderDays: days } as NotarySettings);
+    clearSnooze();
+    toast({ title: 'Backup reminder updated', description: `You'll be reminded if your backup is older than ${days} days.` });
+  };
+
+  const handleManualBackupOnlyToggle = async (checked: boolean) => {
+    setManualBackupOnly(checked);
+    const current = await getSettings();
+    await saveSettings({ ...current, manualBackupOnly: checked } as NotarySettings);
+    if (checked) clearSnooze();
   };
 
   const handleSaveDefaultFees = async () => {
@@ -683,6 +777,76 @@ export function Settings() {
                   </Button>
                 </div>
 
+                {/* Biometric unlock toggle (hidden when unsupported) */}
+                {biometricSupported && (
+                  <div className="border-t pt-4 space-y-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-0.5">
+                        <p className="text-sm font-medium flex items-center gap-2">
+                          <Fingerprint className="w-4 h-4 text-primary" />
+                          Biometric unlock
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Unlock with Face ID, Touch ID, or your device biometric. Your PIN is still required to set this up and is the only thing that ever decrypts your journal.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={biometricEnabled}
+                        disabled={biometricBusy}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setShowBiometricEnroll(true);
+                          } else {
+                            handleDisableBiometric();
+                          }
+                        }}
+                        data-testid="switch-biometric-unlock"
+                      />
+                    </div>
+
+                    {showBiometricEnroll && !biometricEnabled && (
+                      <div className="p-4 border rounded-lg bg-muted/50 space-y-3 animate-in slide-in-from-top-2">
+                        <h4 className="font-medium text-sm">Confirm your PIN to enable biometric</h4>
+                        <p className="text-xs text-muted-foreground">
+                          We need your current PIN once so we can store it locked behind your device biometric.
+                        </p>
+                        <div className="space-y-2">
+                          <Label htmlFor="biometricPin">Current PIN</Label>
+                          <Input
+                            id="biometricPin"
+                            type="password"
+                            inputMode="numeric"
+                            maxLength={4}
+                            value={biometricEnrollPin}
+                            onChange={e => setBiometricEnrollPin(e.target.value.replace(/[^0-9]/g, ''))}
+                            data-testid="input-biometric-enroll-pin"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleEnableBiometric}
+                            disabled={biometricBusy || biometricEnrollPin.length !== 4}
+                            data-testid="button-confirm-enable-biometric"
+                          >
+                            {biometricBusy ? 'Setting up…' : 'Enable biometric'}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => { setShowBiometricEnroll(false); setBiometricEnrollPin(''); }}
+                            disabled={biometricBusy}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {showChangePin && (
                   <div className="p-4 border rounded-lg bg-muted/50 space-y-3 animate-in slide-in-from-top-2">
                     <h4 className="font-medium text-sm">Change your PIN</h4>
@@ -864,6 +1028,47 @@ export function Settings() {
             <p className="text-sm text-muted-foreground">
               Google Drive backup is not enabled. Contact the app administrator to set it up.
             </p>
+          )}
+
+          {/* Backup-staleness reminder controls (always shown when Drive is configured) */}
+          {configured && (
+            <div className="space-y-3 rounded-lg border p-4 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">Remind me to back up</p>
+                  <p className="text-xs text-muted-foreground">Show a banner on the dashboard if my last backup is older than this.</p>
+                </div>
+                <Select
+                  value={String(backupReminderDays)}
+                  onValueChange={handleBackupReminderChange}
+                  disabled={manualBackupOnly}
+                >
+                  <SelectTrigger className="w-40" data-testid="select-backup-reminder-days">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {THRESHOLD_OPTIONS.map(d => (
+                      <SelectItem key={d} value={String(d)} data-testid={`select-backup-reminder-${d}`}>
+                        Every {d} days
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-row items-start justify-between gap-4 pt-3 border-t">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">I'll handle backups manually</p>
+                  <p className="text-xs text-muted-foreground">
+                    Suppresses the dashboard reminder. Use this if you back up via JSON export instead of Drive.
+                  </p>
+                </div>
+                <Switch
+                  checked={manualBackupOnly}
+                  onCheckedChange={handleManualBackupOnlyToggle}
+                  data-testid="switch-manual-backup-only"
+                />
+              </div>
+            </div>
           )}
 
           {/* Configured: show connection status */}

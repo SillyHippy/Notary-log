@@ -97,6 +97,13 @@ export interface NotarySettings {
   // Caller is expected to keep this ≤ ~200 KB to avoid bloating backups.
   // Stored encrypted along with the rest of settings.
   sealImage?: string;
+  // Backup-staleness nudge configuration.
+  // `backupReminderDays` is the threshold (in days) past which the dashboard
+  // shows a yellow "back up now?" banner. Default is 7 when unset.
+  // `manualBackupOnly` opts out of the nudge entirely (the user has accepted
+  // responsibility for backing up via JSON export).
+  backupReminderDays?: number;
+  manualBackupOnly?: boolean;
 }
 
 // ── Storage shapes (encrypted records actually written to IDB) ─────────────
@@ -228,6 +235,24 @@ export async function unlock(pin: string): Promise<boolean> {
     if (value !== CANARY_PLAINTEXT) return false;
     cryptoKey = key;
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Non-mutating PIN check. Used when the journal is already unlocked but we
+ * need to confirm the user knows their current PIN (for example, before
+ * enrolling biometric unlock). Does NOT swap the in-memory crypto key.
+ */
+export async function verifyPin(pin: string): Promise<boolean> {
+  const meta = await getCryptoMeta();
+  if (!meta) return false;
+  const salt = base64ToBytes(meta.salt);
+  const candidate = await deriveKey(pin, salt, meta.iterations);
+  try {
+    const value = await decryptJSON<string>(candidate, meta.canary);
+    return value === CANARY_PLAINTEXT;
   } catch {
     return false;
   }

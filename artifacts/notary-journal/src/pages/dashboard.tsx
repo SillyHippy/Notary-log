@@ -12,28 +12,61 @@ import {
   User,
   Calendar,
   AlertCircle,
-  FileBarChart
+  FileBarChart,
+  CloudUpload,
+  X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/hooks/use-toast';
 import { 
   getStats, 
   getRecentEntries, 
   getSettings, 
+  getAllEntries,
   type JournalEntry,
   type NotarySettings
 } from '@/lib/db';
+import {
+  isGdriveConfigured,
+  getStoredToken,
+  getLastBackupTime,
+  backupToDrive,
+} from '@/lib/gdrive';
+import {
+  computeBackupNudge,
+  getSnoozeUntilMs,
+  snoozeForOneDay,
+  clearSnooze,
+  DEFAULT_THRESHOLD_DAYS,
+  type BackupNudgeState,
+} from '@/lib/backup-nudge';
 
 export function Dashboard() {
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState({ total: 0, completed: 0, draft: 0, thisMonth: 0, totalFees: 0 });
   const [recentEntries, setRecentEntries] = useState<JournalEntry[]>([]);
   const [settings, setSettings] = useState<NotarySettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [nudge, setNudge] = useState<BackupNudgeState>({ kind: 'none', daysSince: null, message: '' });
+  const [nudgeBusy, setNudgeBusy] = useState(false);
+
+  const refreshNudge = (settingsData: NotarySettings | null) => {
+    setNudge(computeBackupNudge({
+      lastBackupIso: getLastBackupTime(),
+      thresholdDays: settingsData?.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS,
+      snoozeUntilMs: getSnoozeUntilMs(),
+      manualBackupOnly: !!settingsData?.manualBackupOnly,
+      gdriveAvailable: isGdriveConfigured(),
+      gdriveConnected: !!getStoredToken(),
+      now: Date.now(),
+    }));
+  };
 
   useEffect(() => {
     const loadData = async () => {
@@ -48,11 +81,36 @@ export function Dashboard() {
       setStats(statsData);
       setRecentEntries(recentData);
       setSettings(settingsData);
+      refreshNudge(settingsData);
       setIsLoading(false);
     };
     
     loadData();
   }, []);
+
+  const handleBackupNow = async () => {
+    setNudgeBusy(true);
+    try {
+      const entries = await getAllEntries();
+      const s = await getSettings();
+      await backupToDrive(entries, s);
+      clearSnooze();
+      toast({ title: 'Backup complete', description: 'Journal backed up to Google Drive.' });
+      refreshNudge(s);
+    } catch (err) {
+      toast({
+        title: 'Backup failed',
+        description: err instanceof Error ? err.message : 'Could not back up to Drive.',
+        variant: 'destructive',
+      });
+    }
+    setNudgeBusy(false);
+  };
+
+  const handleSnooze = () => {
+    snoozeForOneDay();
+    refreshNudge(settings);
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,6 +173,47 @@ export function Dashboard() {
           </form>
         </div>
       </div>
+
+      {/* Backup-staleness nudge */}
+      {nudge.kind !== 'none' && (
+        <div
+          className="mb-6 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-4 flex flex-col sm:flex-row sm:items-center gap-3"
+          data-testid="backup-nudge-banner"
+        >
+          <CloudUpload className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0" />
+          <div className="flex-1 text-sm text-amber-900 dark:text-amber-200">
+            {nudge.message}
+          </div>
+          <div className="flex gap-2">
+            {nudge.kind === 'never-configured' ? (
+              <Link href="/settings">
+                <Button size="sm" data-testid="button-nudge-setup">
+                  Open settings
+                </Button>
+              </Link>
+            ) : (
+              <Button
+                size="sm"
+                onClick={handleBackupNow}
+                disabled={nudgeBusy}
+                data-testid="button-nudge-backup-now"
+              >
+                {nudgeBusy ? 'Backing up…' : 'Back up now'}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleSnooze}
+              disabled={nudgeBusy}
+              data-testid="button-nudge-snooze"
+              title="Hide for 24 hours"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
