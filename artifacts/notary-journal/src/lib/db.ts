@@ -458,7 +458,7 @@ const IMMUTABLE_FIELDS: Array<keyof JournalEntry> = [
   'signerFullName', 'signerAddress', 'signerCity', 'signerState', 'signerDOB', 'signerPhone',
   'idType', 'idNumber', 'idIssuingState', 'idExpirationDate',
   'documentType', 'documentDate', 'documentDescription',
-  'notarialActType', 'feeCharged', 'feeWaived',
+  'notarialActType', 'feeCharged', 'feeWaived', 'feeType',
   'locationCity', 'locationState', 'locationAddress',
   'idFrontImage', 'idBackImage', 'signatureImage',
 ];

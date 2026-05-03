@@ -33,6 +33,13 @@ export const ACT_TYPE_TO_FEE_TYPE: Record<NotarialActType, FeeType> = {
  * Resolve an entry's fee category. Older entries lack the `feeType` field;
  * we derive a sensible default from `notarialActType` so reports and exports
  * work without rewriting (and thus invalidating) signed historical entries.
+ *
+ * Design note: an earlier draft of this feature called for a one-time data
+ * migration that back-filled `feeType = 'Other'` on existing rows. We
+ * intentionally chose a read-time fallback instead because every completed
+ * entry is content-hashed (see `generateEntryHash` in db.ts) and rewriting
+ * fields on disk would invalidate the chain. Reports therefore see a sensible
+ * category for legacy rows without breaking tamper-evidence.
  */
 export function resolveFeeType(entry: Pick<JournalEntry, 'feeType' | 'notarialActType'>): FeeType {
   if (entry.feeType && (FEE_TYPES as readonly string[]).includes(entry.feeType)) {
