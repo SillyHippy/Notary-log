@@ -188,34 +188,63 @@ export function Reports() {
         </Card>
       </div>
 
-      {/* Monthly chart */}
+      {/* Monthly chart + per-month counts table */}
       <Card>
         <CardHeader>
           <CardTitle>Monthly Breakdown</CardTitle>
-          <CardDescription>Fees collected each month in {year}</CardDescription>
+          <CardDescription>Fees collected and acts performed each month in {year}</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
           {rollup.totals.count === 0 ? (
             <p className="text-sm text-muted-foreground py-8 text-center">
               No completed entries for {year} yet.
             </p>
           ) : (
-            <div className="w-full h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthlyChartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="month" className="text-xs" />
-                  <YAxis className="text-xs" />
-                  <Tooltip
-                    formatter={(value: number, name: string) =>
-                      name === 'Collected' ? [`$${value.toFixed(2)}`, name] : [value, name]
-                    }
-                  />
-                  <Legend />
-                  <Bar dataKey="Collected" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <>
+              <div className="w-full h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyChartData} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis dataKey="month" className="text-xs" />
+                    <YAxis className="text-xs" />
+                    <Tooltip
+                      formatter={(value: number, name: string) =>
+                        name === 'Collected' ? [`$${value.toFixed(2)}`, name] : [value, name]
+                      }
+                    />
+                    <Legend />
+                    <Bar dataKey="Collected" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Acts" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm" data-testid="table-monthly-breakdown">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 pr-4 font-medium">Month</th>
+                      <th className="py-2 pr-4 font-medium text-right">Acts</th>
+                      <th className="py-2 pr-4 font-medium text-right">Charged</th>
+                      <th className="py-2 pr-4 font-medium text-right">Collected</th>
+                      <th className="py-2 pr-4 font-medium text-right">Waived (acts)</th>
+                      <th className="py-2 pr-4 font-medium text-right">Waived (est. $)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {rollup.monthly.map((b, i) => (
+                      <tr key={i}>
+                        <td className="py-2 pr-4 font-medium">{MONTH_LABELS[i]}</td>
+                        <td className="py-2 pr-4 text-right">{b.count}</td>
+                        <td className="py-2 pr-4 text-right">{b.chargedCount}</td>
+                        <td className="py-2 pr-4 text-right">{fmtUsd(b.collectedCents)}</td>
+                        <td className="py-2 pr-4 text-right">{b.waivedCount}</td>
+                        <td className="py-2 pr-4 text-right">{fmtUsd(b.waivedEstimatedCents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

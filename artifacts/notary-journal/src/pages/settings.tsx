@@ -240,14 +240,24 @@ export function Settings() {
     if (!ctx) throw new Error('Canvas not supported');
     ctx.drawImage(img, 0, 0, w, h);
     // Try PNG first to preserve transparency; fall back to JPEG if too big.
+    // The base64 representation is ~37% larger than the raw byte count, so we
+    // compare data-URL length against `maxBytes * 1.37`. If even the lowest
+    // quality JPEG can't get under the cap we throw — backups embed this on
+    // every PDF, so we won't silently let a 1 MB PNG through.
+    const cap = Math.round(maxBytes * 1.37);
     let out = canvas.toDataURL('image/png');
-    if (out.length > maxBytes * 1.37 /* base64 overhead */) {
+    if (out.length > cap) {
       let q = 0.85;
       out = canvas.toDataURL('image/jpeg', q);
-      while (out.length > maxBytes * 1.37 && q > 0.4) {
+      while (out.length > cap && q > 0.4) {
         q -= 0.1;
         out = canvas.toDataURL('image/jpeg', q);
       }
+    }
+    if (out.length > cap) {
+      throw new Error(
+        `Seal image is too large after compression (${Math.round(out.length / 1024)} KB; limit ~${Math.round(maxBytes / 1024)} KB). Try a smaller or simpler image.`,
+      );
     }
     return out;
   }
