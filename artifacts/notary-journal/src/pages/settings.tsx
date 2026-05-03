@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -544,9 +545,18 @@ export function Settings() {
 
   return (
     <div className="p-6 lg:p-8 max-w-4xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground mt-1">Manage your notary profile and app preferences</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+          <p className="text-muted-foreground mt-1">Manage your notary profile and app preferences</p>
+        </div>
+        <Link
+          href="/reports"
+          className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline whitespace-nowrap"
+          data-testid="link-settings-reports"
+        >
+          View Annual Report →
+        </Link>
       </div>
 
       <Form {...form}>

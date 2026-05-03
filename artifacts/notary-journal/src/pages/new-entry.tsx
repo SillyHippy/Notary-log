@@ -1001,10 +1001,21 @@ export function NewEntry() {
                                 if (isWaived) {
                                   form.setValue('feeCharged', 0);
                                 } else {
-                                  // Reset to app-derived so toggling Waive off
-                                  // re-applies the configured default for the
-                                  // currently-selected fee type.
+                                  // Reset to app-derived AND immediately
+                                  // restore the configured default for the
+                                  // currently-selected fee type so the user
+                                  // doesn't have to re-pick to see it.
                                   isFeeAppDerivedRef.current = true;
+                                  const ft = form.getValues('feeType') as FeeType | undefined;
+                                  const next = ft
+                                    ? shouldApplyAutoFee({
+                                        feeType: ft,
+                                        isWaived: false,
+                                        isAppDerived: true,
+                                        settings: appSettings,
+                                      })
+                                    : null;
+                                  if (next !== null) form.setValue('feeCharged', next / 100);
                                 }
                               }}
                             >
