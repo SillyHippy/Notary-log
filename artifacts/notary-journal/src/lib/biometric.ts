@@ -4,21 +4,27 @@
  * Strategy: a platform credential's PRF output is a deterministic, per-RP
  * secret that the device only releases after a successful biometric prompt
  * (Face ID / Touch ID / fingerprint / Windows Hello). We use that output as
- * key material to wrap a copy of the user's PIN. On unlock, the same PRF
- * call yields the same wrapping key, so we can decrypt the stored PIN and
- * feed it through the existing `unlock(pin)` path.
+ * key material to wrap a copy of the journal's data-encryption key (the
+ * raw 32-byte AES-GCM key material derived from the user's PIN). On unlock,
+ * the same PRF call yields the same wrapping key, so we can decrypt the
+ * stored key material and import it directly as the in-memory journal key.
  *
- * Important:
- *   - The PIN itself is still required to bootstrap encryption at-rest;
- *     biometric only caches it, locked behind the device's biometric.
+ * IMPORTANT — what is and is not stored:
+ *   - We NEVER store the PIN itself, plaintext or wrapped. The PIN is only
+ *     used at enrollment time, just long enough to derive the key material,
+ *     which is then immediately overwritten in memory.
+ *   - We store only `{credentialId, prfSalt, wrappedKey}` in IDB. The
+ *     `wrappedKey` is the 32-byte journal key, encrypted with the PRF-derived
+ *     wrapping key. Without a successful biometric prompt that yields the
+ *     same PRF output, the wrapped key is opaque ciphertext.
  *   - If PRF isn't supported by the platform authenticator, enable throws
- *     and the toggle should stay off.
- *   - Disabling, changing the PIN, or losing the credential invalidates
- *     the wrapped PIN (and therefore the biometric path).
+ *     and the toggle stays off.
+ *   - Disabling, changing the PIN, or losing the credential invalidates the
+ *     wrapped key (and therefore the biometric path).
  */
 
 import { bytesToBase64, base64ToBytes, encryptJSON, decryptJSON, type EncBlob } from './crypto';
-import { getDB } from './db';
+import { getDB, deriveJournalKeyMaterial, unlockWithKeyMaterial } from './db';
 
 const META_KEY = 'biometric';
 // The PRF "salt" (eval input) is fixed per record. Rotated by uninstall/disable.
@@ -31,7 +37,9 @@ export interface BiometricRecord {
   id: 'biometric';
   credentialId: string;   // base64 (raw)
   prfSalt: string;        // base64 (32 bytes)
-  wrappedPin: EncBlob;    // PIN encrypted with key derived from PRF output
+  // The journal's 32-byte AES-GCM key material, encrypted with a key derived
+  // from the WebAuthn PRF output. NOT the user's PIN.
+  wrappedKey: EncBlob;
   createdAt: string;
 }
 
@@ -110,14 +118,19 @@ export function extractPrfOutput(results: AuthenticationExtensionsClientOutputs 
 // ── Enable / unlock ────────────────────────────────────────────────────────
 
 /**
- * Register a platform credential locked behind device biometric and store a
- * PRF-wrapped copy of the PIN. Throws if the device doesn't support PRF.
+ * Register a platform credential locked behind device biometric, derive the
+ * journal's encryption key from the supplied PIN, and store the key wrapped
+ * by a PRF-derived key. Throws if the device doesn't support PRF or if the
+ * PIN is wrong (so we never wrap a useless key).
  *
  * Two-step flow:
  *   1. `navigator.credentials.create` to register a new platform passkey.
  *   2. `navigator.credentials.get` immediately after, with the same PRF salt,
  *      to actually retrieve the PRF output. (Many authenticators only return
  *      PRF support — not the output itself — during create.)
+ *
+ * The PIN is consumed inside this function: the derived key material is
+ * wrapped, the cleartext copy zeroed, and only the wrapped form is persisted.
  */
 export async function enableBiometric(pin: string): Promise<void> {
   if (!isBiometricApiAvailable()) {
@@ -127,65 +140,80 @@ export async function enableBiometric(pin: string): Promise<void> {
     throw new Error('PIN required to enable biometric unlock.');
   }
 
-  const prfSalt = crypto.getRandomValues(new Uint8Array(PRF_SALT_BYTES));
-  const userId = crypto.getRandomValues(new Uint8Array(16));
-  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  // Derive the journal key material BEFORE invoking WebAuthn so we can fail
+  // fast on a wrong PIN without prompting the user for biometric.
+  const keyMaterial = await deriveJournalKeyMaterial(pin);
+  if (!keyMaterial) {
+    throw new Error('Incorrect PIN — cannot enroll biometric unlock.');
+  }
 
-  const created = (await navigator.credentials.create({
-    publicKey: {
-      challenge: challenge as unknown as BufferSource,
-      rp: { name: RP_NAME },
-      user: {
-        id: userId as unknown as BufferSource,
-        name: USER_NAME,
-        displayName: USER_DISPLAY,
+  try {
+    const prfSalt = crypto.getRandomValues(new Uint8Array(PRF_SALT_BYTES));
+    const userId = crypto.getRandomValues(new Uint8Array(16));
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+
+    const created = (await navigator.credentials.create({
+      publicKey: {
+        challenge: challenge as unknown as BufferSource,
+        rp: { name: RP_NAME },
+        user: {
+          id: userId as unknown as BufferSource,
+          name: USER_NAME,
+          displayName: USER_DISPLAY,
+        },
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 },   // ES256
+          { type: 'public-key', alg: -257 }, // RS256
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+          residentKey: 'preferred',
+        },
+        timeout: 60_000,
+        extensions: {
+          prf: { eval: { first: prfSalt as unknown as BufferSource } },
+        } as AuthenticationExtensionsClientInputs,
       },
-      pubKeyCredParams: [
-        { type: 'public-key', alg: -7 },   // ES256
-        { type: 'public-key', alg: -257 }, // RS256
-      ],
-      authenticatorSelection: {
-        authenticatorAttachment: 'platform',
-        userVerification: 'required',
-        residentKey: 'preferred',
-      },
-      timeout: 60_000,
-      extensions: {
-        prf: { eval: { first: prfSalt as unknown as BufferSource } },
-      } as AuthenticationExtensionsClientInputs,
-    },
-  })) as PublicKeyCredential | null;
+    })) as PublicKeyCredential | null;
 
-  if (!created) throw new Error('Biometric registration was cancelled.');
+    if (!created) throw new Error('Biometric registration was cancelled.');
 
-  const credentialId = new Uint8Array(created.rawId);
+    const credentialId = new Uint8Array(created.rawId);
 
-  // Step 2: actually fetch the PRF output via a get() call.
-  const prfOutput = await assertAndGetPrfOutput(credentialId, prfSalt);
+    // Step 2: actually fetch the PRF output via a get() call.
+    const prfOutput = await assertAndGetPrfOutput(credentialId, prfSalt);
 
-  const wrappingKey = await importPrfWrappingKey(prfOutput);
-  const wrappedPin = await encryptJSON(wrappingKey, pin);
+    const wrappingKey = await importPrfWrappingKey(prfOutput);
+    // Encode as base64 inside the EncBlob so we never JSON.stringify a
+    // Uint8Array (which would lose the byte values).
+    const wrappedKey = await encryptJSON(wrappingKey, bytesToBase64(keyMaterial));
 
-  const record: BiometricRecord = {
-    id: META_KEY,
-    credentialId: bytesToBase64(credentialId),
-    prfSalt: bytesToBase64(prfSalt),
-    wrappedPin,
-    createdAt: new Date().toISOString(),
-  };
-  const db = await getDB();
-  await db.put('meta', record);
+    const record: BiometricRecord = {
+      id: META_KEY,
+      credentialId: bytesToBase64(credentialId),
+      prfSalt: bytesToBase64(prfSalt),
+      wrappedKey,
+      createdAt: new Date().toISOString(),
+    };
+    const db = await getDB();
+    await db.put('meta', record);
+  } finally {
+    // Best-effort wipe of the in-memory key material copy.
+    keyMaterial.fill(0);
+  }
 }
 
 /**
- * Prompt the device biometric and return the unwrapped PIN. Caller passes the
- * PIN to the existing `unlock()` path. Returns null if the user cancelled,
- * the credential is gone, or PRF is no longer available.
+ * Prompt the device biometric, unwrap the journal key, and install it as the
+ * in-memory journal key (via `unlockWithKeyMaterial`). Returns true on
+ * success, false on cancel / missing credential / PRF unavailable / stale
+ * wrapped key.
  */
-export async function unwrapPinWithBiometric(): Promise<string | null> {
+export async function unlockWithBiometric(): Promise<boolean> {
   const record = await getBiometricRecord();
-  if (!record) return null;
-  if (!isBiometricApiAvailable()) return null;
+  if (!record) return false;
+  if (!isBiometricApiAvailable()) return false;
 
   const credentialId = base64ToBytes(record.credentialId);
   const prfSalt = base64ToBytes(record.prfSalt);
@@ -194,14 +222,22 @@ export async function unwrapPinWithBiometric(): Promise<string | null> {
   try {
     prfOutput = await assertAndGetPrfOutput(credentialId, prfSalt);
   } catch {
-    return null;
+    return false;
+  }
+
+  let material: Uint8Array;
+  try {
+    const wrappingKey = await importPrfWrappingKey(prfOutput);
+    const b64 = await decryptJSON<string>(wrappingKey, record.wrappedKey);
+    material = base64ToBytes(b64);
+  } catch {
+    return false;
   }
 
   try {
-    const wrappingKey = await importPrfWrappingKey(prfOutput);
-    return await decryptJSON<string>(wrappingKey, record.wrappedPin);
-  } catch {
-    return null;
+    return await unlockWithKeyMaterial(material);
+  } finally {
+    material.fill(0);
   }
 }
 

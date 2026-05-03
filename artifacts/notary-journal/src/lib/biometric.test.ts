@@ -5,9 +5,29 @@ import {
 } from './biometric';
 import { encryptJSON, decryptJSON } from './crypto';
 
-// We mock IDB out via vi.mock('./db') so we don't need a real IndexedDB shim
-// in this Node-only test environment. The mocked store is a plain Map.
+// We mock IDB and the parts of db.ts the biometric module touches:
+//   - getDB returns a Map-backed fake `meta` store
+//   - deriveJournalKeyMaterial returns deterministic bytes per PIN
+//   - unlockWithKeyMaterial only succeeds for the bytes that match the
+//     "current" PIN — so we can simulate the post-PIN-change stale path.
 const fakeMeta = new Map<string, unknown>();
+let currentPin = '1234';
+function materialFor(pin: string): Uint8Array {
+  // Deterministic 32-byte material derived from the PIN — sha256(pin) makes
+  // the test reflect the real flow (different PIN ⇒ different bytes).
+  const bytes = new TextEncoder().encode('material:' + pin);
+  // Pad/truncate to exactly 32 bytes.
+  const out = new Uint8Array(32);
+  out.set(bytes.subarray(0, 32));
+  for (let i = bytes.length; i < 32; i++) out[i] = (i * 7) & 0xff;
+  return out;
+}
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 vi.mock('./db', () => ({
   getDB: async () => ({
     get: async (_store: string, key: string) => fakeMeta.get(key),
@@ -18,14 +38,22 @@ vi.mock('./db', () => ({
       fakeMeta.delete(key);
     },
   }),
+  deriveJournalKeyMaterial: async (pin: string) => {
+    if (pin !== currentPin) return null;
+    return materialFor(pin);
+  },
+  unlockWithKeyMaterial: async (mat: Uint8Array) => {
+    return bytesEqual(mat, materialFor(currentPin));
+  },
 }));
 
 // Re-import after mock so the SUT picks up the fake `getDB`.
 const {
   enableBiometric,
-  unwrapPinWithBiometric,
+  unlockWithBiometric,
   isBiometricEnabled,
   clearBiometric,
+  getBiometricRecord,
 } = await import('./biometric');
 
 // ── Fake WebAuthn (PRF-capable platform authenticator) ─────────────────────
@@ -124,9 +152,10 @@ describe('biometric helpers (pure)', () => {
   });
 });
 
-describe('enable + unwrap round-trip (mocked WebAuthn + mocked IDB)', () => {
+describe('enable + unlock round-trip (mocked WebAuthn + mocked IDB)', () => {
   beforeEach(() => {
     fakeMeta.clear();
+    currentPin = '1234';
     installFakeWebAuthn();
   });
 
@@ -134,23 +163,45 @@ describe('enable + unwrap round-trip (mocked WebAuthn + mocked IDB)', () => {
     uninstallFakeWebAuthn();
   });
 
-  it('wraps the PIN on enable and unwraps the same PIN on unlock', async () => {
+  it('wraps the JOURNAL KEY (not the PIN) on enable and unwraps the same key on unlock', async () => {
     expect(await isBiometricEnabled()).toBe(false);
     await enableBiometric('1234');
     expect(await isBiometricEnabled()).toBe(true);
 
-    const recovered = await unwrapPinWithBiometric();
-    expect(recovered).toBe('1234');
+    const rec = await getBiometricRecord();
+    expect(rec).toBeDefined();
+    // Critical security assertion: the stored record must NOT contain a
+    // `wrappedPin` field. It should expose `wrappedKey` instead.
+    expect(rec).not.toHaveProperty('wrappedPin');
+    expect(rec).toHaveProperty('wrappedKey');
+
+    // The unlock path installs the journal key via unlockWithKeyMaterial.
+    expect(await unlockWithBiometric()).toBe(true);
+  });
+
+  it('refuses to enroll when the PIN is wrong (key material derivation fails)', async () => {
+    await expect(enableBiometric('9999')).rejects.toThrow(/Incorrect PIN/);
+    expect(await isBiometricEnabled()).toBe(false);
+  });
+
+  it('returns false from unlock after the PIN has changed (stale wrapped key)', async () => {
+    await enableBiometric('1234');
+    expect(await unlockWithBiometric()).toBe(true);
+
+    // Simulate a PIN change: the journal's key material is now different,
+    // so the wrapped bytes no longer decrypt the canary.
+    currentPin = '5678';
+    expect(await unlockWithBiometric()).toBe(false);
   });
 
   it('clearBiometric disables biometric unlock', async () => {
-    await enableBiometric('9876');
+    await enableBiometric('1234');
     await clearBiometric();
     expect(await isBiometricEnabled()).toBe(false);
-    expect(await unwrapPinWithBiometric()).toBeNull();
+    expect(await unlockWithBiometric()).toBe(false);
   });
 
-  it('returns null from unwrap when no biometric is enrolled', async () => {
-    expect(await unwrapPinWithBiometric()).toBeNull();
+  it('returns false from unlock when no biometric is enrolled', async () => {
+    expect(await unlockWithBiometric()).toBe(false);
   });
 });

@@ -13,7 +13,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import { getSettings, saveSettings, getAllEntries, changePin, verifyPin, lock, verifyChain, importEntry, recomputeChainFrom, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
+import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
 import {
   isPlatformAuthenticatorAvailable,
   isBiometricEnabled,
@@ -236,14 +236,9 @@ export function Settings() {
         setBiometricBusy(false);
         return;
       }
-      // Verify the PIN against the canary before wrapping it — otherwise we'd
-      // happily store an incorrect PIN that would silently fail at unlock.
-      const verified = await verifyPin(biometricEnrollPin);
-      if (!verified) {
-        toast({ title: 'PIN incorrect', description: 'That PIN does not match your current PIN.', variant: 'destructive' });
-        setBiometricBusy(false);
-        return;
-      }
+      // enableBiometric performs its own PIN verification (it has to derive
+      // the journal key material) — a wrong PIN throws and we surface that
+      // as a friendly error instead of silently wrapping bad bytes.
       await enableBiometric(biometricEnrollPin);
       setBiometricEnabled(true);
       setShowBiometricEnroll(false);
@@ -273,7 +268,7 @@ export function Settings() {
     setBackupReminderDays(days);
     const current = await getSettings();
     await saveSettings({ ...current, backupReminderDays: days } as NotarySettings);
-    clearSnooze();
+    await clearSnooze();
     toast({ title: 'Backup reminder updated', description: `You'll be reminded if your backup is older than ${days} days.` });
   };
 
@@ -281,7 +276,7 @@ export function Settings() {
     setManualBackupOnly(checked);
     const current = await getSettings();
     await saveSettings({ ...current, manualBackupOnly: checked } as NotarySettings);
-    if (checked) clearSnooze();
+    if (checked) await clearSnooze();
   };
 
   const handleSaveDefaultFees = async () => {

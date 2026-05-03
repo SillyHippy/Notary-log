@@ -5,8 +5,10 @@ import {
   canonicalJson,
   decryptJSON,
   deriveKey,
+  deriveKeyMaterial,
   encryptJSON,
   generateSalt,
+  importAesKey,
   sha256Hex,
   DEFAULT_ITERATIONS,
   type EncBlob,
@@ -253,6 +255,57 @@ export async function verifyPin(pin: string): Promise<boolean> {
   try {
     const value = await decryptJSON<string>(candidate, meta.canary);
     return value === CANARY_PLAINTEXT;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Derive the journal encryption key MATERIAL (raw 32 bytes) for the given
+ * PIN. Caller is expected to immediately wrap these bytes with another key
+ * (e.g. one derived from a WebAuthn PRF output) and discard the cleartext
+ * copy. Returns null if the PIN does not match the canary, which keeps this
+ * helper safe to call before re-confirming a PIN.
+ */
+export async function deriveJournalKeyMaterial(pin: string): Promise<Uint8Array | null> {
+  const meta = await getCryptoMeta();
+  if (!meta) return null;
+  const salt = base64ToBytes(meta.salt);
+  // Verify against canary first so we never hand out key material for a
+  // wrong PIN (which would invisibly poison biometric enrollment).
+  const verifyKey = await deriveKey(pin, salt, meta.iterations);
+  try {
+    const value = await decryptJSON<string>(verifyKey, meta.canary);
+    if (value !== CANARY_PLAINTEXT) return null;
+  } catch {
+    return null;
+  }
+  return deriveKeyMaterial(pin, salt, meta.iterations);
+}
+
+/**
+ * Unlock using raw key material (32 bytes) instead of a PIN. Used by the
+ * biometric path: the wrapped key is unwrapped via PRF, imported as an
+ * AES-GCM key, and verified against the canary before being installed as
+ * the in-memory journal key.
+ *
+ * Returns true on success, false if the material is the wrong key (e.g.
+ * stale wrapped key after a PIN change). Throws on missing setup.
+ */
+export async function unlockWithKeyMaterial(material: Uint8Array): Promise<boolean> {
+  const meta = await getCryptoMeta();
+  if (!meta) throw new Error('Encryption is not set up on this device');
+  let candidate: CryptoKey;
+  try {
+    candidate = await importAesKey(material);
+  } catch {
+    return false;
+  }
+  try {
+    const value = await decryptJSON<string>(candidate, meta.canary);
+    if (value !== CANARY_PLAINTEXT) return false;
+    cryptoKey = candidate;
+    return true;
   } catch {
     return false;
   }

@@ -5,8 +5,7 @@ import { unlock as unlockDB, needsMigration, migratePlaintext } from '@/lib/db';
 import {
   isBiometricEnabled,
   isPlatformAuthenticatorAvailable,
-  unwrapPinWithBiometric,
-  clearBiometric,
+  unlockWithBiometric,
 } from '@/lib/biometric';
 
 interface PinLockProps {
@@ -91,19 +90,18 @@ export function PinLock({ onUnlock }: PinLockProps) {
     setBiometricBusy(true);
     setBiometricError(null);
     try {
-      const recoveredPin = await unwrapPinWithBiometric();
-      if (!recoveredPin) {
-        // User cancelled, PRF failed, or credential is gone.
-        setBiometricBusy(false);
-        return;
-      }
-      const ok = await unlockDB(recoveredPin);
+      const ok = await unlockWithBiometric();
       if (!ok) {
-        // The wrapped PIN no longer matches (PIN was changed elsewhere). Wipe
-        // the stale biometric record and fall back to PIN entry.
-        await clearBiometric();
-        setBiometricAvailable(false);
-        setBiometricError('Biometric is out of date — please enter your PIN.');
+        // Could be: user cancelled, PRF failed, credential gone, OR the
+        // wrapped key is stale (PIN was changed elsewhere). We can't easily
+        // distinguish cancel from stale, so only wipe the record if the
+        // record exists AND we know the wrapped key actually decrypted but
+        // failed canary — `unlockWithBiometric` returns false in both cases.
+        // To stay safe, only clear the record on a definite stale-key
+        // signal: if biometric is still enabled but unlock failed twice in
+        // a row we'd need extra plumbing. For now, fall back silently and
+        // let the user enter the PIN. If the PIN later succeeds, the next
+        // session can re-enroll.
         setBiometricBusy(false);
         return;
       }

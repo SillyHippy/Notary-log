@@ -1,29 +1,28 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 
-// Minimal localStorage shim for the Node test environment (vitest runs without
-// jsdom by default in this project). The snooze helpers fall back to `null`
-// when localStorage is unavailable, but to actually test the round-trip we
-// need a working store.
-if (typeof localStorage === 'undefined') {
-  const store = new Map<string, string>();
-  (globalThis as unknown as { localStorage: Storage }).localStorage = {
-    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
-    setItem: (k: string, v: string) => { store.set(k, String(v)); },
-    removeItem: (k: string) => { store.delete(k); },
-    clear: () => { store.clear(); },
-    key: (i: number) => Array.from(store.keys())[i] ?? null,
-    get length() { return store.size; },
-  } as Storage;
-}
+// Mock the IDB-backed snooze persistence layer with a Map-backed fake `meta`
+// store. Mirrors the shim used in biometric.test.ts.
+const fakeMeta = new Map<string, unknown>();
+vi.mock('./db', () => ({
+  getDB: async () => ({
+    get: async (_store: string, key: string) => fakeMeta.get(key),
+    put: async (_store: string, value: { id: string }) => {
+      fakeMeta.set(value.id, value);
+    },
+    delete: async (_store: string, key: string) => {
+      fakeMeta.delete(key);
+    },
+  }),
+}));
 
-import {
+const {
   computeBackupNudge,
   getSnoozeUntilMs,
   snoozeForOneDay,
   clearSnooze,
   DEFAULT_THRESHOLD_DAYS,
   SNOOZE_HOURS,
-} from './backup-nudge';
+} = await import('./backup-nudge');
 
 const NOW = Date.parse('2026-05-03T12:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -70,7 +69,6 @@ describe('computeBackupNudge', () => {
   });
 
   it('returns "none" exactly on the boundary day (threshold = strict greater-or-equal)', () => {
-    // 7 full days at threshold 7 ⇒ stale; less-than-7 ⇒ none
     const justUnder = computeBackupNudge(base({
       lastBackupIso: new Date(NOW - 7 * DAY + 1).toISOString(),
       thresholdDays: 7,
@@ -148,26 +146,26 @@ describe('computeBackupNudge', () => {
   });
 });
 
-describe('snooze persistence', () => {
+describe('snooze persistence (IndexedDB)', () => {
   beforeEach(() => {
-    localStorage.clear();
+    fakeMeta.clear();
   });
 
-  it('round-trips the snooze deadline through localStorage', () => {
-    expect(getSnoozeUntilMs()).toBeNull();
-    snoozeForOneDay(NOW);
-    const got = getSnoozeUntilMs();
+  it('round-trips the snooze deadline through IDB', async () => {
+    expect(await getSnoozeUntilMs()).toBeNull();
+    await snoozeForOneDay(NOW);
+    const got = await getSnoozeUntilMs();
     expect(got).toBe(NOW + SNOOZE_HOURS * 60 * 60 * 1000);
   });
 
-  it('clearSnooze removes the deadline', () => {
-    snoozeForOneDay(NOW);
-    clearSnooze();
-    expect(getSnoozeUntilMs()).toBeNull();
+  it('clearSnooze removes the deadline', async () => {
+    await snoozeForOneDay(NOW);
+    await clearSnooze();
+    expect(await getSnoozeUntilMs()).toBeNull();
   });
 
-  it('returns null when the stored value is malformed', () => {
-    localStorage.setItem('gdrive_backup_snooze_until', 'not-a-number');
-    expect(getSnoozeUntilMs()).toBeNull();
+  it('returns null when the stored value is malformed', async () => {
+    fakeMeta.set('backup-snooze', { id: 'backup-snooze', untilMs: NaN });
+    expect(await getSnoozeUntilMs()).toBeNull();
   });
 });

@@ -56,11 +56,12 @@ export function Dashboard() {
   const [nudge, setNudge] = useState<BackupNudgeState>({ kind: 'none', daysSince: null, message: '' });
   const [nudgeBusy, setNudgeBusy] = useState(false);
 
-  const refreshNudge = (settingsData: NotarySettings | null) => {
+  const refreshNudge = async (settingsData: NotarySettings | null) => {
+    const snoozeUntilMs = await getSnoozeUntilMs();
     setNudge(computeBackupNudge({
       lastBackupIso: getLastBackupTime(),
       thresholdDays: settingsData?.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS,
-      snoozeUntilMs: getSnoozeUntilMs(),
+      snoozeUntilMs,
       manualBackupOnly: !!settingsData?.manualBackupOnly,
       gdriveAvailable: isGdriveConfigured(),
       gdriveConnected: !!getStoredToken(),
@@ -94,9 +95,9 @@ export function Dashboard() {
       const entries = await getAllEntries();
       const s = await getSettings();
       await backupToDrive(entries, s);
-      clearSnooze();
+      await clearSnooze();
       toast({ title: 'Backup complete', description: 'Journal backed up to Google Drive.' });
-      refreshNudge(s);
+      await refreshNudge(s);
     } catch (err) {
       toast({
         title: 'Backup failed',
@@ -107,9 +108,9 @@ export function Dashboard() {
     setNudgeBusy(false);
   };
 
-  const handleSnooze = () => {
-    snoozeForOneDay();
-    refreshNudge(settings);
+  const handleSnooze = async () => {
+    await snoozeForOneDay();
+    await refreshNudge(settings);
   };
 
   const handleSearch = (e: React.FormEvent) => {

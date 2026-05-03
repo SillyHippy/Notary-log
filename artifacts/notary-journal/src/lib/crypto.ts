@@ -38,6 +38,49 @@ export async function deriveKey(
   );
 }
 
+/**
+ * Derive the SAME 256 bits used by `deriveKey`, but return the raw bytes
+ * instead of a non-extractable CryptoKey. Used only by the biometric-unlock
+ * path so we can wrap a copy of the key material behind WebAuthn/PRF.
+ *
+ * NOTE: bytes returned here are the journal's encryption key material — they
+ * must never be persisted in cleartext. Callers wrap them with an
+ * AES-GCM key derived from the device's PRF output before storing.
+ */
+export async function deriveKeyMaterial(
+  pin: string,
+  salt: Uint8Array,
+  iterations = PBKDF2_ITERATIONS,
+): Promise<Uint8Array> {
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(pin) as BufferSource,
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations, hash: 'SHA-256' },
+    baseKey,
+    256,
+  );
+  return new Uint8Array(bits);
+}
+
+/** Reconstruct the in-memory non-extractable AES-GCM key from raw key material. */
+export async function importAesKey(material: Uint8Array): Promise<CryptoKey> {
+  if (material.byteLength !== 32) {
+    throw new Error('AES-GCM 256 requires exactly 32 bytes of key material');
+  }
+  return crypto.subtle.importKey(
+    'raw',
+    material as unknown as BufferSource,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
 export async function encryptJSON(key: CryptoKey, value: unknown): Promise<EncBlob> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const data = new TextEncoder().encode(JSON.stringify(value));

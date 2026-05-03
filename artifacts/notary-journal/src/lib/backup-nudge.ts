@@ -1,13 +1,17 @@
 /**
  * Pure logic for the dashboard "your backup is stale" nudge.
  *
- * Kept free of IndexedDB / localStorage / DOM access so it can be unit-tested
- * without browser globals. Callers wire it up to:
- *   - `gdrive_last_backup` (localStorage) for `lastBackupIso`
+ * Kept free of IndexedDB / localStorage / DOM access so the core decision
+ * function can be unit-tested without browser globals. Callers wire it up to:
+ *   - `gdrive_last_backup` (localStorage in `gdrive.ts`) for `lastBackupIso`
  *   - `NotarySettings.backupReminderDays` for `thresholdDays`
  *   - `NotarySettings.manualBackupOnly` for `manualBackupOnly`
- *   - `gdrive_backup_snooze_until` (localStorage) for `snoozeUntilMs`
+ *   - The IDB `meta` store (`backup-snooze`) for `snoozeUntilMs`
  *   - `isGdriveConfigured()` / token presence for `gdriveAvailable` / `gdriveConnected`
+ *
+ * Snooze persistence used to live in localStorage but moved to IndexedDB so
+ * it sits next to the rest of the app's per-device state and survives
+ * private-mode / quota cleanups consistently with the journal itself.
  */
 
 export type BackupNudgeKind = 'none' | 'never-configured' | 'never' | 'stale';
@@ -103,24 +107,45 @@ export function computeBackupNudge(inputs: BackupNudgeInputs): BackupNudgeState 
   };
 }
 
-// ── localStorage helpers (browser only) ────────────────────────────────────
+// ── IndexedDB-backed snooze persistence ────────────────────────────────────
+// Stored in the `meta` store at id='backup-snooze' so the snooze deadline
+// lives next to the rest of the app's encrypted per-device state. The value
+// itself (an epoch-ms number) is non-sensitive and is stored unencrypted.
 
-const SNOOZE_KEY = 'gdrive_backup_snooze_until';
+import { getDB } from './db';
 
-export function getSnoozeUntilMs(): number | null {
-  if (typeof localStorage === 'undefined') return null;
-  const raw = localStorage.getItem(SNOOZE_KEY);
-  if (!raw) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) ? n : null;
+const SNOOZE_META_KEY = 'backup-snooze';
+
+interface SnoozeRecord {
+  id: 'backup-snooze';
+  untilMs: number;
 }
 
-export function snoozeForOneDay(now: number = Date.now()): void {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(SNOOZE_KEY, String(now + SNOOZE_HOURS * 60 * 60 * 1000));
+export async function getSnoozeUntilMs(): Promise<number | null> {
+  try {
+    const db = await getDB();
+    const rec = (await db.get('meta', SNOOZE_META_KEY)) as SnoozeRecord | undefined;
+    if (!rec) return null;
+    return Number.isFinite(rec.untilMs) ? rec.untilMs : null;
+  } catch {
+    return null;
+  }
 }
 
-export function clearSnooze(): void {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.removeItem(SNOOZE_KEY);
+export async function snoozeForOneDay(now: number = Date.now()): Promise<void> {
+  try {
+    const db = await getDB();
+    const rec: SnoozeRecord = {
+      id: SNOOZE_META_KEY,
+      untilMs: now + SNOOZE_HOURS * 60 * 60 * 1000,
+    };
+    await db.put('meta', rec);
+  } catch {/* non-fatal */}
+}
+
+export async function clearSnooze(): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.delete('meta', SNOOZE_META_KEY);
+  } catch {/* non-fatal */}
 }
