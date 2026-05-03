@@ -1,4 +1,4 @@
-import { openDB, IDBPDatabase } from 'idb';
+import { openDB, deleteDB, IDBPDatabase } from 'idb';
 import {
   bytesToBase64,
   base64ToBytes,
@@ -299,6 +299,50 @@ export function isUnlocked(): boolean {
 export function lock(): void {
   cryptoKey = null;
   clearKeyCache();
+}
+
+/**
+ * Wipe all journal data on this device — entries, settings, encryption metadata,
+ * the open IDB connection, and any auth/cache helpers in localStorage /
+ * sessionStorage. Returns the app to a fresh "first run" state. Irreversible.
+ *
+ * Caller is responsible for navigating / reloading after this resolves.
+ */
+export async function wipeAllLocalData(): Promise<void> {
+  // 1. Drop the in-memory key + sessionStorage cache so nothing tries to
+  //    re-encrypt against a key whose meta we're about to delete.
+  cryptoKey = null;
+  clearKeyCache();
+
+  // 2. Close the existing connection before deleting the DB; otherwise
+  //    deleteDB blocks indefinitely waiting for "versionchange".
+  try {
+    const db = await getDB();
+    db.close();
+  } catch {
+    // Ignore: a fresh install may not have an open DB yet.
+  }
+  dbPromise = null;
+
+  // 3. Delete the IndexedDB database itself.
+  await deleteDB(DB_NAME);
+
+  // 4. Clear any localStorage keys this app owns. Keep the list narrow so
+  //    we don't nuke unrelated origin storage.
+  if (typeof localStorage !== 'undefined') {
+    for (const key of [
+      'notary-journal:darkMode',
+      'notary-journal:lastBackupTime',
+      'notary-journal:backupSnoozedUntil',
+      'notary-journal:biometricCredId',
+      'notary-journal:newEntryDraft', // in case sessionStorage was unavailable
+    ]) {
+      try { localStorage.removeItem(key); } catch { /* ignore */ }
+    }
+  }
+  if (typeof sessionStorage !== 'undefined') {
+    try { sessionStorage.clear(); } catch { /* ignore */ }
+  }
 }
 
 export function _setKeyForTests(key: CryptoKey | null): void {

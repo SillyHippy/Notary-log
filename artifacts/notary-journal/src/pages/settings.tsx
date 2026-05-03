@@ -13,7 +13,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
+import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, wipeAllLocalData, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
 import {
   isPlatformAuthenticatorAvailable,
   isPrfLikelySupported,
@@ -66,6 +66,8 @@ export function Settings() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [entryCount, setEntryCount] = useState(0);
+  const [confirmWipe, setConfirmWipe] = useState(false);
+  const [wiping, setWiping] = useState(false);
 
   // Change-PIN dialog state
   const [showChangePin, setShowChangePin] = useState(false);
@@ -1340,6 +1342,68 @@ export function Settings() {
                   </ul>
                 </AlertDescription>
               )}
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Danger zone ───────────────────────────────────────────────── */}
+      <Card className="border-destructive/40">
+        <CardHeader>
+          <CardTitle className="text-destructive">Danger Zone</CardTitle>
+          <CardDescription>
+            Permanently delete everything stored in this browser — entries, settings, your PIN setup,
+            and any cached keys. This cannot be undone. Export a backup first if you need one.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!confirmWipe ? (
+            <Button
+              variant="outline"
+              className="gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => setConfirmWipe(true)}
+              data-testid="button-reset-journal"
+            >
+              <Trash2 className="w-4 h-4" /> Reset journal (delete all local data)
+            </Button>
+          ) : (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Are you absolutely sure?</AlertTitle>
+              <AlertDescription className="space-y-3">
+                <p>
+                  This will erase every entry, your PIN, and all settings on this device. The app will
+                  reload to a fresh setup screen.
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={wiping}
+                    onClick={async () => {
+                      setWiping(true);
+                      try {
+                        await wipeAllLocalData();
+                        // Hard reload so App.tsx re-runs init against the fresh DB.
+                        window.location.replace(import.meta.env.BASE_URL || '/');
+                      } catch (err) {
+                        setWiping(false);
+                        toast({
+                          title: 'Could not reset',
+                          description: err instanceof Error ? err.message : 'Unknown error',
+                          variant: 'destructive',
+                        });
+                      }
+                    }}
+                    data-testid="button-confirm-reset"
+                  >
+                    {wiping ? 'Erasing…' : 'Yes, delete everything'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmWipe(false)} disabled={wiping}>
+                    Cancel
+                  </Button>
+                </div>
+              </AlertDescription>
             </Alert>
           )}
         </CardContent>
