@@ -20,20 +20,30 @@ Use this when you just want to upload a finished build by hand. No git connectio
 
 ### Build the zip
 
-In the Replit workspace shell (or any machine with the project cloned and `pnpm install` run):
+In the Replit workspace shell (or any machine with the project cloned and `pnpm install` run), from the **repo root**:
 
 ```bash
+# 1. Set the Google OAuth client ID FIRST — this gets baked into the build.
+#    Skip this line only if you don't need Google Drive backup on the deployed site.
+export VITE_GOOGLE_CLIENT_ID="your-client-id-here.apps.googleusercontent.com"
+
+# 2. Build the app.
 pnpm --filter @workspace/notary-journal run build
+
+# 3. Add the SPA redirect rule into the build output.
 echo '/*    /index.html   200' > artifacts/notary-journal/dist/public/_redirects
-cd artifacts/notary-journal/dist/public
-zip -r ../../../notary-journal-netlify.zip .
+
+# 4. Zip the *contents* of dist/public into a file at the repo root.
+( cd artifacts/notary-journal/dist/public && zip -r ../../../../notary-journal-netlify.zip . )
 ```
 
-The output is `notary-journal-netlify.zip` at the repo root. **The zip must contain the contents of `dist/public` at its top level** (so `index.html` is at the root of the zip), not the `dist/public` folder itself. Otherwise Netlify will serve nothing and show "Page not found."
+The output is `notary-journal-netlify.zip` at the repo root. **The zip must contain the contents of `dist/public` at its top level** (so `index.html` is at the root of the zip), not the `dist/public` folder itself. Otherwise Netlify will serve nothing and show "Page not found." If your shell doesn't have the `zip` command, install it (`apt-get install zip`, `brew install zip`) or run the build inside Replit, where the agent can package the zip for you.
 
 The `_redirects` file is mandatory. It tells Netlify to send every URL (including deep links like `/journal` and `/entry/abc-123`) to `index.html` so the React Router (wouter) can handle the route. Without it, refreshing the page on any non-root URL returns a 404.
 
-> **Shortcut in Replit:** if the agent is available, just say *"rebuild the Netlify zip"* and it will do all of the above and hand you the file.
+**About `VITE_GOOGLE_CLIENT_ID` for drag-and-drop:** this value is baked into the JavaScript bundle at build time. Drag-and-drop deploys upload pre-built files, so Netlify's dashboard environment variables are **ignored** for this flow — the variable must be set in your shell *before* `pnpm run build` runs (step 1 above). If you forget, the Cloud Backup section in Settings will show "not enabled" on the deployed site, and you'll need to rebuild and re-upload.
+
+> **Shortcut in Replit:** if the agent is available, just say *"rebuild the Netlify zip"* and it will do all of the above (using the workspace's `VITE_GOOGLE_CLIENT_ID` secret) and hand you the file.
 
 ### Upload
 
@@ -43,7 +53,7 @@ The `_redirects` file is mandatory. It tells Netlify to send every URL (includin
 4. Drag `notary-journal-netlify.zip` onto it (mobile: tap the zone and pick the file).
 5. Wait ~10 seconds. Status goes Uploading → Processing → Published.
 
-Set environment variables and Google OAuth origins as described in [Shared setup](#shared-setup) below.
+Then add your deployed URL to Google Cloud Console as described in [Authorize the new domain](#2-authorize-the-new-domain-in-google-cloud-console). You do **not** need to set environment variables in the Netlify dashboard for the drag-and-drop flow — the Google client ID was already baked into the bundle in step 1 of the build.
 
 ---
 
@@ -99,12 +109,19 @@ Cloudflare Pages also reads the same `_redirects` file syntax Netlify uses, so t
    - `VITE_GOOGLE_CLIENT_ID` = your Google OAuth client ID (see [Shared setup](#shared-setup))
 5. Click **Save and Deploy**. First build takes 2–4 minutes.
 
-### SPA redirects on Cloudflare
+### SPA redirects on Cloudflare (one-time setup)
 
-The build script already produces a `_redirects` file inside `dist/public` only when you use the drag-and-drop zip flow. **For Cloudflare git-connected builds, you need to make sure a `_redirects` file ends up in the publish folder.** Easiest options:
+The build doesn't ship a `_redirects` file by default. **For Cloudflare git-connected builds, you need to make sure a `_redirects` file ends up in the publish folder.** The easiest way is to commit one to the repo so Vite copies it into the build output on every build. Run this once from the repo root, then commit:
 
-- **(Recommended)** Add a `_redirects` file at `artifacts/notary-journal/public/_redirects` containing the single line `/*    /index.html   200`. Vite copies anything in `public/` into the build output, so it'll land in `dist/public/_redirects` automatically on every build.
-- Or add a Cloudflare Pages function/redirect rule in the dashboard. The static `_redirects` file is simpler.
+```bash
+mkdir -p artifacts/notary-journal/public
+echo '/*    /index.html   200' > artifacts/notary-journal/public/_redirects
+git add artifacts/notary-journal/public/_redirects
+git commit -m "Add SPA redirects for Netlify and Cloudflare Pages builds"
+git push
+```
+
+Vite copies anything in `public/` straight into `dist/public/`, so the file will land at `dist/public/_redirects` on every build. Both Netlify and Cloudflare Pages honor the same `_redirects` syntax. Alternatively, add a Cloudflare Pages redirect rule in the dashboard, but the static file is simpler and works on both hosts.
 
 > If you skip this, deep links like `/journal` will 404 on Cloudflare. The home page will load fine, but refreshing inside the app will break.
 
