@@ -30,6 +30,9 @@ export function Reports() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [settings, setSettings] = useState<NotarySettings | null>(null);
   const [year, setYear] = useState<number>(new Date().getFullYear());
+  // Month filter: -1 means "All months" (default). 0..11 narrows the chart
+  // and per-month table to a single month for focused review.
+  const [monthFilter, setMonthFilter] = useState<number>(-1);
 
   useEffect(() => {
     (async () => {
@@ -49,12 +52,22 @@ export function Reports() {
   );
 
   const monthlyChartData = useMemo(
-    () => rollup.monthly.map((b, i) => ({
-      month: MONTH_LABELS[i],
-      Collected: Number((b.collectedCents / 100).toFixed(2)),
-      Acts: b.count,
-    })),
-    [rollup],
+    () => rollup.monthly
+      .map((b, i) => ({
+        idx: i,
+        month: MONTH_LABELS[i],
+        Collected: Number((b.collectedCents / 100).toFixed(2)),
+        Acts: b.count,
+      }))
+      .filter(r => monthFilter === -1 || r.idx === monthFilter),
+    [rollup, monthFilter],
+  );
+
+  const monthlyTableRows = useMemo(
+    () => rollup.monthly
+      .map((b, i) => ({ idx: i, ...b }))
+      .filter(r => monthFilter === -1 || r.idx === monthFilter),
+    [rollup, monthFilter],
   );
 
   const feeTypeRows = useMemo(
@@ -122,6 +135,17 @@ export function Reports() {
             <SelectContent>
               {years.map(y => (
                 <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={String(monthFilter)} onValueChange={v => setMonthFilter(Number(v))}>
+            <SelectTrigger className="w-40" data-testid="select-report-month">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="-1">All months</SelectItem>
+              {MONTH_LABELS.map((m, i) => (
+                <SelectItem key={i} value={String(i)}>{m}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -231,9 +255,9 @@ export function Reports() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {rollup.monthly.map((b, i) => (
-                      <tr key={i}>
-                        <td className="py-2 pr-4 font-medium">{MONTH_LABELS[i]}</td>
+                    {monthlyTableRows.map(b => (
+                      <tr key={b.idx}>
+                        <td className="py-2 pr-4 font-medium">{MONTH_LABELS[b.idx]}</td>
                         <td className="py-2 pr-4 text-right">{b.count}</td>
                         <td className="py-2 pr-4 text-right">{b.chargedCount}</td>
                         <td className="py-2 pr-4 text-right">{fmtUsd(b.collectedCents)}</td>
