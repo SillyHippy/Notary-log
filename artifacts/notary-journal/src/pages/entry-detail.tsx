@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, type JournalEntry, type NotarySettings } from '@/lib/db';
+import { getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, getAllEntries, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { exportEntryPDF, exportEntryCSV, exportEntryJSON } from '@/lib/export';
 
 export function EntryDetail() {
@@ -25,7 +25,7 @@ export function EntryDetail() {
   const [entry, setEntry] = useState<JournalEntry | null>(null);
   const [settings, setSettings] = useState<NotarySettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [hashStatus, setHashStatus] = useState<'verifying' | 'valid' | 'invalid' | 'none'>('verifying');
+  const [hashStatus, setHashStatus] = useState<'verifying' | 'valid' | 'invalid' | 'chain-broken' | 'none'>('verifying');
   
   const [isAmending, setIsAmending] = useState(false);
   const [amendmentText, setAmendmentText] = useState('');
@@ -54,11 +54,25 @@ export function EntryDetail() {
       setSettings(settingsData);
       
       if (entryData.status === 'completed' || entryData.status === 'amended') {
-        if (entryData.hash) {
-          const currentHash = await generateEntryHash(entryData);
-          setHashStatus(currentHash === entryData.hash ? 'valid' : 'invalid');
-        } else {
+        if (!entryData.hash) {
           setHashStatus('invalid');
+        } else {
+          const currentHash = await generateEntryHash(entryData);
+          if (currentHash !== entryData.hash) {
+            setHashStatus('invalid');
+          } else {
+            // Verify the chain link back to the previous completed entry
+            const all = await getAllEntries();
+            const prior = all
+              .filter(e => e.entryNumber < entryData.entryNumber && (e.status === 'completed' || e.status === 'amended') && e.hash)
+              .sort((a, b) => b.entryNumber - a.entryNumber)[0];
+            const expectedPrev = prior?.hash ?? '';
+            if ((entryData.previousEntryHash ?? '') !== expectedPrev) {
+              setHashStatus('chain-broken');
+            } else {
+              setHashStatus('valid');
+            }
+          }
         }
       } else {
         setHashStatus('none');
@@ -170,16 +184,18 @@ export function EntryDetail() {
           </p>
         </div>
         
-        {hashStatus !== 'none' && (
+        {hashStatus !== 'none' && hashStatus !== 'verifying' && (
           <div className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${
-            hashStatus === 'valid' 
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-900' 
+            hashStatus === 'valid'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-900'
               : 'bg-destructive/10 text-destructive border-destructive/20'
-          }`}>
+          }`} data-testid={`badge-integrity-${hashStatus}`}>
             {hashStatus === 'valid' ? (
-              <><ShieldCheck className="w-5 h-5" /> <span className="font-medium text-sm">Integrity Verified</span></>
+              <><ShieldCheck className="w-5 h-5" /> <span className="font-medium text-sm">Verified — chain intact</span></>
+            ) : hashStatus === 'chain-broken' ? (
+              <><ShieldAlert className="w-5 h-5" /> <span className="font-medium text-sm">Chain link broken</span></>
             ) : (
-              <><ShieldAlert className="w-5 h-5" /> <span className="font-medium text-sm">Integrity Warning</span></>
+              <><ShieldAlert className="w-5 h-5" /> <span className="font-medium text-sm">Tamper detected</span></>
             )}
           </div>
         )}

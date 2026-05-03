@@ -7,6 +7,7 @@ import NotFound from "@/pages/not-found";
 
 import { Layout } from "@/components/layout";
 import { PinLock } from "@/components/pin-lock";
+import { PinSetup } from "@/components/pin-setup";
 import { Dashboard } from "@/pages/dashboard";
 import { JournalList } from "@/pages/journal-list";
 import { NewEntry } from "@/pages/new-entry";
@@ -14,7 +15,7 @@ import { EntryDetail } from "@/pages/entry-detail";
 import { EditEntry } from "@/pages/edit-entry";
 import { Settings } from "@/pages/settings";
 
-import { getSettings } from "@/lib/db";
+import { hasCryptoSetup, inspectLegacy, getDarkModePref } from "@/lib/db";
 
 const queryClient = new QueryClient();
 
@@ -34,50 +35,60 @@ function Router() {
   );
 }
 
+type AppMode = 'loading' | 'setup' | 'locked' | 'unlocked';
+
 function App() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [pinEnabled, setPinEnabled] = useState(false);
-  const [pinHash, setPinHash] = useState("");
-  const [unlocked, setUnlocked] = useState(false);
+  const [mode, setMode] = useState<AppMode>('loading');
+  const [hasLegacyData, setHasLegacyData] = useState(false);
 
   useEffect(() => {
-    const initApp = async () => {
+    (async () => {
       try {
-        const settings = await getSettings();
-        if (settings.darkMode) {
-          document.documentElement.classList.add('dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-        }
+        // Theme — read from localStorage so it works pre-unlock
+        const dark = getDarkModePref();
+        document.documentElement.classList.toggle('dark', dark);
 
-        if (settings.pinEnabled && settings.pinHash) {
-          setPinEnabled(true);
-          setPinHash(settings.pinHash);
-          setUnlocked(false);
+        if (await hasCryptoSetup()) {
+          setMode('locked');
         } else {
-          setUnlocked(true);
+          // Look at legacy plaintext data to tailor the setup copy
+          const legacy = await inspectLegacy();
+          if (!legacy.darkMode) {
+            // (already handled above; intentional no-op for clarity)
+          }
+          // If they had darkMode in legacy plaintext settings, mirror it now
+          if (legacy.entryCount > 0 && legacy.darkMode) {
+            document.documentElement.classList.add('dark');
+          }
+          setHasLegacyData(legacy.entryCount > 0);
+          setMode('setup');
         }
       } catch (err) {
-        console.error("Failed to load settings", err);
-        setUnlocked(true);
-      } finally {
-        setIsLoading(false);
+        console.error("Failed to initialize app", err);
+        // Fail open to setup so the user is never locked out of a fresh install
+        setMode('setup');
       }
-    };
-    
-    initApp();
+    })();
   }, []);
 
-  if (isLoading) {
-    return <div className="min-h-screen flex items-center justify-center bg-background text-foreground"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>;
+  if (mode === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
+      </div>
+    );
   }
 
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        {pinEnabled && !unlocked ? (
-          <PinLock onUnlock={() => setUnlocked(true)} expectedHash={pinHash} />
-        ) : (
+        {mode === 'setup' && (
+          <PinSetup hasLegacyData={hasLegacyData} onComplete={() => setMode('unlocked')} />
+        )}
+        {mode === 'locked' && (
+          <PinLock onUnlock={() => setMode('unlocked')} />
+        )}
+        {mode === 'unlocked' && (
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
             <Router />
           </WouterRouter>

@@ -277,7 +277,7 @@ export async function backupToDrive(entries: JournalEntry[], settings: NotarySet
   const folderId = await getOrCreateFolder(token);
 
   const payload: BackupPayload = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     entries,
     settings,

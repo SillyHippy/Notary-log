@@ -18,7 +18,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { Checkbox } from '@/components/ui/checkbox';
 
-import { createEntry, generateEntryHash, getSettings, getAllEntries, type JournalEntry } from '@/lib/db';
+import { createEntry, completeEntry, getSettings, getAllEntries, type JournalEntry } from '@/lib/db';
 import { parseAAMVA } from '@/lib/aamva';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
 
@@ -490,15 +490,10 @@ export function NewEntry() {
       };
 
       const id = await createEntry(newEntry);
-      
-      // Generate hash for completed entries
+
+      // For completed entries, stamp the chain hash linking to the previous completed entry
       if (status === 'completed') {
-        const { getEntry, updateEntry } = await import('@/lib/db');
-        const entry = await getEntry(id);
-        if (entry) {
-          const hash = await generateEntryHash(entry);
-          await updateEntry(id, { hash });
-        }
+        await completeEntry(id);
       }
       
       toast({ title: 'Success', description: `Entry saved as ${status}.` });

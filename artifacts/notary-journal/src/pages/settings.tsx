@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2 } from 'lucide-react';
+import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -11,7 +11,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import { getSettings, saveSettings, getAllEntries, type NotarySettings } from '@/lib/db';
+import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
 import { exportAllCSV, exportAllJSON, exportAllPDF } from '@/lib/export';
 import {
   isGdriveConfigured,
@@ -25,7 +25,6 @@ import {
   restoreFromDrive,
   type BackupFile,
 } from '@/lib/gdrive';
-import { importEntry } from '@/lib/db';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -33,8 +32,6 @@ const settingsSchema = z.object({
   commissionExpiration: z.string().min(1, 'Expiration date is required'),
   defaultCity: z.string().min(1, 'Default city is required'),
   defaultState: z.string().min(2, 'Default state is required').max(2, 'Use 2-letter state code'),
-  pinEnabled: z.boolean(),
-  pinHash: z.string().optional(),
   darkMode: z.boolean(),
 });
 
@@ -57,10 +54,23 @@ export function Settings() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [showPinSetup, setShowPinSetup] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [confirmPinInput, setConfirmPinInput] = useState('');
   const [entryCount, setEntryCount] = useState(0);
+
+  // Change-PIN dialog state
+  const [showChangePin, setShowChangePin] = useState(false);
+  const [oldPin, setOldPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [newPinConfirm, setNewPinConfirm] = useState('');
+  const [changePinBusy, setChangePinBusy] = useState(false);
+  const [changePinError, setChangePinError] = useState<string | null>(null);
+
+  // Chain verification state
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<ChainVerificationResult | null>(null);
+
+  // JSON import state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
 
   // Google Drive state
   const [isConnected, setIsConnected] = useState(false);
@@ -84,7 +94,6 @@ export function Settings() {
       commissionExpiration: '',
       defaultCity: '',
       defaultState: '',
-      pinEnabled: false,
       darkMode: false,
     }
   });
@@ -113,8 +122,6 @@ export function Settings() {
         commissionExpiration: settings.commissionExpiration || '',
         defaultCity: settings.defaultCity || '',
         defaultState: settings.defaultState || '',
-        pinEnabled: settings.pinEnabled || false,
-        pinHash: settings.pinHash,
         darkMode: settings.darkMode || false,
       });
       setAutoBackup(settings.autoBackup ?? false);
@@ -131,38 +138,10 @@ export function Settings() {
     setLastBackup(getLastBackupTime());
   }, [form]);
 
-  const hashPin = async (pin: string) => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(pin);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  };
-
   const onSubmit = async (data: SettingsFormValues) => {
     setIsSaving(true);
-
-    if (data.pinEnabled && showPinSetup) {
-      if (pinInput.length !== 4) {
-        toast({ title: 'Invalid PIN', description: 'PIN must be 4 digits', variant: 'destructive' });
-        setIsSaving(false);
-        return;
-      }
-      if (pinInput !== confirmPinInput) {
-        toast({ title: 'PIN mismatch', description: 'PINs do not match', variant: 'destructive' });
-        setIsSaving(false);
-        return;
-      }
-      data.pinHash = await hashPin(pinInput);
-      setShowPinSetup(false);
-    }
-
-    if (!data.pinEnabled) {
-      data.pinHash = undefined;
-    }
-
     const current = await getSettings();
-    await saveSettings({ ...current, ...data } as NotarySettings);
+    await saveSettings({ ...current, ...data, pinEnabled: true } as NotarySettings);
 
     if (data.darkMode) {
       document.documentElement.classList.add('dark');
@@ -172,6 +151,83 @@ export function Settings() {
 
     toast({ title: 'Settings saved', description: 'Your preferences have been updated.' });
     setIsSaving(false);
+  };
+
+  const handleChangePin = async () => {
+    setChangePinError(null);
+    if (oldPin.length !== 4) { setChangePinError('Enter your current 4-digit PIN.'); return; }
+    if (newPin.length !== 4) { setChangePinError('New PIN must be 4 digits.'); return; }
+    if (newPin !== newPinConfirm) { setChangePinError('New PINs do not match.'); return; }
+    setChangePinBusy(true);
+    try {
+      const ok = await changePin(oldPin, newPin);
+      if (!ok) {
+        setChangePinError('Current PIN is incorrect.');
+      } else {
+        toast({ title: 'PIN changed', description: 'Your journal has been re-encrypted with the new PIN.' });
+        setShowChangePin(false);
+        setOldPin(''); setNewPin(''); setNewPinConfirm('');
+      }
+    } catch (err) {
+      setChangePinError(err instanceof Error ? err.message : 'Failed to change PIN');
+    }
+    setChangePinBusy(false);
+  };
+
+  const handleLockNow = () => {
+    lock();
+    window.location.reload();
+  };
+
+  const handleVerifyChain = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const result = await verifyChain();
+      setVerifyResult(result);
+    } catch (err) {
+      toast({ title: 'Verification failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setVerifying(false);
+  };
+
+  const handleImportJSON = async (file: File) => {
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      // Accept v1/v2 backup envelope OR a bare array OR a single entry object
+      let entries: JournalEntry[] = [];
+      if (Array.isArray(parsed)) {
+        entries = parsed as JournalEntry[];
+      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.entries)) {
+        entries = parsed.entries as JournalEntry[];
+      } else if (parsed && typeof parsed === 'object' && 'entryNumber' in parsed) {
+        entries = [parsed as JournalEntry];
+      } else {
+        throw new Error('Unrecognized file format. Expected a journal backup or entry export.');
+      }
+
+      let imported = 0, skipped = 0;
+      for (const e of entries) {
+        const { id: _id, ...rest } = e as JournalEntry & { id?: number };
+        try {
+          await importEntry(rest);
+          imported++;
+        } catch (err) {
+          if (err instanceof Error && (err as Error & { code?: string }).code === 'DUPLICATE') skipped++;
+          else throw err;
+        }
+      }
+      toast({ title: 'Import complete', description: `Imported ${imported} entries. Skipped ${skipped} duplicates.` });
+      const all = await getAllEntries();
+      setEntryCount(all.length);
+    } catch (err) {
+      toast({ title: 'Import failed', description: err instanceof Error ? err.message : 'Could not parse file', variant: 'destructive' });
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const handleExportPDF = async () => {
@@ -417,64 +473,58 @@ export function Settings() {
               <CardDescription>App access and display preferences</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <FormField
-                control={form.control}
-                name="pinEnabled"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
-                    <div className="space-y-0.5">
-                      <FormLabel className="text-base flex items-center gap-2">
-                        <Lock className="w-4 h-4 text-primary" />
-                        PIN Lock
-                      </FormLabel>
-                      <FormDescription>
-                        Require a 4-digit PIN to access the journal
-                      </FormDescription>
-                    </div>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={(checked) => {
-                          field.onChange(checked);
-                          if (checked) setShowPinSetup(true);
-                          else setShowPinSetup(false);
-                        }}
-                        data-testid="switch-pin-enabled"
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-
-              {showPinSetup && (
-                <div className="p-4 border rounded-lg bg-muted/50 space-y-4 animate-in slide-in-from-top-2">
-                  <h4 className="font-medium text-sm">Set up your PIN</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="pin">Enter 4-digit PIN</Label>
-                      <Input
-                        id="pin"
-                        type="password"
-                        maxLength={4}
-                        value={pinInput}
-                        onChange={e => setPinInput(e.target.value.replace(/[^0-9]/g, ''))}
-                        data-testid="input-pin-setup"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="confirmPin">Confirm PIN</Label>
-                      <Input
-                        id="confirmPin"
-                        type="password"
-                        maxLength={4}
-                        value={confirmPinInput}
-                        onChange={e => setConfirmPinInput(e.target.value.replace(/[^0-9]/g, ''))}
-                        data-testid="input-pin-confirm"
-                      />
-                    </div>
+              <div className="rounded-lg border p-4 shadow-sm space-y-4">
+                <div className="flex flex-row items-start justify-between gap-4">
+                  <div className="space-y-0.5">
+                    <p className="text-base font-medium flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-primary" />
+                      PIN & Encryption
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Your journal is encrypted at rest with a key derived from your PIN. PIN cannot be disabled — it protects your data.
+                    </p>
                   </div>
                 </div>
-              )}
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setShowChangePin(v => !v)} data-testid="button-change-pin">
+                    {showChangePin ? 'Cancel' : 'Change PIN'}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={handleLockNow} data-testid="button-lock-now">
+                    Lock now
+                  </Button>
+                </div>
+
+                {showChangePin && (
+                  <div className="p-4 border rounded-lg bg-muted/50 space-y-3 animate-in slide-in-from-top-2">
+                    <h4 className="font-medium text-sm">Change your PIN</h4>
+                    <p className="text-xs text-muted-foreground">All entries will be re-encrypted with the new PIN.</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="space-y-2">
+                        <Label htmlFor="oldPin">Current PIN</Label>
+                        <Input id="oldPin" type="password" inputMode="numeric" maxLength={4}
+                          value={oldPin} onChange={e => setOldPin(e.target.value.replace(/[^0-9]/g, ''))}
+                          data-testid="input-current-pin" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="newPin">New PIN</Label>
+                        <Input id="newPin" type="password" inputMode="numeric" maxLength={4}
+                          value={newPin} onChange={e => setNewPin(e.target.value.replace(/[^0-9]/g, ''))}
+                          data-testid="input-new-pin" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="newPinConfirm">Confirm new PIN</Label>
+                        <Input id="newPinConfirm" type="password" inputMode="numeric" maxLength={4}
+                          value={newPinConfirm} onChange={e => setNewPinConfirm(e.target.value.replace(/[^0-9]/g, ''))}
+                          data-testid="input-new-pin-confirm" />
+                      </div>
+                    </div>
+                    {changePinError && <p className="text-sm text-destructive">{changePinError}</p>}
+                    <Button type="button" size="sm" onClick={handleChangePin} disabled={changePinBusy} data-testid="button-confirm-change-pin">
+                      {changePinBusy ? 'Re-encrypting…' : 'Save new PIN'}
+                    </Button>
+                  </div>
+                )}
+              </div>
 
               <FormField
                 control={form.control}
@@ -695,6 +745,82 @@ export function Settings() {
               <Download className="w-4 h-4" /> Export JSON
             </Button>
           </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) handleImportJSON(file);
+            }}
+            data-testid="input-import-json"
+          />
+          <Button
+            variant="outline"
+            className="gap-2 w-full"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            data-testid="button-import-json"
+          >
+            <Upload className="w-4 h-4" /> {importing ? 'Importing…' : 'Import from JSON file'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── Tamper-evident chain verification ─────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Journal Integrity</CardTitle>
+          <CardDescription>Verify the tamper-evident hash chain for all completed entries</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Button
+            variant="outline"
+            onClick={handleVerifyChain}
+            disabled={verifying}
+            className="gap-2"
+            data-testid="button-verify-chain"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            {verifying ? 'Verifying…' : 'Verify entire journal'}
+          </Button>
+
+          {verifyResult && (
+            <Alert
+              variant="default"
+              className={
+                verifyResult.issues.length === 0
+                  ? 'bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900'
+                  : 'bg-destructive/10 text-destructive border-destructive/30'
+              }
+              data-testid="alert-verify-result"
+            >
+              {verifyResult.issues.length === 0 ? (
+                <ShieldCheck className="h-4 w-4" />
+              ) : (
+                <ShieldAlert className="h-4 w-4" />
+              )}
+              <AlertTitle>
+                {verifyResult.issues.length === 0
+                  ? `All ${verifyResult.okCount} entries verified`
+                  : `${verifyResult.issues.length} of ${verifyResult.totalChecked} entries failed verification`}
+              </AlertTitle>
+              {verifyResult.issues.length > 0 && (
+                <AlertDescription>
+                  <ul className="list-disc pl-5 mt-2 space-y-1 text-sm">
+                    {verifyResult.issues.slice(0, 10).map((iss, i) => (
+                      <li key={i}>Entry #{iss.entryNumber}: {iss.reason}</li>
+                    ))}
+                    {verifyResult.issues.length > 10 && (
+                      <li>…and {verifyResult.issues.length - 10} more</li>
+                    )}
+                  </ul>
+                </AlertDescription>
+              )}
+            </Alert>
+          )}
         </CardContent>
       </Card>
 
