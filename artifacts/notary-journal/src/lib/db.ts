@@ -479,16 +479,20 @@ export async function getStats() {
 
 // ── Tamper-evident hash chain ─────────────────────────────────────────────
 
+/**
+ * Hash the full content of an entry. We exclude only:
+ *   - `id` (IDB autoincrement, not user data)
+ *   - `hash` (this would recurse)
+ *   - `updatedAt` (changes on every harmless re-save / amendment)
+ * Every other persisted field is signed, so any tampering with the IDB
+ * record (notes, addresses, images, location, amendments, …) breaks
+ * verification.
+ */
 export async function generateEntryHash(entry: JournalEntry): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { id, hash, updatedAt, ...signed } = entry;
   return sha256Hex(canonicalJson({
-    entryNumber: entry.entryNumber,
-    signerFullName: entry.signerFullName,
-    signerDOB: entry.signerDOB,
-    idNumber: entry.idNumber,
-    documentType: entry.documentType,
-    notarialActType: entry.notarialActType,
-    feeCharged: entry.feeCharged,
-    completedAt: entry.completedAt ?? '',
+    ...signed,
     previousEntryHash: entry.previousEntryHash ?? '',
   }));
 }
@@ -557,6 +561,15 @@ export interface LegacySnapshot {
   hadPinHash: string | null;
   darkMode: boolean;
   entryCount: number;
+}
+
+/**
+ * Compare a candidate PIN against the legacy plaintext-mode pinHash.
+ * Used during one-time migration so existing PIN protection is not bypassed.
+ */
+export async function verifyLegacyPin(pin: string, legacyPinHash: string): Promise<boolean> {
+  const candidate = await sha256Hex(pin);
+  return candidate === legacyPinHash;
 }
 
 /**

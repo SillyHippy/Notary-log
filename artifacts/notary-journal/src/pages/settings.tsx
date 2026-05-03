@@ -195,17 +195,49 @@ export function Settings() {
     setImporting(true);
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text);
-      // Accept v1/v2 backup envelope OR a bare array OR a single entry object
+      let parsed: unknown;
+      try { parsed = JSON.parse(text); } catch { throw new Error('Not a valid JSON file.'); }
+
+      // Resolve entries from one of: v1/v2 envelope, bare array, or single entry.
       let entries: JournalEntry[] = [];
+      let detectedVersion: number | 'unknown' = 'unknown';
+
       if (Array.isArray(parsed)) {
         entries = parsed as JournalEntry[];
-      } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.entries)) {
-        entries = parsed.entries as JournalEntry[];
-      } else if (parsed && typeof parsed === 'object' && 'entryNumber' in parsed) {
-        entries = [parsed as JournalEntry];
+        detectedVersion = 1; // legacy bare array
+      } else if (parsed && typeof parsed === 'object') {
+        const obj = parsed as { version?: unknown; entries?: unknown; entryNumber?: unknown };
+        if (Array.isArray(obj.entries)) {
+          // Versioned envelope (v1 or v2). v1 had no version field; v2 has version: 2.
+          if (obj.version !== undefined && typeof obj.version !== 'number') {
+            throw new Error('Backup file has an invalid version field.');
+          }
+          if (typeof obj.version === 'number' && obj.version > 2) {
+            throw new Error(`Backup format v${obj.version} is newer than this app supports.`);
+          }
+          entries = obj.entries as JournalEntry[];
+          detectedVersion = (obj.version as number | undefined) ?? 1;
+        } else if ('entryNumber' in obj) {
+          entries = [obj as unknown as JournalEntry];
+          detectedVersion = 1;
+        } else {
+          throw new Error('Unrecognized file format. Expected a journal backup or entry export.');
+        }
       } else {
-        throw new Error('Unrecognized file format. Expected a journal backup or entry export.');
+        throw new Error('Unrecognized file format.');
+      }
+
+      // Per-entry schema validation — reject the whole file if any entry is malformed
+      const requiredFields: Array<keyof JournalEntry> = [
+        'entryNumber', 'status', 'signerFullName', 'idType', 'idNumber',
+        'documentType', 'notarialActType', 'createdAt',
+      ];
+      for (const e of entries) {
+        if (!e || typeof e !== 'object') throw new Error('Backup contains a non-object entry.');
+        for (const f of requiredFields) {
+          if (!(f in e)) throw new Error(`Entry is missing required field "${String(f)}".`);
+        }
+        if (typeof e.entryNumber !== 'number') throw new Error('Entry has non-numeric entryNumber.');
       }
 
       let imported = 0, skipped = 0;
@@ -219,7 +251,10 @@ export function Settings() {
           else throw err;
         }
       }
-      toast({ title: 'Import complete', description: `Imported ${imported} entries. Skipped ${skipped} duplicates.` });
+      toast({
+        title: 'Import complete',
+        description: `Format v${detectedVersion}: imported ${imported}, skipped ${skipped} duplicates.`,
+      });
       const all = await getAllEntries();
       setEntryCount(all.length);
     } catch (err) {
@@ -243,7 +278,8 @@ export function Settings() {
 
   const handleExportJSON = async () => {
     const entries = await getAllEntries();
-    exportAllJSON(entries);
+    const settings = await getSettings();
+    exportAllJSON(entries, settings);
   };
 
   // ── Google Drive handlers ───────────────────────────────────────────────────

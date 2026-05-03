@@ -39,45 +39,63 @@ export function EntryDetail() {
       }
       
       setIsLoading(true);
-      const [entryData, settingsData] = await Promise.all([
-        getEntry(id),
-        getSettings()
-      ]);
-      
+      let entryData: JournalEntry | undefined;
+      let settingsData: NotarySettings | undefined;
+      try {
+        [entryData, settingsData] = await Promise.all([getEntry(id), getSettings()]);
+      } catch (err) {
+        // AES-GCM throws on tampered/corrupted ciphertext. Surface that as a
+        // tamper warning rather than a crash, so the user knows their record
+        // was modified outside the app.
+        console.error('Failed to decrypt entry', err);
+        toast({
+          title: 'Tamper detected',
+          description: 'This entry could not be decrypted. The stored data may have been modified.',
+          variant: 'destructive',
+        });
+        setHashStatus('invalid');
+        setIsLoading(false);
+        return;
+      }
+
       if (!entryData) {
         toast({ title: 'Error', description: 'Entry not found', variant: 'destructive' });
         setLocation('/journal');
         return;
       }
-      
+
       setEntry(entryData);
-      setSettings(settingsData);
-      
+      setSettings(settingsData ?? null);
+
       if (entryData.status === 'completed' || entryData.status === 'amended') {
         if (!entryData.hash) {
           setHashStatus('invalid');
         } else {
-          const currentHash = await generateEntryHash(entryData);
-          if (currentHash !== entryData.hash) {
-            setHashStatus('invalid');
-          } else {
-            // Verify the chain link back to the previous completed entry
-            const all = await getAllEntries();
-            const prior = all
-              .filter(e => e.entryNumber < entryData.entryNumber && (e.status === 'completed' || e.status === 'amended') && e.hash)
-              .sort((a, b) => b.entryNumber - a.entryNumber)[0];
-            const expectedPrev = prior?.hash ?? '';
-            if ((entryData.previousEntryHash ?? '') !== expectedPrev) {
-              setHashStatus('chain-broken');
+          try {
+            const currentHash = await generateEntryHash(entryData);
+            if (currentHash !== entryData.hash) {
+              setHashStatus('invalid');
             } else {
-              setHashStatus('valid');
+              const all = await getAllEntries();
+              const prior = all
+                .filter(e => e.entryNumber < entryData!.entryNumber && (e.status === 'completed' || e.status === 'amended') && e.hash)
+                .sort((a, b) => b.entryNumber - a.entryNumber)[0];
+              const expectedPrev = prior?.hash ?? '';
+              if ((entryData.previousEntryHash ?? '') !== expectedPrev) {
+                setHashStatus('chain-broken');
+              } else {
+                setHashStatus('valid');
+              }
             }
+          } catch (err) {
+            console.error('Chain verification failed', err);
+            setHashStatus('invalid');
           }
         }
       } else {
         setHashStatus('none');
       }
-      
+
       setIsLoading(false);
     }
     

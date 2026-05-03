@@ -355,5 +355,22 @@ export async function restoreFromDrive(fileId: string): Promise<BackupPayload> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`Failed to download backup: ${res.status}`);
-  return (await res.json()) as BackupPayload;
+  const raw: unknown = await res.json();
+  if (!raw || typeof raw !== 'object') throw new Error('Backup file is not a valid object.');
+  const obj = raw as { version?: unknown; entries?: unknown; settings?: unknown };
+  if (!Array.isArray(obj.entries)) throw new Error('Backup is missing an "entries" array.');
+  if (obj.version !== undefined && typeof obj.version !== 'number') {
+    throw new Error('Backup has an invalid version field.');
+  }
+  const version = (typeof obj.version === 'number' ? obj.version : 1);
+  if (version > 2) throw new Error(`Backup format v${version} is newer than this app supports.`);
+  // Normalize v1 → v2 by stamping the version (payload shape is otherwise identical)
+  return {
+    version: 2,
+    exportedAt: typeof (obj as { exportedAt?: unknown }).exportedAt === 'string'
+      ? ((obj as { exportedAt: string }).exportedAt)
+      : new Date().toISOString(),
+    entries: obj.entries as JournalEntry[],
+    settings: (obj.settings as NotarySettings) ?? ({} as NotarySettings),
+  };
 }

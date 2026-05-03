@@ -4,19 +4,49 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { setupCrypto, needsMigration, migratePlaintext } from '@/lib/db';
+import { setupCrypto, needsMigration, migratePlaintext, verifyLegacyPin } from '@/lib/db';
 
 interface PinSetupProps {
   hasLegacyData: boolean;
+  legacyPinHash: string | null;
   onComplete: () => void;
 }
 
-export function PinSetup({ hasLegacyData, onComplete }: PinSetupProps) {
+export function PinSetup({ hasLegacyData, legacyPinHash, onComplete }: PinSetupProps) {
+  // Phase 1: legacy PIN gate (only if a previous plaintext-mode pinHash exists)
+  const [legacyVerified, setLegacyVerified] = useState(legacyPinHash === null);
+  const [legacyPin, setLegacyPin] = useState('');
+  const [legacyError, setLegacyError] = useState<string | null>(null);
+  const [legacyAttempts, setLegacyAttempts] = useState(0);
+  const [legacyBusy, setLegacyBusy] = useState(false);
+
+  // Phase 2: new PIN setup
   const [pin, setPin] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const verifyLegacy = async () => {
+    setLegacyError(null);
+    if (!legacyPinHash) { setLegacyVerified(true); return; }
+    if (legacyPin.length !== 4) { setLegacyError('Enter your existing 4-digit PIN.'); return; }
+    setLegacyBusy(true);
+    try {
+      const ok = await verifyLegacyPin(legacyPin, legacyPinHash);
+      if (ok) {
+        setLegacyVerified(true);
+      } else {
+        const next = legacyAttempts + 1;
+        setLegacyAttempts(next);
+        setLegacyError('Incorrect PIN.');
+        setLegacyPin('');
+      }
+    } catch (err) {
+      setLegacyError(err instanceof Error ? err.message : 'Verification failed');
+    }
+    setLegacyBusy(false);
+  };
 
   const submit = async () => {
     setError(null);
@@ -43,23 +73,55 @@ export function PinSetup({ hasLegacyData, onComplete }: PinSetupProps) {
             <ShieldCheck className="w-12 h-12 text-primary" />
           </div>
           <h1 className="text-2xl font-bold">
-            {hasLegacyData ? 'Encrypt your journal' : 'Set up your PIN'}
+            {!legacyVerified
+              ? 'Verify your current PIN'
+              : hasLegacyData
+                ? 'Encrypt your journal'
+                : 'Set up your PIN'}
           </h1>
           <p className="text-muted-foreground text-sm mt-2">
-            {hasLegacyData
-              ? 'Choose a 4-digit PIN. Your existing entries will be encrypted on this device using a key derived from this PIN.'
-              : 'Choose a 4-digit PIN. Your journal will be encrypted on this device using a key derived from this PIN.'}
+            {!legacyVerified
+              ? 'This device already has PIN protection. Enter your existing PIN before setting up encryption.'
+              : hasLegacyData
+                ? 'Choose a 4-digit PIN. Your existing entries will be encrypted on this device using a key derived from this PIN.'
+                : 'Choose a 4-digit PIN. Your journal will be encrypted on this device using a key derived from this PIN.'}
           </p>
         </div>
 
-        <Alert variant="default" className="bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900">
-          <AlertTitle className="text-sm">Important</AlertTitle>
-          <AlertDescription className="text-xs">
-            If you forget this PIN, your encrypted data on this device cannot be recovered. Always keep a recent backup (Google Drive or downloaded JSON) so you can restore on a new device.
-          </AlertDescription>
-        </Alert>
+        {legacyVerified && (
+          <Alert variant="default" className="bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900">
+            <AlertTitle className="text-sm">Important</AlertTitle>
+            <AlertDescription className="text-xs">
+              If you forget this PIN, your encrypted data on this device cannot be recovered. Always keep a recent backup (Google Drive or downloaded JSON) so you can restore on a new device.
+            </AlertDescription>
+          </Alert>
+        )}
 
-        {progress ? (
+        {!legacyVerified ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="legacy-pin">Current PIN</Label>
+              <Input
+                id="legacy-pin"
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                autoFocus
+                value={legacyPin}
+                onChange={e => setLegacyPin(e.target.value.replace(/[^0-9]/g, ''))}
+                data-testid="input-legacy-pin"
+                disabled={legacyBusy}
+              />
+            </div>
+            {legacyError && <p className="text-sm text-destructive">{legacyError}</p>}
+            {legacyAttempts > 0 && !legacyError && (
+              <p className="text-xs text-muted-foreground">{legacyAttempts} failed attempt{legacyAttempts === 1 ? '' : 's'}</p>
+            )}
+            <Button className="w-full" onClick={verifyLegacy} disabled={legacyBusy} data-testid="button-verify-legacy">
+              {legacyBusy ? 'Verifying…' : 'Continue'}
+            </Button>
+          </div>
+        ) : progress ? (
           <div className="space-y-3 text-center" data-testid="migration-progress">
             <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
             <p className="text-sm font-medium">Encrypting your journal…</p>

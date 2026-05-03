@@ -47,10 +47,21 @@ describe('chain hashing', () => {
     expect(a).not.toBe(b);
   });
 
-  it('does not change when unsigned fields change', async () => {
-    // notes is not part of the signed fields
+  it('changes when notes change (full-content coverage)', async () => {
     const a = await generateEntryHash(entry({ notes: 'one' }));
     const b = await generateEntryHash(entry({ notes: 'two' }));
+    expect(a).not.toBe(b);
+  });
+
+  it('changes when location address changes', async () => {
+    const a = await generateEntryHash(entry({ locationAddress: '1 Main' }));
+    const b = await generateEntryHash(entry({ locationAddress: '2 Oak' }));
+    expect(a).not.toBe(b);
+  });
+
+  it('does not change when only updatedAt changes', async () => {
+    const a = await generateEntryHash(entry({ updatedAt: '2025-01-01T00:00:00Z' }));
+    const b = await generateEntryHash(entry({ updatedAt: '2025-12-31T23:59:59Z' }));
     expect(a).toBe(b);
   });
 });

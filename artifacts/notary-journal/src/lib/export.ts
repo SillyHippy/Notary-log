@@ -144,8 +144,23 @@ export function exportAllCSV(entries: JournalEntry[]): void {
   downloadBlob(new Blob([csvContent], { type: 'text/csv' }), `notary-journal-export-${Date.now()}.csv`);
 }
 
-export function exportAllJSON(entries: JournalEntry[]): void {
-  const jsonContent = JSON.stringify(entries, null, 2);
+export const BACKUP_FORMAT_VERSION = 2;
+
+export interface BackupEnvelope {
+  version: number;
+  exportedAt: string;
+  entries: JournalEntry[];
+  settings: NotarySettings;
+}
+
+export function exportAllJSON(entries: JournalEntry[], settings: NotarySettings): void {
+  const payload: BackupEnvelope = {
+    version: BACKUP_FORMAT_VERSION,
+    exportedAt: new Date().toISOString(),
+    entries,
+    settings,
+  };
+  const jsonContent = JSON.stringify(payload, null, 2);
   downloadBlob(new Blob([jsonContent], { type: 'application/json' }), `notary-journal-export-${Date.now()}.json`);
 }
 

@@ -40,6 +40,7 @@ type AppMode = 'loading' | 'setup' | 'locked' | 'unlocked';
 function App() {
   const [mode, setMode] = useState<AppMode>('loading');
   const [hasLegacyData, setHasLegacyData] = useState(false);
+  const [legacyPinHash, setLegacyPinHash] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -53,14 +54,12 @@ function App() {
         } else {
           // Look at legacy plaintext data to tailor the setup copy
           const legacy = await inspectLegacy();
-          if (!legacy.darkMode) {
-            // (already handled above; intentional no-op for clarity)
-          }
           // If they had darkMode in legacy plaintext settings, mirror it now
           if (legacy.entryCount > 0 && legacy.darkMode) {
             document.documentElement.classList.add('dark');
           }
           setHasLegacyData(legacy.entryCount > 0);
+          setLegacyPinHash(legacy.hadPinHash);
           setMode('setup');
         }
       } catch (err) {
@@ -83,7 +82,11 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         {mode === 'setup' && (
-          <PinSetup hasLegacyData={hasLegacyData} onComplete={() => setMode('unlocked')} />
+          <PinSetup
+            hasLegacyData={hasLegacyData}
+            legacyPinHash={legacyPinHash}
+            onComplete={() => setMode('unlocked')}
+          />
         )}
         {mode === 'locked' && (
           <PinLock onUnlock={() => setMode('unlocked')} />
