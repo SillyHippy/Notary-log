@@ -16,7 +16,7 @@ import { EditEntry } from "@/pages/edit-entry";
 import { Settings } from "@/pages/settings";
 import { Reports } from "@/pages/reports";
 
-import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache } from "@/lib/db";
+import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked } from "@/lib/db";
 
 const queryClient = new QueryClient();
 
@@ -76,6 +76,48 @@ function App() {
       }
     })();
   }, []);
+
+  // Self-heal "Database is locked" errors that can happen when the in-memory
+  // crypto key gets dropped while pages stay mounted (Vite HMR full-reload of
+  // db.ts in dev, or the sliding idle-timeout expiring while a page is open).
+  // We listen for unhandled rejections + window focus and either re-import
+  // the key from the sessionStorage cache, or fall back to the PIN screen.
+  useEffect(() => {
+    if (mode !== 'unlocked') return;
+
+    const recover = async () => {
+      if (isUnlocked()) return;
+      const restored = await tryRestoreFromSessionCache();
+      if (!restored) setMode('locked');
+    };
+
+    const onRejection = (e: PromiseRejectionEvent) => {
+      const msg = String(e.reason?.message ?? e.reason ?? '');
+      if (/database is locked/i.test(msg)) {
+        e.preventDefault(); // suppress Vite's red overlay in dev
+        void recover();
+      }
+    };
+    const onError = (e: ErrorEvent) => {
+      if (/database is locked/i.test(String(e.message ?? ''))) {
+        e.preventDefault();
+        void recover();
+      }
+    };
+    const onFocus = () => { void recover(); };
+    const onVisibility = () => { if (document.visibilityState === 'visible') void recover(); };
+
+    window.addEventListener('unhandledrejection', onRejection);
+    window.addEventListener('error', onError);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('unhandledrejection', onRejection);
+      window.removeEventListener('error', onError);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [mode]);
 
   if (mode === 'loading') {
     return (
