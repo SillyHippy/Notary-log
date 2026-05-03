@@ -138,6 +138,118 @@ const FORMAT_VERSION = 2;
 let dbPromise: Promise<IDBPDatabase> | null = null;
 let cryptoKey: CryptoKey | null = null;
 
+// ── Session key cache (survives tab refresh / Vite HMR) ────────────────────
+//
+// The PIN-derived AES key normally lives only in module-scope memory, so any
+// page reload — a tab refresh, a Vite HMR full reload, a service-worker
+// update — drops it and forces the user back to the PIN screen, even mid-form.
+// To keep the journal usable across reloads without weakening the encryption
+// we stash the *raw key material* in sessionStorage gated by an idle timeout.
+//
+// Why this is acceptable:
+//   * sessionStorage is scoped to the tab — closing the tab clears it.
+//   * It's not shared with other origins or other tabs of the same origin.
+//   * Any code already running in this origin can call requireKey() / read
+//     the in-memory key anyway, so writing the same bytes to sessionStorage
+//     does not expand the trust boundary against script-injection attacks.
+//   * We bound exposure with a sliding idle timeout — if the user walks
+//     away, the cached key expires and they must PIN-unlock again.
+//
+// We deliberately use sessionStorage (not localStorage) so the cached key
+// never persists across browser restarts.
+const KEY_CACHE_STORAGE_KEY = 'notary-journal:keyCache';
+const KEY_CACHE_IDLE_MS = 30 * 60 * 1000; // 30 minutes of inactivity
+
+interface CachedKeyRecord {
+  material: string; // base64-encoded 32 bytes
+  expiresAt: number; // ms epoch
+}
+
+function cacheKeyMaterial(material: Uint8Array): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const record: CachedKeyRecord = {
+      material: bytesToBase64(material),
+      expiresAt: Date.now() + KEY_CACHE_IDLE_MS,
+    };
+    sessionStorage.setItem(KEY_CACHE_STORAGE_KEY, JSON.stringify(record));
+  } catch {
+    // sessionStorage may be unavailable (private mode, quota) — degrade
+    // silently to "must re-unlock after refresh".
+  }
+}
+
+function clearKeyCache(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.removeItem(KEY_CACHE_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function readCachedKeyMaterial(): Uint8Array | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(KEY_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const record = JSON.parse(raw) as CachedKeyRecord;
+    if (!record?.material || typeof record.expiresAt !== 'number') {
+      clearKeyCache();
+      return null;
+    }
+    if (Date.now() > record.expiresAt) {
+      clearKeyCache();
+      return null;
+    }
+    return base64ToBytes(record.material);
+  } catch {
+    clearKeyCache();
+    return null;
+  }
+}
+
+function touchKeyCacheExpiry(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const raw = sessionStorage.getItem(KEY_CACHE_STORAGE_KEY);
+    if (!raw) return;
+    const record = JSON.parse(raw) as CachedKeyRecord;
+    if (!record?.material) return;
+    record.expiresAt = Date.now() + KEY_CACHE_IDLE_MS;
+    sessionStorage.setItem(KEY_CACHE_STORAGE_KEY, JSON.stringify(record));
+  } catch {
+    // ignore — touch is best-effort
+  }
+}
+
+/**
+ * Attempt to restore the in-memory crypto key from a previously cached copy
+ * in sessionStorage. Verifies the cached material against the canary so a
+ * stale entry (e.g. after a PIN change in another tab) is rejected rather
+ * than silently used. Returns true iff the journal is now unlocked.
+ */
+export async function tryRestoreFromSessionCache(): Promise<boolean> {
+  if (cryptoKey) return true;
+  const material = readCachedKeyMaterial();
+  if (!material) return false;
+  try {
+    const ok = await unlockWithKeyMaterial(material);
+    if (!ok) {
+      clearKeyCache();
+      return false;
+    }
+    // unlockWithKeyMaterial already installed cryptoKey but did not refresh
+    // the cache record; bump the idle window so an active reload counts
+    // as activity.
+    touchKeyCacheExpiry();
+    return true;
+  } catch {
+    clearKeyCache();
+    return false;
+  }
+}
+
 /**
  * IndexedDB schema:
  *   - `entries`: { id (auto), entryNumber (UNIQUE INDEX, cleartext), _enc, iv }
@@ -186,14 +298,19 @@ export function isUnlocked(): boolean {
 
 export function lock(): void {
   cryptoKey = null;
+  clearKeyCache();
 }
 
 export function _setKeyForTests(key: CryptoKey | null): void {
   cryptoKey = key;
+  if (!key) clearKeyCache();
 }
 
 function requireKey(): CryptoKey {
   if (!cryptoKey) throw new Error('Database is locked. Unlock with PIN before reading or writing.');
+  // Every successful key use is "activity" — slide the idle-expiry window
+  // forward so the cached key persists as long as the user is working.
+  touchKeyCacheExpiry();
   return cryptoKey;
 }
 
@@ -212,7 +329,10 @@ export async function setupCrypto(pin: string): Promise<void> {
   if (await hasCryptoSetup()) throw new Error('Encryption already initialized');
   if (!pin || pin.length < 4) throw new Error('PIN must be at least 4 digits');
   const salt = generateSalt();
-  const key = await deriveKey(pin, salt, DEFAULT_ITERATIONS);
+  // Derive raw material so we can both install the in-memory key AND cache
+  // the bytes in sessionStorage for refresh-survival.
+  const material = await deriveKeyMaterial(pin, salt, DEFAULT_ITERATIONS);
+  const key = await importAesKey(material);
   const canary = await encryptJSON(key, CANARY_PLAINTEXT);
   const meta: CryptoMeta = {
     id: 'crypto',
@@ -224,6 +344,7 @@ export async function setupCrypto(pin: string): Promise<void> {
   const db = await getDB();
   await db.put('meta', meta);
   cryptoKey = key;
+  cacheKeyMaterial(material);
 }
 
 /** Returns true on success, false on wrong PIN. Throws on missing setup or hardware errors. */
@@ -231,11 +352,16 @@ export async function unlock(pin: string): Promise<boolean> {
   const meta = await getCryptoMeta();
   if (!meta) throw new Error('Encryption is not set up on this device');
   const salt = base64ToBytes(meta.salt);
-  const key = await deriveKey(pin, salt, meta.iterations);
+  // Derive raw material first so a successful PIN can be cached for refresh
+  // survival; importAesKey gives us the same non-extractable AES-GCM key
+  // the rest of the code path expects.
+  const material = await deriveKeyMaterial(pin, salt, meta.iterations);
+  const key = await importAesKey(material);
   try {
     const value = await decryptJSON<string>(key, meta.canary);
     if (value !== CANARY_PLAINTEXT) return false;
     cryptoKey = key;
+    cacheKeyMaterial(material);
     return true;
   } catch {
     return false;
@@ -305,6 +431,7 @@ export async function unlockWithKeyMaterial(material: Uint8Array): Promise<boole
     const value = await decryptJSON<string>(candidate, meta.canary);
     if (value !== CANARY_PLAINTEXT) return false;
     cryptoKey = candidate;
+    cacheKeyMaterial(material);
     return true;
   } catch {
     return false;
@@ -325,7 +452,8 @@ export async function changePin(oldPin: string, newPin: string): Promise<boolean
   // Crucially, do not touch the database until *all* records are successfully
   // re-encrypted, then commit them in a single readwrite transaction.
   const newSalt = generateSalt();
-  const newKey = await deriveKey(newPin, newSalt, DEFAULT_ITERATIONS);
+  const newMaterial = await deriveKeyMaterial(newPin, newSalt, DEFAULT_ITERATIONS);
+  const newKey = await importAesKey(newMaterial);
 
   // Temporarily swap cryptoKey to newKey for the encrypt helpers, then restore
   // it if the commit fails so the user can keep using the journal.
@@ -367,6 +495,10 @@ export async function changePin(oldPin: string, newPin: string): Promise<boolean
     cryptoKey = oldKey; // commit failed — keep using the old key
     throw err;
   }
+
+  // Commit succeeded — refresh the session cache to the new key material so
+  // a refresh after a PIN change doesn't accidentally restore the old key.
+  cacheKeyMaterial(newMaterial);
 
   return true;
 }

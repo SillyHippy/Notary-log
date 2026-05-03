@@ -16,7 +16,7 @@ import { EditEntry } from "@/pages/edit-entry";
 import { Settings } from "@/pages/settings";
 import { Reports } from "@/pages/reports";
 
-import { hasCryptoSetup, inspectLegacy, getDarkModePref } from "@/lib/db";
+import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache } from "@/lib/db";
 
 const queryClient = new QueryClient();
 
@@ -52,7 +52,12 @@ function App() {
         document.documentElement.classList.toggle('dark', dark);
 
         if (await hasCryptoSetup()) {
-          setMode('locked');
+          // Try to restore the in-memory key from sessionStorage so a tab
+          // refresh / Vite HMR full-reload doesn't drop the user back to
+          // the PIN screen. The cache is bound to the tab's lifetime and
+          // expires after a sliding idle timeout — see `db.ts`.
+          const restored = await tryRestoreFromSessionCache();
+          setMode(restored ? 'unlocked' : 'locked');
         } else {
           // Look at legacy plaintext data to tailor the setup copy
           const legacy = await inspectLegacy();
