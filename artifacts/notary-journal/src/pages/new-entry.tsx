@@ -65,6 +65,12 @@ const entrySchema = z
 
 type EntryFormValues = z.infer<typeof entrySchema>;
 
+// sessionStorage key for the half-filled form snapshot we take just before
+// reloading to the PIN screen on a locked-DB error. Restored on mount so the
+// user doesn't lose what they typed. Excludes ID images / signature blobs so
+// the snapshot stays small and no biometric data persists.
+const DRAFT_KEY = 'notary-journal:newEntryDraft';
+
 const STEPS = ['Scan ID', 'Signer', 'Notarial Act', 'Signature', 'Review'];
 
 type ScanResult =
@@ -159,8 +165,34 @@ export function NewEntry() {
       const defaultCents = getDefaultFeeCents(settings, 'Acknowledgment');
       form.setValue('feeCharged', defaultCents > 0 ? defaultCents / 100 : 0);
       isFeeAppDerivedRef.current = true;
+
+      // Restore a draft saved just before a lock-induced reload, if any.
+      // Done after defaults so the user's typed values win over the
+      // settings-derived prefills. Restoration is one-shot — we drop the
+      // snapshot the moment we apply it so a later cancel/refresh starts
+      // clean. Image/signature blobs were intentionally excluded from the
+      // snapshot, so they remain empty here (the user re-scans).
+      try {
+        const raw = sessionStorage.getItem(DRAFT_KEY);
+        if (raw) {
+          sessionStorage.removeItem(DRAFT_KEY);
+          const draft = JSON.parse(raw) as Partial<EntryFormValues>;
+          form.reset({ ...form.getValues(), ...draft });
+          // The user typed the fee themselves before the lock, so don't let
+          // the auto-fee logic overwrite it on the next field change.
+          if (draft.feeCharged !== undefined) {
+            isFeeAppDerivedRef.current = false;
+          }
+          toast({
+            title: 'Draft restored',
+            description: 'Your in-progress entry was recovered.',
+          });
+        }
+      } catch {
+        // Corrupt JSON or unavailable storage — ignore and start fresh.
+      }
     });
-  }, [form]);
+  }, [form, toast]);
 
   // When the user picks a different notarial act or fee category, keep the
   // two in sync and re-apply the saved default whenever the fee is still
@@ -625,6 +657,16 @@ export function NewEntry() {
 
       const id = await createEntry(baseEntry);
 
+      // Successful save — drop any leftover draft snapshot so a future
+      // visit to /new starts from defaults rather than a stale recovery.
+      // Best-effort: if sessionStorage is unavailable we don't want a
+      // completed save to be reported as a failure.
+      try {
+        sessionStorage.removeItem(DRAFT_KEY);
+      } catch {
+        // ignore
+      }
+
       // For completed entries, stamp the chain hash linking to the previous completed entry
       if (status === 'completed') {
         await completeEntry(id);
@@ -656,6 +698,17 @@ export function NewEntry() {
       // because the page navigates immediately and the toast wouldn't be
       // visible — the PIN screen is self-explanatory.
       if (/locked/i.test(rawMsg)) {
+        // Snapshot the in-progress form so the user doesn't lose what they
+        // typed when App.tsx routes them to <PinLock> after the reload.
+        // Image/signature blobs are intentionally excluded — they'd bloat
+        // sessionStorage and we don't want biometric data lingering there.
+        try {
+          const snapshot = form.getValues();
+          sessionStorage.setItem(DRAFT_KEY, JSON.stringify(snapshot));
+        } catch {
+          // Storage quota or serialization error — proceed with reload
+          // anyway; losing the draft is no worse than the prior behavior.
+        }
         window.location.reload();
         return;
       }
