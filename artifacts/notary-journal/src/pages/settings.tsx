@@ -797,7 +797,7 @@ export function Settings() {
             Notary Seal
           </CardTitle>
           <CardDescription>
-            Upload a small image of your seal. It will be stamped in the lower-right corner of every page in your exported PDFs.
+            Upload a small PNG or JPG of your seal (recommended ~300×300 pixels). It will be stamped in the lower-right corner of every page in your exported PDFs.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
