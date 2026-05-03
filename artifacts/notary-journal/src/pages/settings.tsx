@@ -358,6 +358,9 @@ export function Settings() {
         throw new Error('Invalid backup file format');
       }
 
+      const startCount = (await getAllEntries()).length;
+      const isEmptyJournal = startCount === 0;
+
       let imported = 0;
       let skipped = 0;
       for (const entry of payload.entries) {
@@ -375,6 +378,15 @@ export function Settings() {
         }
       }
 
+      // Restamp legacy v1 chains imported into an empty journal so they verify
+      // cleanly. Never restamp into a non-empty journal — that could mask real
+      // tampering on the user's existing entries.
+      let restamped = false;
+      if (isEmptyJournal && imported > 0 && payload.entries.some(e => !e.hash || !e.previousEntryHash)) {
+        await recomputeChainFrom(1);
+        restamped = true;
+      }
+
       let settingsRestored = false;
       const importedSettings = payload.settings as Partial<NotarySettings> | undefined;
       if (importedSettings && Object.keys(importedSettings).length > 0 && window.confirm(
@@ -390,7 +402,10 @@ export function Settings() {
 
       toast({
         title: 'Restore complete',
-        description: `Imported ${imported} entries. Skipped ${skipped} duplicates${settingsRestored ? ', settings restored' : ''}.`,
+        description: `Imported ${imported} entries. Skipped ${skipped} duplicates`
+          + (restamped ? ', chain restamped' : '')
+          + (settingsRestored ? ', settings restored' : '')
+          + '.',
       });
       setSelectedFile(null);
       setShowRestoreList(false);
