@@ -23,7 +23,7 @@ import { parseAAMVA } from '@/lib/aamva';
 import { extractLicenseFields } from '@/lib/ocr-license';
 import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
-import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, getDefaultFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
+import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, feeDollarsToCents, getDefaultFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
 
 const entrySchema = z
   .object({
@@ -594,15 +594,8 @@ export function NewEntry() {
     try {
       const data = form.getValues();
 
-      const extractionMethod: JournalEntry['extractionMethod'] =
-        scanResult?.method === 'barcode' ? 'barcode'
-        : scanResult?.method === 'mrz' ? 'mrz'
-        : scanResult?.method === 'ocr' ? 'ocr'
-        : 'manual';
-
       // Coerce fee to a finite cents integer. An empty/NaN field becomes 0.
-      const feeNum = typeof data.feeCharged === 'number' ? data.feeCharged : Number(data.feeCharged);
-      const feeCents = Number.isFinite(feeNum) ? Math.round(feeNum * 100) : 0;
+      const feeCents = feeDollarsToCents(data.feeCharged);
 
       // Build the entry, omitting optional scan-only fields entirely when
       // they don't apply (don't write `undefined` into the encrypted blob).
@@ -614,9 +607,15 @@ export function NewEntry() {
         idBackImage,
         signatureImage,
         needsReview,
-        extractionMethod,
       };
-      if (scanResult?.method === 'ocr' || scanResult?.method === 'mrz') {
+      if (scanResult?.method === 'barcode') {
+        baseEntry.extractionMethod = 'barcode';
+      } else if (scanResult?.method === 'mrz') {
+        baseEntry.extractionMethod = 'mrz';
+        baseEntry.extractedRawText = scanResult.text;
+        baseEntry.extractionConfidence = scanResult.confidence;
+      } else if (scanResult?.method === 'ocr') {
+        baseEntry.extractionMethod = 'ocr';
         baseEntry.extractedRawText = scanResult.text;
         baseEntry.extractionConfidence = scanResult.confidence;
       }
@@ -652,16 +651,11 @@ export function NewEntry() {
       const rawMsg = err instanceof Error ? err.message : String(err);
 
       // Locked database (in-memory crypto key was cleared, e.g. after an
-      // HMR reload in dev or a tab reload). Send the user back to the PIN
-      // screen instead of leaving them stuck on a failed save.
+      // HMR reload in dev or a tab reload). Reload so App.tsx re-runs its
+      // init effect and routes the user to <PinLock>. We skip the toast
+      // because the page navigates immediately and the toast wouldn't be
+      // visible — the PIN screen is self-explanatory.
       if (/locked/i.test(rawMsg)) {
-        toast({
-          title: 'Journal is locked',
-          description: 'Please re-enter your PIN to save this entry.',
-          variant: 'destructive',
-        });
-        setIsSaving(false);
-        // Reload so App.tsx re-runs its init effect and routes to <PinLock>.
         window.location.reload();
         return;
       }

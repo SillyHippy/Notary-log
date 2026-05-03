@@ -199,3 +199,14 @@ export const MONTH_LABELS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
+
+/**
+ * Coerce a fee value coming from a form input into a finite cents integer.
+ * Empty strings, `NaN`, `undefined`, `null`, and `Infinity` all become 0,
+ * so an unfilled fee field can never write `NaN` into IndexedDB.
+ */
+export function feeDollarsToCents(value: unknown): number {
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num * 100);
+}

@@ -13,7 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { getEntry, updateEntry, type JournalEntry } from '@/lib/db';
-import { FEE_TYPES, resolveFeeType } from '@/lib/fees';
+import { FEE_TYPES, feeDollarsToCents, resolveFeeType } from '@/lib/fees';
 
 const editSchema = z.object({
   signerFullName: z.string().min(1, 'Full name is required'),
@@ -119,8 +119,7 @@ export function EditEntry() {
     if (!entry) return;
     setIsSaving(true);
     try {
-      const feeNum = typeof data.feeCharged === 'number' ? data.feeCharged : Number(data.feeCharged);
-      const feeCents = Number.isFinite(feeNum) ? Math.round(feeNum * 100) : 0;
+      const feeCents = feeDollarsToCents(data.feeCharged);
       await updateEntry(id, {
         ...data,
         feeCharged: feeCents,
@@ -135,12 +134,8 @@ export function EditEntry() {
       console.error('Edit entry save failed', err);
       const rawMsg = err instanceof Error ? err.message : String(err);
       if (/locked/i.test(rawMsg)) {
-        toast({
-          title: 'Journal is locked',
-          description: 'Please re-enter your PIN to save these changes.',
-          variant: 'destructive',
-        });
-        setIsSaving(false);
+        // Reload so App.tsx routes the user to <PinLock>; toast would
+        // not be visible across the navigation.
         window.location.reload();
         return;
       }

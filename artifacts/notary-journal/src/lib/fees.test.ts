@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACT_TYPE_TO_FEE_TYPE,
   availableReportYears,
+  feeDollarsToCents,
   getDefaultFeeCents,
   resolveFeeType,
   rollupYear,
@@ -191,5 +192,29 @@ describe('availableReportYears', () => {
 
   it('falls back to current year when no entries', () => {
     expect(availableReportYears([])).toEqual([new Date().getFullYear()]);
+  });
+});
+
+describe('feeDollarsToCents', () => {
+  it('rounds positive dollar amounts to cents', () => {
+    expect(feeDollarsToCents(10)).toBe(1000);
+    expect(feeDollarsToCents(2.5)).toBe(250);
+    expect(feeDollarsToCents(0.01)).toBe(1);
+  });
+
+  it('coerces numeric strings', () => {
+    expect(feeDollarsToCents('5')).toBe(500);
+    expect(feeDollarsToCents('12.34')).toBe(1234);
+  });
+
+  it('returns 0 for blank, NaN, undefined, null, or non-finite input', () => {
+    // Regression: a manual draft save with an empty fee field used to
+    // store NaN cents, which broke downstream reports.
+    expect(feeDollarsToCents('')).toBe(0);
+    expect(feeDollarsToCents(NaN)).toBe(0);
+    expect(feeDollarsToCents(undefined)).toBe(0);
+    expect(feeDollarsToCents(null)).toBe(0);
+    expect(feeDollarsToCents(Infinity)).toBe(0);
+    expect(feeDollarsToCents('abc')).toBe(0);
   });
 });
