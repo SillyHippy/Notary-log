@@ -542,7 +542,9 @@ export function NewEntry() {
         const dataUrl = event.target?.result as string;
         if (isBack) setIdBackImage(dataUrl);
         else setIdFrontImage(dataUrl);
-        processImageOCR(dataUrl);
+        // Mirror camera capture: front = replace, back = fillGaps so an
+        // uploaded back-of-license never overwrites confident front data.
+        processImageOCR(dataUrl, isBack ? 'fillGaps' : 'replace');
       };
       reader.readAsDataURL(file);
     }
@@ -896,7 +898,11 @@ export function NewEntry() {
             {currentStep === 1 && mrzWarning && (
               <Alert className="mb-6 bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900" data-testid="alert-mrz-warning">
                 <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500" />
-                <AlertTitle>MRZ Check Digit Mismatch</AlertTitle>
+                <AlertTitle>
+                  {mrzWarning.startsWith('MRZ check digit')
+                    ? 'MRZ Check Digit Mismatch'
+                    : 'Review Extracted Data'}
+                </AlertTitle>
                 <AlertDescription>{mrzWarning}</AlertDescription>
               </Alert>
             )}
@@ -924,21 +930,21 @@ export function NewEntry() {
                       )} />
                       <FormField control={form.control} name="signerAddress" render={({ field }) => (
                         <FormItem className="md:col-span-2">
-                          <FormLabel>Street Address *</FormLabel>
+                          <FormLabel>Street Address {form.watch('idType') === 'passport' ? <span className="text-muted-foreground">(optional)</span> : '*'}</FormLabel>
                           <FormControl><Input {...field} /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />
                       <FormField control={form.control} name="signerCity" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>City *</FormLabel>
+                          <FormLabel>City {form.watch('idType') === 'passport' ? <span className="text-muted-foreground">(optional)</span> : '*'}</FormLabel>
                           <FormControl><Input {...field} /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />
                       <FormField control={form.control} name="signerState" render={({ field }) => (
                         <FormItem>
-                          <FormLabel>State *</FormLabel>
+                          <FormLabel>State {form.watch('idType') === 'passport' ? <span className="text-muted-foreground">(optional)</span> : '*'}</FormLabel>
                           <FormControl><Input {...field} maxLength={2} /></FormControl>
                           <FormMessage />
                         </FormItem>
