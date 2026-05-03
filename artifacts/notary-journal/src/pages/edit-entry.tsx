@@ -119,9 +119,11 @@ export function EditEntry() {
     if (!entry) return;
     setIsSaving(true);
     try {
+      const feeNum = typeof data.feeCharged === 'number' ? data.feeCharged : Number(data.feeCharged);
+      const feeCents = Number.isFinite(feeNum) ? Math.round(feeNum * 100) : 0;
       await updateEntry(id, {
         ...data,
-        feeCharged: Math.round(data.feeCharged * 100),
+        feeCharged: feeCents,
         editHistory: [
           ...(entry.editHistory || []),
           { field: 'form', oldValue: '', newValue: 'updated', date: new Date().toISOString() },
@@ -130,8 +132,23 @@ export function EditEntry() {
       toast({ title: 'Saved', description: 'Draft entry updated.' });
       setLocation(`/entry/${id}`);
     } catch (err) {
-      console.error(err);
-      toast({ title: 'Error', description: 'Failed to save changes.', variant: 'destructive' });
+      console.error('Edit entry save failed', err);
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      if (/locked/i.test(rawMsg)) {
+        toast({
+          title: 'Journal is locked',
+          description: 'Please re-enter your PIN to save these changes.',
+          variant: 'destructive',
+        });
+        setIsSaving(false);
+        window.location.reload();
+        return;
+      }
+      toast({
+        title: 'Failed to save changes',
+        description: rawMsg || 'Unknown error',
+        variant: 'destructive',
+      });
       setIsSaving(false);
     }
   };

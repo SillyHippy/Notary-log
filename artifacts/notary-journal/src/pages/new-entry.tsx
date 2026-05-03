@@ -593,36 +593,44 @@ export function NewEntry() {
     setIsSaving(true);
     try {
       const data = form.getValues();
-      
+
       const extractionMethod: JournalEntry['extractionMethod'] =
         scanResult?.method === 'barcode' ? 'barcode'
         : scanResult?.method === 'mrz' ? 'mrz'
         : scanResult?.method === 'ocr' ? 'ocr'
         : 'manual';
 
-      const newEntry: Omit<JournalEntry, 'id' | 'entryNumber' | 'createdAt' | 'updatedAt'> = {
+      // Coerce fee to a finite cents integer. An empty/NaN field becomes 0.
+      const feeNum = typeof data.feeCharged === 'number' ? data.feeCharged : Number(data.feeCharged);
+      const feeCents = Number.isFinite(feeNum) ? Math.round(feeNum * 100) : 0;
+
+      // Build the entry, omitting optional scan-only fields entirely when
+      // they don't apply (don't write `undefined` into the encrypted blob).
+      const baseEntry: Omit<JournalEntry, 'id' | 'entryNumber' | 'createdAt' | 'updatedAt'> = {
         status,
         ...data,
-        feeCharged: Math.round(data.feeCharged * 100),
+        feeCharged: feeCents,
         idFrontImage,
         idBackImage,
         signatureImage,
         needsReview,
         extractionMethod,
-        extractedRawText:
-          scanResult?.method === 'ocr' || scanResult?.method === 'mrz' ? scanResult.text : undefined,
-        extractionConfidence:
-          scanResult?.method === 'ocr' || scanResult?.method === 'mrz' ? scanResult.confidence : undefined,
-        completedAt: status === 'completed' ? new Date().toISOString() : undefined,
       };
+      if (scanResult?.method === 'ocr' || scanResult?.method === 'mrz') {
+        baseEntry.extractedRawText = scanResult.text;
+        baseEntry.extractionConfidence = scanResult.confidence;
+      }
+      if (status === 'completed') {
+        baseEntry.completedAt = new Date().toISOString();
+      }
 
-      const id = await createEntry(newEntry);
+      const id = await createEntry(baseEntry);
 
       // For completed entries, stamp the chain hash linking to the previous completed entry
       if (status === 'completed') {
         await completeEntry(id);
       }
-      
+
       toast({ title: 'Success', description: `Entry saved as ${status}.` });
 
       // Silent auto-backup — runs in background, never blocks redirect
@@ -640,8 +648,29 @@ export function NewEntry() {
 
       setLocation(`/entry/${id}`);
     } catch (err) {
-      console.error(err);
-      toast({ title: 'Error', description: 'Failed to save entry.', variant: 'destructive' });
+      console.error('Save entry failed', err);
+      const rawMsg = err instanceof Error ? err.message : String(err);
+
+      // Locked database (in-memory crypto key was cleared, e.g. after an
+      // HMR reload in dev or a tab reload). Send the user back to the PIN
+      // screen instead of leaving them stuck on a failed save.
+      if (/locked/i.test(rawMsg)) {
+        toast({
+          title: 'Journal is locked',
+          description: 'Please re-enter your PIN to save this entry.',
+          variant: 'destructive',
+        });
+        setIsSaving(false);
+        // Reload so App.tsx re-runs its init effect and routes to <PinLock>.
+        window.location.reload();
+        return;
+      }
+
+      toast({
+        title: 'Failed to save entry',
+        description: rawMsg || 'Unknown error',
+        variant: 'destructive',
+      });
       setIsSaving(false);
     }
   };
