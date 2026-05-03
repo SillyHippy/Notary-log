@@ -92,8 +92,11 @@ export function Settings() {
 
   // Biometric unlock state
   const [biometricSupported, setBiometricSupported] = useState(false);
-  // Device has a platform authenticator but PRF is unavailable.
-  const [biometricUnsupportedExplained, setBiometricUnsupportedExplained] = useState(false);
+  // 'no-platform' = device has no platform authenticator at all;
+  // 'no-prf'      = device has one but the WebAuthn PRF extension is missing;
+  // null          = supported (or not enough info to explain).
+  const [biometricUnsupportedExplained, setBiometricUnsupportedExplained] =
+    useState<null | 'no-platform' | 'no-prf'>(null);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [biometricBusy, setBiometricBusy] = useState(false);
   const [biometricEnrollPin, setBiometricEnrollPin] = useState('');
@@ -167,20 +170,17 @@ export function Settings() {
       try {
         const platform = await isPlatformAuthenticatorAvailable();
         if (!platform) {
-          // No platform authenticator at all (e.g. desktop without
-          // Touch ID / Hello, or unsupported browser): show the same
-          // explanatory disabled row we use for missing-PRF.
           setBiometricSupported(false);
-          setBiometricUnsupportedExplained(true);
+          setBiometricUnsupportedExplained('no-platform');
         } else {
           const prfOk = await isPrfLikelySupported();
           setBiometricSupported(prfOk);
-          setBiometricUnsupportedExplained(!prfOk);
+          setBiometricUnsupportedExplained(prfOk ? null : 'no-prf');
           if (prfOk) setBiometricEnabled(await isBiometricEnabled());
         }
       } catch {
         setBiometricSupported(false);
-        setBiometricUnsupportedExplained(true);
+        setBiometricUnsupportedExplained('no-platform');
       }
 
       const entries = await getAllEntries();
@@ -260,7 +260,7 @@ export function Settings() {
       // PRF failure: flip to the disabled "unsupported" row immediately.
       if (/PRF/.test(msg)) {
         setBiometricSupported(false);
-        setBiometricUnsupportedExplained(true);
+        setBiometricUnsupportedExplained('no-prf');
         setShowBiometricEnroll(false);
         setBiometricEnrollPin('');
       }
@@ -867,7 +867,9 @@ export function Settings() {
                       <div className="space-y-0.5">
                         <p className="text-sm font-medium">Biometric unlock unavailable</p>
                         <p className="text-xs text-muted-foreground">
-                          Your device has a biometric sensor, but this browser doesn&apos;t support the WebAuthn PRF extension we need to wrap your encryption key. Try Chrome or Edge 132+, Safari 18+, or Samsung Internet on a recent Android device. Your PIN still works as normal.
+                          {biometricUnsupportedExplained === 'no-platform'
+                            ? "This device or browser doesn't expose a built-in biometric sensor (Face ID, Touch ID, Windows Hello, or Android biometric) to the web. Your PIN still works as normal."
+                            : "Your device has a biometric sensor, but this browser doesn't support the WebAuthn PRF extension we need to wrap your encryption key. Try Chrome or Edge 132+, Safari 18+, or Samsung Internet on a recent Android device. Your PIN still works as normal."}
                         </p>
                       </div>
                     </div>
