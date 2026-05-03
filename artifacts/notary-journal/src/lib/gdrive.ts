@@ -97,6 +97,22 @@ export function getLastBackupTime(): string | null {
   return localStorage.getItem(LAST_BACKUP_KEY);
 }
 
+/**
+ * Durable "Drive has been set up on this device" signal. True if any
+ * persisted Drive state exists (folder id, latest-file id, last-backup
+ * timestamp, or a non-expired token). Survives access-token expiry, so the
+ * dashboard nudge can offer "Back up now" instead of treating an expired
+ * token as "never configured".
+ */
+export function isGdriveSetUp(): boolean {
+  return (
+    !!localStorage.getItem(FOLDER_ID_KEY) ||
+    !!localStorage.getItem(LATEST_FILE_ID_KEY) ||
+    !!localStorage.getItem(LAST_BACKUP_KEY) ||
+    !!localStorage.getItem(TOKEN_KEY)
+  );
+}
+
 export function disconnectGdrive(): void {
   const token = localStorage.getItem(TOKEN_KEY);
   if (token && isGdriveReady()) {

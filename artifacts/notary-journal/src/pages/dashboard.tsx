@@ -32,7 +32,7 @@ import {
 } from '@/lib/db';
 import {
   isGdriveConfigured,
-  getStoredToken,
+  isGdriveSetUp,
   getLastBackupTime,
   backupToDrive,
 } from '@/lib/gdrive';
@@ -64,7 +64,9 @@ export function Dashboard() {
       snoozeUntilMs,
       manualBackupOnly: !!settingsData?.manualBackupOnly,
       gdriveAvailable: isGdriveConfigured(),
-      gdriveConnected: !!getStoredToken(),
+      // Use durable setup state, not the OAuth access token (which expires
+      // hourly). backupToDrive() will silently re-auth via getValidToken().
+      gdriveConnected: isGdriveSetUp(),
       now: Date.now(),
     }));
   };
