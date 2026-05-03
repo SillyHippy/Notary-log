@@ -42,7 +42,6 @@ export function PinLock({ onUnlock }: PinLockProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin]);
 
-  // Detect biometric availability + try once on mount.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -54,22 +53,17 @@ export function PinLock({ onUnlock }: PinLockProps) {
         setBiometricAvailable(true);
         if (!autoTriedRef.current) {
           autoTriedRef.current = true;
-          // Auto-prompt once. If the user dismisses the OS sheet they can fall
-          // back to PIN entry; we don't auto-retry to avoid prompt spam.
+          // Prompt once on mount; user can fall back to PIN if they dismiss.
           tryBiometric();
         }
-      } catch {
-        // ignore — biometric stays unavailable
-      }
+      } catch {/* biometric stays unavailable */}
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const finishUnlock = async (): Promise<boolean> => {
-    // Resume any interrupted plaintext→encrypted migration before letting the
-    // user past the lock screen. Fail closed: if migration fails or doesn't
-    // finish, surface the error and keep the journal locked.
+    // Resume any interrupted plaintext→encrypted migration; fail closed.
     try {
       if (await needsMigration()) {
         await migratePlaintext(() => {});
@@ -92,16 +86,7 @@ export function PinLock({ onUnlock }: PinLockProps) {
     try {
       const ok = await unlockWithBiometric();
       if (!ok) {
-        // Could be: user cancelled, PRF failed, credential gone, OR the
-        // wrapped key is stale (PIN was changed elsewhere). We can't easily
-        // distinguish cancel from stale, so only wipe the record if the
-        // record exists AND we know the wrapped key actually decrypted but
-        // failed canary — `unlockWithBiometric` returns false in both cases.
-        // To stay safe, only clear the record on a definite stale-key
-        // signal: if biometric is still enabled but unlock failed twice in
-        // a row we'd need extra plumbing. For now, fall back silently and
-        // let the user enter the PIN. If the PIN later succeeds, the next
-        // session can re-enroll.
+        // Cancel / stale key / PRF unavailable — fall back silently to PIN.
         setBiometricBusy(false);
         return;
       }

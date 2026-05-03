@@ -92,11 +92,7 @@ export function Settings() {
 
   // Biometric unlock state
   const [biometricSupported, setBiometricSupported] = useState(false);
-  // True when the device has a platform authenticator but PRF is known to be
-  // unavailable (either a previous enrollment told us so, or
-  // PublicKeyCredential.getClientCapabilities reports no PRF). We render an
-  // explanatory disabled row in that case so the user understands why
-  // biometric unlock isn't offered.
+  // Device has a platform authenticator but PRF is unavailable.
   const [biometricUnsupportedExplained, setBiometricUnsupportedExplained] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [biometricBusy, setBiometricBusy] = useState(false);
@@ -166,11 +162,8 @@ export function Settings() {
 
       hydrateFeeAndSealStateFrom(settings);
 
-      // Biometric availability + enrollment.
-      // We only consider biometric unlock "supported" if the device has a
-      // platform authenticator AND the WebAuthn PRF extension is likely to
-      // work. PRF is the primitive we use to wrap the journal key — without
-      // it the toggle would only fail at enrollment, which is a worse UX.
+      // Biometric is "supported" only if both a platform authenticator and
+      // the WebAuthn PRF extension are available.
       try {
         const platform = await isPlatformAuthenticatorAvailable();
         if (!platform) {
@@ -224,8 +217,7 @@ export function Settings() {
       if (!ok) {
         setChangePinError('Current PIN is incorrect.');
       } else {
-        // Invalidate biometric: the wrapped PIN is now stale and would fail
-        // to unlock anyway. The user can re-enroll with the new PIN.
+        // Wrapped key is now stale; user can re-enroll with the new PIN.
         try {
           if (await isBiometricEnabled()) {
             await clearBiometric();
@@ -255,9 +247,6 @@ export function Settings() {
         setBiometricBusy(false);
         return;
       }
-      // enableBiometric performs its own PIN verification (it has to derive
-      // the journal key material) — a wrong PIN throws and we surface that
-      // as a friendly error instead of silently wrapping bad bytes.
       await enableBiometric(biometricEnrollPin);
       setBiometricEnabled(true);
       setShowBiometricEnroll(false);
@@ -265,10 +254,7 @@ export function Settings() {
       toast({ title: 'Biometric unlock enabled', description: 'You can now unlock with Face ID, Touch ID, or your device biometric.' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
-      // If enrollment failed because the authenticator dropped the PRF
-      // extension, enableBiometric() has already persisted the "unsupported"
-      // flag. Reflect that immediately in the UI so we hide the toggle and
-      // show the explanatory disabled row instead.
+      // PRF failure: flip to the disabled "unsupported" row immediately.
       if (/PRF/.test(msg)) {
         setBiometricSupported(false);
         setBiometricUnsupportedExplained(true);
@@ -802,10 +788,6 @@ export function Settings() {
                   </Button>
                 </div>
 
-                {/* Biometric unlock toggle. Shown enabled when both a
-                    platform authenticator AND the WebAuthn PRF extension are
-                    available; shown disabled with an explanation when the
-                    device has a platform authenticator but PRF is missing. */}
                 {biometricSupported && (
                   <div className="border-t pt-4 space-y-3">
                     <div className="flex items-start justify-between gap-4">
@@ -836,7 +818,7 @@ export function Settings() {
                       <div className="p-4 border rounded-lg bg-muted/50 space-y-3 animate-in slide-in-from-top-2">
                         <h4 className="font-medium text-sm">Confirm your PIN to enable biometric</h4>
                         <p className="text-xs text-muted-foreground">
-                          We need your current PIN once so we can store it locked behind your device biometric.
+                          We need your current PIN once to derive your journal&apos;s encryption key. We then store the key wrapped behind your device biometric — your PIN is never stored.
                         </p>
                         <div className="space-y-2">
                           <Label htmlFor="biometricPin">Current PIN</Label>
@@ -875,8 +857,6 @@ export function Settings() {
                   </div>
                 )}
 
-                {/* Disabled, explanatory row when the device has a platform
-                    authenticator but cannot satisfy the PRF requirement. */}
                 {!biometricSupported && biometricUnsupportedExplained && (
                   <div className="border-t pt-4">
                     <div className="flex items-start gap-3 opacity-70" data-testid="biometric-unsupported-row">

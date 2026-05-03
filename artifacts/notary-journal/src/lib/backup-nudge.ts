@@ -1,17 +1,7 @@
 /**
- * Pure logic for the dashboard "your backup is stale" nudge.
- *
- * Kept free of IndexedDB / localStorage / DOM access so the core decision
- * function can be unit-tested without browser globals. Callers wire it up to:
- *   - `gdrive_last_backup` (localStorage in `gdrive.ts`) for `lastBackupIso`
- *   - `NotarySettings.backupReminderDays` for `thresholdDays`
- *   - `NotarySettings.manualBackupOnly` for `manualBackupOnly`
- *   - The IDB `meta` store (`backup-snooze`) for `snoozeUntilMs`
- *   - `isGdriveConfigured()` / token presence for `gdriveAvailable` / `gdriveConnected`
- *
- * Snooze persistence used to live in localStorage but moved to IndexedDB so
- * it sits next to the rest of the app's per-device state and survives
- * private-mode / quota cleanups consistently with the journal itself.
+ * Pure decision logic for the dashboard backup-staleness nudge, plus
+ * IDB-backed snooze persistence. The core function takes all inputs as
+ * arguments so it can be unit-tested without browser globals.
  */
 
 export type BackupNudgeKind = 'none' | 'never-configured' | 'never' | 'stale';
@@ -58,19 +48,14 @@ export function computeBackupNudge(inputs: BackupNudgeInputs): BackupNudgeState 
     now,
   } = inputs;
 
-  // Respect the user's "I'll handle backups manually" preference: never nag.
   if (manualBackupOnly) return { kind: 'none', daysSince: null, message: '' };
 
-  // Respect the snooze window.
   if (snoozeUntilMs !== null && now < snoozeUntilMs) {
     return { kind: 'none', daysSince: null, message: '' };
   }
 
-  // If the integration isn't configured at all (no client id), don't nag —
-  // the admin/user can't act on the message.
   if (!gdriveAvailable) return { kind: 'none', daysSince: null, message: '' };
 
-  // Drive available but the user hasn't connected yet → invite them to set it up.
   if (!gdriveConnected) {
     return {
       kind: 'never-configured',
@@ -106,11 +91,6 @@ export function computeBackupNudge(inputs: BackupNudgeInputs): BackupNudgeState 
     message: `Your last backup was ${days} day${days === 1 ? '' : 's'} ago — back up now?`,
   };
 }
-
-// ── IndexedDB-backed snooze persistence ────────────────────────────────────
-// Stored in the `meta` store at id='backup-snooze' so the snooze deadline
-// lives next to the rest of the app's encrypted per-device state. The value
-// itself (an epoch-ms number) is non-sensitive and is stored unencrypted.
 
 import { getDB } from './db';
 
