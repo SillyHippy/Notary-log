@@ -512,7 +512,12 @@ async function encryptEntry(entry: JournalEntry): Promise<StoredEntry> {
   // inside the encrypted blob.
   const { id, entryNumber, ...rest } = entry;
   const _enc = await encryptJSON(key, rest);
-  return { id, entryNumber, _enc };
+  // IMPORTANT: omit `id` when undefined. The entries store uses
+  // { keyPath: 'id', autoIncrement: true }, and an explicit `id: undefined`
+  // makes IDB throw "Evaluating the object store's key path yielded a value
+  // that is not a valid key." Auto-increment only fires when the property
+  // is absent, not when it is present-but-undefined.
+  return id === undefined ? { entryNumber, _enc } : { id, entryNumber, _enc };
 }
 
 async function decryptStoredEntry(stored: StoredEntry | JournalEntry): Promise<JournalEntry> {
