@@ -215,8 +215,11 @@ export function Settings() {
       // Restamp the chain for legacy/v1 imports into an empty journal so they
       // verify cleanly. We never restamp into a non-empty journal — that could
       // mask tampering on the user's existing entries.
+      // Detect legacy by MISSING `hash` only — `previousEntryHash === ""` is
+      // the valid genesis value for entry #1 in a v2 backup and must NOT
+      // trigger a restamp (which could otherwise normalize tampered chains).
       let restamped = false;
-      if (isEmptyJournal && imported > 0 && entries.some(e => !e.hash || !e.previousEntryHash)) {
+      if (isEmptyJournal && imported > 0 && entries.some(e => !e.hash)) {
         await recomputeChainFrom(1);
         restamped = true;
       }
@@ -380,9 +383,10 @@ export function Settings() {
 
       // Restamp legacy v1 chains imported into an empty journal so they verify
       // cleanly. Never restamp into a non-empty journal — that could mask real
-      // tampering on the user's existing entries.
+      // tampering on the user's existing entries. Use missing `hash` (not empty
+      // `previousEntryHash`) as the legacy signal; "" is the valid genesis.
       let restamped = false;
-      if (isEmptyJournal && imported > 0 && payload.entries.some(e => !e.hash || !e.previousEntryHash)) {
+      if (isEmptyJournal && imported > 0 && payload.entries.some(e => !e.hash)) {
         await recomputeChainFrom(1);
         restamped = true;
       }

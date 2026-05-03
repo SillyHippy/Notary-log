@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { LockKeyhole, Delete } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { unlock as unlockDB } from '@/lib/db';
+import { unlock as unlockDB, needsMigration, migratePlaintext } from '@/lib/db';
 
 interface PinLockProps {
   onUnlock: () => void;
@@ -41,6 +41,16 @@ export function PinLock({ onUnlock }: PinLockProps) {
       const ok = await unlockDB(pin);
       if (ok) {
         setFailCount(0);
+        // If a previous setup was interrupted after crypto meta was written but
+        // before all plaintext rows were re-encrypted, finish the migration now
+        // that we hold the key. Safe no-op when nothing is pending.
+        try {
+          if (await needsMigration()) {
+            await migratePlaintext(() => {});
+          }
+        } catch (mErr) {
+          console.error('Resume migration after unlock failed', mErr);
+        }
         onUnlock();
       } else {
         const newFails = failCount + 1;
