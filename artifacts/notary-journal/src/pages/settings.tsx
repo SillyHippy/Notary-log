@@ -167,8 +167,11 @@ export function Settings() {
       try {
         const platform = await isPlatformAuthenticatorAvailable();
         if (!platform) {
+          // No platform authenticator at all (e.g. desktop without
+          // Touch ID / Hello, or unsupported browser): show the same
+          // explanatory disabled row we use for missing-PRF.
           setBiometricSupported(false);
-          setBiometricUnsupportedExplained(false);
+          setBiometricUnsupportedExplained(true);
         } else {
           const prfOk = await isPrfLikelySupported();
           setBiometricSupported(prfOk);
@@ -177,7 +180,7 @@ export function Settings() {
         }
       } catch {
         setBiometricSupported(false);
-        setBiometricUnsupportedExplained(false);
+        setBiometricUnsupportedExplained(true);
       }
 
       const entries = await getAllEntries();
