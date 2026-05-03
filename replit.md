@@ -35,6 +35,12 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
   - GPS auto-detect location for notarization address
   - PWA manifest + service worker for offline use
   - AAMVA barcode format parser for driver's licenses (including Oklahoma concatenated subfile format)
+  - Fee tracking by fee type with configurable defaults; annual report (year + month picker) with monthly chart, per-month/per-fee-type/per-act-type breakdowns, charged vs waived totals, and PDF/CSV export
+  - Notary seal image upload (PNG/JPG, post-compression hard-cap 200KB) stamped on single-entry, bulk, and annual report PDFs
+
+#### Architectural decisions
+- **Legacy `feeType` migration**: Pre-existing entries are NOT physically backfilled with `feeType = 'Other'`. Doing so would rewrite signed records and invalidate the SHA-256 hash chain. Instead, `resolveFeeType` in `lib/fees.ts` derives a fee type at read time from `notarialActType` (with `Other` as final fallback). All rollups, reports, and exports honor this read-time resolution; never add a backfill migration.
+- **Annual report bucketing**: rollups bucket by `createdAt` (entry creation date), which matches the act/notarization date for the no-backend single-user flow.
 
 ### API Server (`artifacts/api-server`)
 - **Type**: Express 5 REST API
