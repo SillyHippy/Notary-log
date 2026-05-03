@@ -6,3 +6,9 @@ id = "7tpmaaEPfjmNhlJ4TYMXf"
 uri = "file://attached_assets/notary-journal-netlify.zip"
 type = "unspecified"
 title = "notary-journal-netlify.zip (drag onto Netlify)"
+
+[[outputs]]
+id = "q0cJJ_akBF9hP_PeQCA-J"
+uri = "file://.local/downloads/notary-journal-netlify.tar.gz"
+type = "unspecified"
+title = "notary-journal-netlify.tar.gz (drag onto Netlify after extracting)"
