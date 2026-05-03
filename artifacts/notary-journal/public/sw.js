@@ -1,4 +1,4 @@
-const CACHE_NAME = 'notary-journal-v2';
+const CACHE_NAME = 'notary-journal-v3';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -35,6 +35,30 @@ self.addEventListener('fetch', event => {
   if (url.origin !== location.origin) {
     event.respondWith(
       fetch(request).catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // Network-first for navigations / HTML so a bad deploy can't poison
+  // returning visitors with a stale shell. Cache-first for hashed assets.
+  const isNavigation =
+    request.mode === 'navigate' ||
+    (request.destination === '' && request.headers.get('accept')?.includes('text/html'));
+
+  if (isNavigation) {
+    event.respondWith(
+      fetch(request)
+        .then(response => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached = await caches.match(request);
+          return cached || caches.match('/index.html') || new Response('Offline', { status: 503 });
+        })
     );
     return;
   }
