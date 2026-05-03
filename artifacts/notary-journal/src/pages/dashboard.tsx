@@ -210,9 +210,11 @@ export function Dashboard() {
               onClick={handleSnooze}
               disabled={nudgeBusy}
               data-testid="button-nudge-snooze"
-              title="Hide for 24 hours"
+              title="Dismiss for today"
+              aria-label="Dismiss for today"
             >
-              <X className="w-4 h-4" />
+              <X className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Dismiss for today</span>
             </Button>
           </div>
         </div>

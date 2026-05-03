@@ -122,6 +122,10 @@ export function disconnectGdrive(): void {
   localStorage.removeItem(TOKEN_EXPIRY_KEY);
   localStorage.removeItem(FOLDER_ID_KEY);
   localStorage.removeItem(LATEST_FILE_ID_KEY);
+  // Also clear the last-backup timestamp so isGdriveSetUp() returns false
+  // and the dashboard correctly shows the "set up cloud backup" banner
+  // instead of "back up now" after an explicit disconnect.
+  localStorage.removeItem(LAST_BACKUP_KEY);
   tokenClient = null;
   pendingResolve = null;
   pendingReject = null;
