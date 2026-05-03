@@ -87,6 +87,66 @@ export async function clearBiometric(): Promise<void> {
   await db.delete('meta', META_KEY);
 }
 
+// ── PRF capability probe ────────────────────────────────────────────────────
+// We can't enroll a credential without a user gesture, so a fully reliable
+// PRF probe isn't possible up-front on every browser. We use two signals:
+//   1. PublicKeyCredential.getClientCapabilities() (Chrome 132+, Safari 18+),
+//      which reports 'extension:prf' without prompting.
+//   2. A persistent "PRF unsupported" flag we set the first time enrollment
+//      fails with the PRF-extension-not-supported error, so we never offer
+//      the toggle again on the same device.
+// Together these let Settings hide/disable the biometric UI on devices that
+// have a platform authenticator but cannot satisfy our PRF requirement.
+
+const PRF_UNSUPPORTED_KEY = 'biometric-prf-unsupported';
+
+export async function markPrfUnsupported(): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.put('meta', { id: PRF_UNSUPPORTED_KEY, at: new Date().toISOString() });
+  } catch {/* non-fatal */}
+}
+
+export async function isPrfPersistentlyUnsupported(): Promise<boolean> {
+  try {
+    const db = await getDB();
+    return !!(await db.get('meta', PRF_UNSUPPORTED_KEY));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Best-effort up-front PRF support probe. Returns:
+ *   - false  if a previous enrollment attempt on this device failed because
+ *            the authenticator did not honor the PRF extension, OR if the
+ *            browser exposes getClientCapabilities and reports no PRF.
+ *   - true   otherwise (optimistic — the actual support is verified at
+ *            enrollment time).
+ *
+ * Never prompts the user; safe to call on app startup.
+ */
+export async function isPrfLikelySupported(): Promise<boolean> {
+  if (await isPrfPersistentlyUnsupported()) return false;
+  try {
+    const Pkc = (typeof window !== 'undefined' ? window.PublicKeyCredential : undefined) as
+      | (typeof PublicKeyCredential & {
+          getClientCapabilities?: () => Promise<Record<string, boolean>>;
+        })
+      | undefined;
+    const fn = Pkc?.getClientCapabilities;
+    if (typeof fn === 'function') {
+      const caps = await fn.call(Pkc);
+      // The spec uses 'extension:prf'; some early implementations used 'prf'.
+      // Treat presence of either truthy key as support; absence is "unknown",
+      // not "unsupported", so we stay optimistic and let enrollment confirm.
+      const explicit = caps['extension:prf'] ?? caps['prf'];
+      if (explicit === false) return false;
+    }
+  } catch {/* fall through to optimistic */}
+  return true;
+}
+
 // ── Internal helpers (exported for tests) ──────────────────────────────────
 
 /** Import a PRF output (raw bytes) as an AES-GCM 256 wrapping key. */
@@ -182,7 +242,17 @@ export async function enableBiometric(pin: string): Promise<void> {
     const credentialId = new Uint8Array(created.rawId);
 
     // Step 2: actually fetch the PRF output via a get() call.
-    const prfOutput = await assertAndGetPrfOutput(credentialId, prfSalt);
+    let prfOutput: Uint8Array;
+    try {
+      prfOutput = await assertAndGetPrfOutput(credentialId, prfSalt);
+    } catch (err) {
+      // If the authenticator silently dropped the PRF extension, persist a
+      // "this device can't do PRF" flag so we don't keep offering the toggle.
+      if (err instanceof Error && /PRF/.test(err.message)) {
+        await markPrfUnsupported();
+      }
+      throw err;
+    }
 
     const wrappingKey = await importPrfWrappingKey(prfOutput);
     // Encode as base64 inside the EncBlob so we never JSON.stringify a

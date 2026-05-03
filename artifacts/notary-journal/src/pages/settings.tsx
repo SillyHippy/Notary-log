@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
 import {
   isPlatformAuthenticatorAvailable,
+  isPrfLikelySupported,
   isBiometricEnabled,
   enableBiometric,
   clearBiometric,
@@ -91,6 +92,12 @@ export function Settings() {
 
   // Biometric unlock state
   const [biometricSupported, setBiometricSupported] = useState(false);
+  // True when the device has a platform authenticator but PRF is known to be
+  // unavailable (either a previous enrollment told us so, or
+  // PublicKeyCredential.getClientCapabilities reports no PRF). We render an
+  // explanatory disabled row in that case so the user understands why
+  // biometric unlock isn't offered.
+  const [biometricUnsupportedExplained, setBiometricUnsupportedExplained] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [biometricBusy, setBiometricBusy] = useState(false);
   const [biometricEnrollPin, setBiometricEnrollPin] = useState('');
@@ -159,13 +166,25 @@ export function Settings() {
 
       hydrateFeeAndSealStateFrom(settings);
 
-      // Biometric availability + enrollment
+      // Biometric availability + enrollment.
+      // We only consider biometric unlock "supported" if the device has a
+      // platform authenticator AND the WebAuthn PRF extension is likely to
+      // work. PRF is the primitive we use to wrap the journal key — without
+      // it the toggle would only fail at enrollment, which is a worse UX.
       try {
-        const supported = await isPlatformAuthenticatorAvailable();
-        setBiometricSupported(supported);
-        if (supported) setBiometricEnabled(await isBiometricEnabled());
+        const platform = await isPlatformAuthenticatorAvailable();
+        if (!platform) {
+          setBiometricSupported(false);
+          setBiometricUnsupportedExplained(false);
+        } else {
+          const prfOk = await isPrfLikelySupported();
+          setBiometricSupported(prfOk);
+          setBiometricUnsupportedExplained(!prfOk);
+          if (prfOk) setBiometricEnabled(await isBiometricEnabled());
+        }
       } catch {
         setBiometricSupported(false);
+        setBiometricUnsupportedExplained(false);
       }
 
       const entries = await getAllEntries();
@@ -245,7 +264,18 @@ export function Settings() {
       setBiometricEnrollPin('');
       toast({ title: 'Biometric unlock enabled', description: 'You can now unlock with Face ID, Touch ID, or your device biometric.' });
     } catch (err) {
-      toast({ title: 'Biometric setup failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      // If enrollment failed because the authenticator dropped the PRF
+      // extension, enableBiometric() has already persisted the "unsupported"
+      // flag. Reflect that immediately in the UI so we hide the toggle and
+      // show the explanatory disabled row instead.
+      if (/PRF/.test(msg)) {
+        setBiometricSupported(false);
+        setBiometricUnsupportedExplained(true);
+        setShowBiometricEnroll(false);
+        setBiometricEnrollPin('');
+      }
+      toast({ title: 'Biometric setup failed', description: msg, variant: 'destructive' });
     }
     setBiometricBusy(false);
   };
@@ -772,7 +802,10 @@ export function Settings() {
                   </Button>
                 </div>
 
-                {/* Biometric unlock toggle (hidden when unsupported) */}
+                {/* Biometric unlock toggle. Shown enabled when both a
+                    platform authenticator AND the WebAuthn PRF extension are
+                    available; shown disabled with an explanation when the
+                    device has a platform authenticator but PRF is missing. */}
                 {biometricSupported && (
                   <div className="border-t pt-4 space-y-3">
                     <div className="flex items-start justify-between gap-4">
@@ -782,7 +815,7 @@ export function Settings() {
                           Biometric unlock
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Unlock with Face ID, Touch ID, or your device biometric. Your PIN is still required to set this up and is the only thing that ever decrypts your journal.
+                          Unlock with Face ID, Touch ID, or your device biometric. Your PIN is required once to enroll; after that, an encrypted copy of your journal&apos;s encryption key is stored locked behind your device biometric. Your PIN itself is never stored.
                         </p>
                       </div>
                       <Switch
@@ -839,6 +872,22 @@ export function Settings() {
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Disabled, explanatory row when the device has a platform
+                    authenticator but cannot satisfy the PRF requirement. */}
+                {!biometricSupported && biometricUnsupportedExplained && (
+                  <div className="border-t pt-4">
+                    <div className="flex items-start gap-3 opacity-70" data-testid="biometric-unsupported-row">
+                      <Fingerprint className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                      <div className="space-y-0.5">
+                        <p className="text-sm font-medium">Biometric unlock unavailable</p>
+                        <p className="text-xs text-muted-foreground">
+                          Your device has a biometric sensor, but this browser doesn&apos;t support the WebAuthn PRF extension we need to wrap your encryption key. Try Chrome or Edge 132+, Safari 18+, or Samsung Internet on a recent Android device. Your PIN still works as normal.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 )}
 

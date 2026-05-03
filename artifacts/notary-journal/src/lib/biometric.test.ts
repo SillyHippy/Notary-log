@@ -205,3 +205,33 @@ describe('enable + unlock round-trip (mocked WebAuthn + mocked IDB)', () => {
     expect(await unlockWithBiometric()).toBe(false);
   });
 });
+
+describe('biometric — PRF capability probe', () => {
+  beforeEach(() => {
+    fakeMeta.clear();
+  });
+
+  it('isPrfLikelySupported is optimistic when getClientCapabilities is unavailable', async () => {
+    const { isPrfLikelySupported } = await import('./biometric');
+    expect(await isPrfLikelySupported()).toBe(true);
+  });
+
+  it('isPrfLikelySupported returns false once a PRF-unsupported failure has been recorded', async () => {
+    const { isPrfLikelySupported, markPrfUnsupported } = await import('./biometric');
+    await markPrfUnsupported();
+    expect(await isPrfLikelySupported()).toBe(false);
+  });
+
+  it('isPrfLikelySupported returns false when getClientCapabilities reports no PRF', async () => {
+    const { isPrfLikelySupported } = await import('./biometric');
+    const original = (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential;
+    (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = {
+      getClientCapabilities: async () => ({ 'extension:prf': false }),
+    };
+    try {
+      expect(await isPrfLikelySupported()).toBe(false);
+    } finally {
+      (globalThis as { PublicKeyCredential?: unknown }).PublicKeyCredential = original;
+    }
+  });
+});
