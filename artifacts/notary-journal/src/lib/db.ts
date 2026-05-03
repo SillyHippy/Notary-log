@@ -127,8 +127,11 @@ export function getDB(): Promise<IDBPDatabase> {
           // sensitive metadata leaks into IDB. entryNumber stays as the only
           // cleartext index (it's just a sequence number).
           const entryStore = tx.objectStore('entries');
-          if (entryStore.indexNames.contains('status')) entryStore.deleteIndex('status');
-          if (entryStore.indexNames.contains('createdAt')) entryStore.deleteIndex('createdAt');
+          // Drop every legacy plaintext index. `entryNumber` (a sequence
+          // number) is the only cleartext index that should remain.
+          for (const name of Array.from(entryStore.indexNames)) {
+            if (name !== 'entryNumber') entryStore.deleteIndex(name);
+          }
         }
         if (!db.objectStoreNames.contains('settings')) {
           db.createObjectStore('settings', { keyPath: 'id' });

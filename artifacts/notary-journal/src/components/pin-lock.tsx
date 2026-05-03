@@ -41,15 +41,25 @@ export function PinLock({ onUnlock }: PinLockProps) {
       const ok = await unlockDB(pin);
       if (ok) {
         setFailCount(0);
-        // If a previous setup was interrupted after crypto meta was written but
-        // before all plaintext rows were re-encrypted, finish the migration now
-        // that we hold the key. Safe no-op when nothing is pending.
+        // If a previous setup was interrupted after crypto meta was written
+        // but before all plaintext rows were re-encrypted, finish the
+        // migration now that we hold the key. FAIL CLOSED: if migration
+        // throws or `needsMigration()` is still true afterward, surface the
+        // error and do NOT unlock the journal — letting the user in while
+        // plaintext rows linger would weaken the at-rest guarantee.
         try {
           if (await needsMigration()) {
             await migratePlaintext(() => {});
+            if (await needsMigration()) {
+              throw new Error('Migration finished but plaintext data remains. Try again.');
+            }
           }
         } catch (mErr) {
           console.error('Resume migration after unlock failed', mErr);
+          setError(true);
+          setTimeout(() => { setPin(''); setError(false); checkingRef.current = false; }, 2000);
+          setBusy(false);
+          return;
         }
         onUnlock();
       } else {
