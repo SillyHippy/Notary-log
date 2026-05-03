@@ -92,6 +92,24 @@ const STATE_ABBR: Record<string, string> = {
   'District of Columbia':'DC',
 };
 
+function cameraErrorMessage(err: unknown): string {
+  const e = err as { name?: string; message?: string } | null | undefined;
+  const name = e?.name ?? '';
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return 'Camera permission was blocked. Open your browser settings for this site and allow Camera, then try again. Tip: tap the lock icon in the address bar.';
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
+    return 'No camera was found on this device, or the rear camera is unavailable. Try the "Upload Image" button — it can use your phone\'s camera too.';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'Another app or tab is already using the camera. Close it (or reboot the browser) and try again.';
+  }
+  if (name === 'SecurityError') {
+    return 'The browser blocked camera access for security reasons. Make sure the page is loaded over HTTPS.';
+  }
+  return e?.message || 'Could not open the camera. Try the "Upload Image" button instead — it can use your phone\'s camera.';
+}
+
 export function NewEntry() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -286,13 +304,16 @@ export function NewEntry() {
   const startLiveScan = async () => {
     setLiveScanSuccess(false);
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Your browser does not expose a camera API. This usually means the page was opened over plain HTTP — try the HTTPS URL.');
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
       });
       liveStreamRef.current = stream;
       setScanMode('barcode-live');
-    } catch {
-      toast({ title: 'Camera Error', description: 'Could not open camera. Use Upload Photos or Upload Image instead.', variant: 'destructive' });
+    } catch (err) {
+      toast({ title: 'Camera Error', description: cameraErrorMessage(err), variant: 'destructive' });
     }
   };
 
@@ -362,11 +383,14 @@ export function NewEntry() {
   // Start photo capture mode (manual stream → OCR)
   const startPhotoCapture = async () => {
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Your browser does not expose a camera API. This usually means the page was opened over plain HTTP — try the HTTPS URL.');
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       streamRef.current = stream;
       setScanMode('photo-capture');
-    } catch {
-      toast({ title: 'Camera Error', description: 'Could not open camera. Use Upload Photos instead.', variant: 'destructive' });
+    } catch (err) {
+      toast({ title: 'Camera Error', description: cameraErrorMessage(err), variant: 'destructive' });
     }
   };
 
@@ -852,11 +876,16 @@ export function NewEntry() {
                       </Button>
                       <div className="relative">
                         <Button variant="ghost" size="lg" className="gap-2 w-full">
-                          <Upload className="w-5 h-5" /> Upload Image
+                          <Upload className="w-5 h-5" /> Upload / Camera
                         </Button>
+                        {/* `capture="environment"` lets mobile browsers open the
+                            native camera app directly — far more reliable than
+                            getUserMedia on iOS Safari. Desktop browsers ignore
+                            it and fall back to the regular file picker. */}
                         <input
                           type="file"
                           accept="image/*"
+                          capture="environment"
                           className="absolute inset-0 opacity-0 cursor-pointer"
                           onChange={(e) => handleFileUpload(e, !!idFrontImage)}
                         />
@@ -1321,9 +1350,9 @@ export function NewEntry() {
                   <CardTitle className="text-sm font-medium">Signer Information</CardTitle>
                 </CardHeader>
                 <CardContent className="py-4 text-sm space-y-2">
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Name:</span> <span className="col-span-2 font-medium">{form.getValues('signerFullName')}</span></div>
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Address:</span> <span className="col-span-2">{form.getValues('signerAddress')}, {form.getValues('signerCity')}, {form.getValues('signerState')}</span></div>
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">DOB:</span> <span className="col-span-2">{form.getValues('signerDOB')}</span></div>
+                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Name:</span> <span className="col-span-2 min-w-0 font-medium break-words">{form.getValues('signerFullName')}</span></div>
+                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Address:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('signerAddress')}, {form.getValues('signerCity')}, {form.getValues('signerState')}</span></div>
+                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">DOB:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('signerDOB')}</span></div>
                 </CardContent>
               </Card>
 
@@ -1332,9 +1361,9 @@ export function NewEntry() {
                   <CardTitle className="text-sm font-medium">Identification</CardTitle>
                 </CardHeader>
                 <CardContent className="py-4 text-sm space-y-2">
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Type:</span> <span className="col-span-2 capitalize">{form.getValues('idType').replace('_', ' ')}</span></div>
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Number:</span> <span className="col-span-2">{form.getValues('idNumber')}</span></div>
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Expires:</span> <span className="col-span-2">{form.getValues('idExpirationDate')}</span></div>
+                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Type:</span> <span className="col-span-2 min-w-0 capitalize break-words">{form.getValues('idType').replace('_', ' ')}</span></div>
+                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Number:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idNumber')}</span></div>
+                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Expires:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idExpirationDate')}</span></div>
                 </CardContent>
               </Card>
 
