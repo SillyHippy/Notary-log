@@ -6,7 +6,7 @@ import * as z from 'zod';
 import SignaturePad from 'signature_pad';
 import { BrowserPDF417Reader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
-import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin } from 'lucide-react';
+import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,32 +20,48 @@ import { Checkbox } from '@/components/ui/checkbox';
 
 import { createEntry, completeEntry, getSettings, getAllEntries, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { parseAAMVA } from '@/lib/aamva';
+import { extractLicenseFields } from '@/lib/ocr-license';
+import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
 import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, getDefaultFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
 
-const entrySchema = z.object({
-  signerFullName: z.string().min(1, 'Full name is required'),
-  signerAddress: z.string().min(1, 'Address is required'),
-  signerCity: z.string().min(1, 'City is required'),
-  signerState: z.string().min(2, 'State is required').max(2),
-  signerDOB: z.string().min(1, 'Date of birth is required'),
-  signerPhone: z.string().optional(),
-  idType: z.enum(['driver_license', 'passport', 'state_id', 'military_id', 'other']),
-  idNumber: z.string().min(1, 'ID number is required'),
-  idIssuingState: z.string().optional(),
-  idExpirationDate: z.string().min(1, 'Expiration date is required'),
-  documentType: z.string().min(1, 'Document type is required'),
-  documentDate: z.string().optional(),
-  documentDescription: z.string().optional(),
-  notarialActType: z.enum(['acknowledgment', 'jurat', 'copy_certification', 'signature_witnessing', 'other']),
-  feeType: z.enum(FEE_TYPES),
-  feeCharged: z.coerce.number().min(0),
-  feeWaived: z.boolean().default(false),
-  locationCity: z.string().min(1, 'Location city is required'),
-  locationState: z.string().min(2, 'Location state is required'),
-  locationAddress: z.string().optional(),
-  notes: z.string().optional(),
-});
+const entrySchema = z
+  .object({
+    signerFullName: z.string().min(1, 'Full name is required'),
+    // Address fields are conditionally required: a passport's MRZ has no
+    // address, so we relax these when idType === 'passport' and validate
+    // them in superRefine instead.
+    signerAddress: z.string().optional().default(''),
+    signerCity: z.string().optional().default(''),
+    signerState: z.string().max(2).optional().default(''),
+    signerDOB: z.string().min(1, 'Date of birth is required'),
+    signerPhone: z.string().optional(),
+    idType: z.enum(['driver_license', 'passport', 'state_id', 'military_id', 'other']),
+    idNumber: z.string().min(1, 'ID number is required'),
+    idIssuingState: z.string().optional(),
+    idExpirationDate: z.string().min(1, 'Expiration date is required'),
+    documentType: z.string().min(1, 'Document type is required'),
+    documentDate: z.string().optional(),
+    documentDescription: z.string().optional(),
+    notarialActType: z.enum(['acknowledgment', 'jurat', 'copy_certification', 'signature_witnessing', 'other']),
+    feeType: z.enum(FEE_TYPES),
+    feeCharged: z.coerce.number().min(0),
+    feeWaived: z.boolean().default(false),
+    locationCity: z.string().min(1, 'Location city is required'),
+    locationState: z.string().min(2, 'Location state is required'),
+    locationAddress: z.string().optional(),
+    notes: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.idType !== 'passport') {
+      if (!data.signerAddress)
+        ctx.addIssue({ path: ['signerAddress'], code: 'custom', message: 'Address is required' });
+      if (!data.signerCity)
+        ctx.addIssue({ path: ['signerCity'], code: 'custom', message: 'City is required' });
+      if (!data.signerState || data.signerState.length < 2)
+        ctx.addIssue({ path: ['signerState'], code: 'custom', message: 'State is required' });
+    }
+  });
 
 type EntryFormValues = z.infer<typeof entrySchema>;
 
@@ -53,7 +69,8 @@ const STEPS = ['Scan ID', 'Signer', 'Notarial Act', 'Signature', 'Review'];
 
 type ScanResult =
   | { method: 'barcode'; success: true }
-  | { method: 'ocr'; text: string; confidence: number };
+  | { method: 'ocr'; text: string; confidence: number }
+  | { method: 'mrz'; text: string; confidence: number; passport: MrzPassport };
 
 const STATE_ABBR: Record<string, string> = {
   'Alabama':'AL','Alaska':'AK','Arizona':'AZ','Arkansas':'AR','California':'CA',
@@ -83,6 +100,10 @@ export function NewEntry() {
   const [idBackImage, setIdBackImage] = useState<string | undefined>();
   const [signatureImage, setSignatureImage] = useState<string | undefined>();
   const [needsReview, setNeedsReview] = useState(false);
+  // Populated when MRZ parses but one or more check digits fail. The Signer
+  // step shows a warning banner so the notary verifies the affected fields
+  // before saving.
+  const [mrzWarning, setMrzWarning] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [locationDetected, setLocationDetected] = useState(false);
@@ -374,84 +395,78 @@ export function NewEntry() {
     if (fields.expirationDate) form.setValue('idExpirationDate', fields.expirationDate);
   };
 
-  const extractFieldsFromOCRText = (text: string): Record<string, string> => {
-    const fields: Record<string, string> = {};
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-
-    // Name: look for "LN <last> FN <first>" or "LAST, FIRST" patterns common on IDs
-    const nameLnFnMatch = text.match(/LN\s+([A-Z'-]+)\s+FN\s+([A-Z'-]+)/i);
-    if (nameLnFnMatch) {
-      fields.fullName = `${nameLnFnMatch[2]} ${nameLnFnMatch[1]}`;
-    } else {
-      const nameMatch = text.match(/([A-Z]{2,}),\s*([A-Z][A-Z '-]+)/);
-      if (nameMatch) fields.fullName = `${nameMatch[2].trim()} ${nameMatch[1].trim()}`;
-    }
-
-    // DOB: MM/DD/YYYY or similar
-    const dobMatch = text.match(/(?:DOB|Date of Birth|Birth)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
-      || text.match(/\b(\d{2}[\/\-]\d{2}[\/\-]\d{4})\b/);
-    if (dobMatch) {
-      const parts = dobMatch[1].split(/[\/\-]/);
-      if (parts.length === 3) {
-        const [m, d, y] = parts.map(Number);
-        const year = y < 100 ? 1900 + y : y;
-        fields.dob = `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      }
-    }
-
-    // ID number: DL / ID number line
-    const idMatch = text.match(/(?:DL|ID|No\.?|Lic\.?|License)[:\s#]+([A-Z0-9]{6,12})/i);
-    if (idMatch) fields.idNumber = idMatch[1];
-
-    // Expiry date
-    const expMatch = text.match(/(?:EXP|Expires?|Expiry)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i);
-    if (expMatch) {
-      const parts = expMatch[1].split(/[\/\-]/);
-      if (parts.length === 3) {
-        const [m, d, y] = parts.map(Number);
-        const year = y < 100 ? 2000 + y : y;
-        fields.expirationDate = `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      }
-    }
-
-    // US state (2-letter) from address line
-    const stateMatch = text.match(/\b([A-Z]{2})\s+\d{5}/);
-    if (stateMatch) fields.state = stateMatch[1];
-
-    // Address: look for numbered street address line
-    for (const line of lines) {
-      if (/^\d+\s+[A-Z]/.test(line) && !fields.address) {
-        fields.address = line;
-      }
-    }
-
-    return fields;
-  };
-
-  const tryOCR = async (imageSrc: string): Promise<{ text: string; confidence: number }> => {
+  /**
+   * Run OCR over an image and return raw text + confidence. Field extraction
+   * is delegated to the typed parser modules so we can unit-test the
+   * heuristics independently of the camera path.
+   */
+  const runOcr = async (imageSrc: string): Promise<{ text: string; confidence: number }> => {
     toast({ title: 'Scanning...', description: 'Analyzing ID text via OCR. This may take a moment.' });
     const worker = await createWorker('eng');
     const { data } = await worker.recognize(imageSrc);
     await worker.terminate();
-    const fields = extractFieldsFromOCRText(data.text);
-    if (Object.keys(fields).length > 0) {
-      applyExtractedFields(fields);
-    }
     return { text: data.text, confidence: data.confidence };
   };
 
-  // Photo mode: run OCR only (barcode already handled by live scan)
+  /**
+   * Photo-mode dispatch: passport → MRZ parser, anything else → license OCR.
+   * In both cases we set scanResult, mark needsReview when confidence is low,
+   * and (for passports) surface a check-digit warning if any fail.
+   */
   const processImageOCR = async (imageSrc: string) => {
     setIsScanning(true);
+    setMrzWarning(null);
     try {
-      const { text, confidence } = await tryOCR(imageSrc);
-      if (confidence < 70) {
-        setNeedsReview(true);
-        toast({ title: 'Low Confidence Scan', description: 'OCR confidence is low. Please verify the extracted fields.', variant: 'destructive' });
+      const { text, confidence } = await runOcr(imageSrc);
+      const isPassport = form.getValues('idType') === 'passport';
+
+      if (isPassport) {
+        const mrz = parseMRZ(text);
+        if (mrz.ok && mrz.passport) {
+          applyExtractedFields(mrzToSignerFields(mrz.passport));
+          setScanResult({ method: 'mrz', text, confidence, passport: mrz.passport });
+          if (!mrz.passport.allCheckDigitsValid) {
+            const failing = Object.entries(mrz.passport.checkDigits)
+              .filter(([, ok]) => !ok)
+              .map(([name]) => name)
+              .join(', ');
+            setMrzWarning(
+              `MRZ check digit mismatch (${failing}) — please verify before saving.`,
+            );
+            setNeedsReview(true);
+            toast({
+              title: 'MRZ Read with Warnings',
+              description: 'Some check digits failed. Verify the extracted fields.',
+              variant: 'destructive',
+            });
+          } else {
+            toast({ title: 'Passport MRZ Read', description: 'Passport data extracted. Review the fields.' });
+          }
+        } else {
+          toast({
+            title: 'MRZ Not Found',
+            description: 'Could not locate two MRZ lines on the photo. Try a clearer shot of the back page.',
+            variant: 'destructive',
+          });
+          setScanResult({ method: 'ocr', text, confidence });
+        }
       } else {
-        toast({ title: 'Text Extracted', description: 'OCR complete. Review the extracted fields.' });
+        const fields = extractLicenseFields(text);
+        if (Object.keys(fields).length > 0) {
+          applyExtractedFields(fields as Record<string, string>);
+        }
+        if (confidence < 70) {
+          setNeedsReview(true);
+          toast({
+            title: 'Low Confidence Scan',
+            description: 'OCR confidence is low. Please verify the extracted fields.',
+            variant: 'destructive',
+          });
+        } else {
+          toast({ title: 'Text Extracted', description: 'OCR complete. Review the extracted fields.' });
+        }
+        setScanResult({ method: 'ocr', text, confidence });
       }
-      setScanResult({ method: 'ocr', text, confidence });
     } catch (err) {
       console.error(err);
       toast({ title: 'Scan Failed', description: 'Could not process the image. Please enter details manually.', variant: 'destructive' });
@@ -460,25 +475,35 @@ export function NewEntry() {
   };
 
   const handlePhotoCapture = () => {
-    if (photoVideoRef.current && canvasRef.current) {
-      const video = photoVideoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg');
-        if (!idFrontImage) {
-          setIdFrontImage(dataUrl);
-          toast({ title: 'Front captured', description: 'Now point at the BACK of the ID for OCR.' });
-        } else {
-          setIdBackImage(dataUrl);
-          processImageOCR(dataUrl);
-          stopPhotoCamera();
-          setScanMode('idle');
-        }
-      }
+    if (!photoVideoRef.current || !canvasRef.current) return;
+    const video = photoVideoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg');
+    const isPassport = form.getValues('idType') === 'passport';
+
+    if (isPassport) {
+      // Passports only need one photo of the data page; the MRZ lives at
+      // the bottom of that single page.
+      setIdFrontImage(dataUrl);
+      processImageOCR(dataUrl);
+      stopPhotoCamera();
+      setScanMode('idle');
+      return;
+    }
+
+    if (!idFrontImage) {
+      setIdFrontImage(dataUrl);
+      toast({ title: 'Front captured', description: 'Now point at the BACK of the ID for OCR.' });
+    } else {
+      setIdBackImage(dataUrl);
+      processImageOCR(dataUrl);
+      stopPhotoCamera();
+      setScanMode('idle');
     }
   };
 
@@ -611,35 +636,101 @@ export function NewEntry() {
         {currentStep === 0 && (
           <div className="flex-1 flex flex-col space-y-4">
 
-            {/* ── IDLE: Choose how to scan ── */}
-            {scanMode === 'idle' && !liveScanSuccess && (
-              <div className="bg-primary/5 border border-primary/20 rounded-xl p-6 text-center">
-                <ScanLine className="w-12 h-12 text-primary mx-auto mb-4" />
-                <h2 className="text-xl font-bold mb-2">Scan Signer ID</h2>
-                <p className="text-muted-foreground max-w-md mx-auto mb-6 text-sm">
-                  Point the camera at the <strong>barcode on the back</strong> of the license for instant fill-in. Use photo mode if the barcode won't read.
-                </p>
-                <div className="flex flex-col sm:flex-row justify-center gap-3">
-                  <Button onClick={startLiveScan} className="gap-2" size="lg">
-                    <ScanLine className="w-5 h-5" /> Scan Barcode
-                  </Button>
-                  <Button onClick={startPhotoCapture} variant="outline" size="lg" className="gap-2">
-                    <Camera className="w-5 h-5" /> Take Photos (OCR)
-                  </Button>
-                  <div className="relative">
-                    <Button variant="ghost" size="lg" className="gap-2 w-full">
-                      <Upload className="w-5 h-5" /> Upload Image
+            {/* Document-type segmented control. The selection drives the
+                scanner (PDF417 vs MRZ) and the helper text below, and is
+                kept in sync with the idType form value used on the Signer
+                step. */}
+            {scanMode === 'idle' && !liveScanSuccess && (() => {
+              const currentIdType = form.watch('idType');
+              const isPassport = currentIdType === 'passport';
+              const isStateId = currentIdType === 'state_id';
+              const setType = (t: 'driver_license' | 'state_id' | 'passport') => {
+                form.setValue('idType', t);
+              };
+              return (
+                <>
+                  <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="Document type">
+                    <Button
+                      type="button"
+                      variant={!isPassport && !isStateId ? 'default' : 'outline'}
+                      onClick={() => setType('driver_license')}
+                      className="gap-2"
+                      data-testid="doctype-license"
+                      aria-pressed={!isPassport && !isStateId}
+                    >
+                      <IdCard className="w-4 h-4" /> Driver's License
                     </Button>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                      onChange={(e) => handleFileUpload(e, !!idFrontImage)}
-                    />
+                    <Button
+                      type="button"
+                      variant={isStateId ? 'default' : 'outline'}
+                      onClick={() => setType('state_id')}
+                      className="gap-2"
+                      data-testid="doctype-id"
+                      aria-pressed={isStateId}
+                    >
+                      <IdCard className="w-4 h-4" /> ID Card
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={isPassport ? 'default' : 'outline'}
+                      onClick={() => setType('passport')}
+                      className="gap-2"
+                      data-testid="doctype-passport"
+                      aria-pressed={isPassport}
+                    >
+                      <BookOpen className="w-4 h-4" /> Passport
+                    </Button>
                   </div>
-                </div>
-              </div>
-            )}
+
+                  <div className="bg-primary/5 border border-primary/20 rounded-xl p-6 text-center">
+                    <ScanLine className="w-12 h-12 text-primary mx-auto mb-4" />
+                    <h2 className="text-xl font-bold mb-2">
+                      {isPassport ? 'Scan Passport' : 'Scan Signer ID'}
+                    </h2>
+                    <p className="text-muted-foreground max-w-md mx-auto mb-6 text-sm">
+                      {isPassport ? (
+                        <>
+                          Photograph the <strong>full data page</strong> of the passport so the
+                          two lines of monospace text at the bottom (the MRZ) are sharp and well-lit.
+                        </>
+                      ) : (
+                        <>
+                          Point the camera at the <strong>barcode on the back</strong> of the
+                          license for instant fill-in. Use photo mode if the barcode won't read.
+                        </>
+                      )}
+                    </p>
+                    <div className="flex flex-col sm:flex-row justify-center gap-3">
+                      {!isPassport && (
+                        <Button onClick={startLiveScan} className="gap-2" size="lg">
+                          <ScanLine className="w-5 h-5" /> Scan Barcode
+                        </Button>
+                      )}
+                      <Button
+                        onClick={startPhotoCapture}
+                        variant={isPassport ? 'default' : 'outline'}
+                        size="lg"
+                        className="gap-2"
+                      >
+                        <Camera className="w-5 h-5" />
+                        {isPassport ? 'Take Photo (MRZ)' : 'Take Photos (OCR)'}
+                      </Button>
+                      <div className="relative">
+                        <Button variant="ghost" size="lg" className="gap-2 w-full">
+                          <Upload className="w-5 h-5" /> Upload Image
+                        </Button>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                          onChange={(e) => handleFileUpload(e, !!idFrontImage)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
 
             {/* ── LIVE BARCODE SCAN MODE ── */}
             {scanMode === 'barcode-live' && !liveScanSuccess && (
@@ -712,7 +803,11 @@ export function NewEntry() {
                   <video ref={photoVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
                   <div className="absolute inset-0 border-4 border-primary/40 m-6 rounded-lg pointer-events-none" />
                   <div className="absolute top-3 left-3 bg-black/60 text-white text-xs px-2 py-1 rounded-full font-semibold">
-                    {!idFrontImage ? 'Capture: FRONT of ID' : 'Capture: BACK of ID (for OCR)'}
+                    {form.getValues('idType') === 'passport'
+                      ? 'Capture: PASSPORT data page (MRZ at bottom)'
+                      : !idFrontImage
+                        ? 'Capture: FRONT of ID'
+                        : 'Capture: BACK of ID (for OCR)'}
                   </div>
                   {/* Buttons */}
                   <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
@@ -768,7 +863,14 @@ export function NewEntry() {
         {/* STEP 1 & 2: FORMS */}
         {(currentStep === 1 || currentStep === 2) && (
           <div className="flex-1 overflow-y-auto pr-2 pb-4">
-            {needsReview && currentStep === 1 && (
+            {currentStep === 1 && mrzWarning && (
+              <Alert className="mb-6 bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900" data-testid="alert-mrz-warning">
+                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500" />
+                <AlertTitle>MRZ Check Digit Mismatch</AlertTitle>
+                <AlertDescription>{mrzWarning}</AlertDescription>
+              </Alert>
+            )}
+            {needsReview && currentStep === 1 && !mrzWarning && (
               <Alert className="mb-6 bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900">
                 <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500" />
                 <AlertTitle>Review Extracted Data</AlertTitle>
