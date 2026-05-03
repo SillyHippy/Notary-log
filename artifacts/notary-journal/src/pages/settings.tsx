@@ -812,7 +812,7 @@ export function Settings() {
           <input
             ref={sealInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept="image/png,image/jpeg"
             className="hidden"
             onChange={e => {
               const f = e.target.files?.[0];
