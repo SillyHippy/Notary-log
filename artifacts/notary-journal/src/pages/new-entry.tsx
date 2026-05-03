@@ -860,7 +860,7 @@ export function NewEntry() {
                     >
                       <X className="w-5 h-5" />
                     </Button>
-                    <Button size="icon" className="rounded-full w-16 h-16" onClick={handlePhotoCapture}>
+                    <Button size="icon" className="rounded-full w-16 h-16" onClick={handlePhotoCapture} disabled={isScanning} data-testid="button-capture">
                       <Camera className="w-7 h-7" />
                     </Button>
                   </div>
