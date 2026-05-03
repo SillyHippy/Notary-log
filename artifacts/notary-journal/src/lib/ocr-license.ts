@@ -206,6 +206,26 @@ function extractIdNumber(text: string, lines: string[]): string | undefined {
 const SKIP_FOR_ID =
   /\b(EXP|DOB|ISS|EXPIRES|EXPIRY|BIRTH|ISSUED|HEIGHT|WEIGHT|EYES|HAIR|ADDRESS|SEX|CLASS|END|REST)\b/i;
 
+/**
+ * Merge two extraction results. Values from {@link primary} always win;
+ * {@link secondary} only fills gaps where primary lacks a value. Used by
+ * the photo-capture flow so a noisier BACK-of-license scan can fill in
+ * fields the FRONT scan missed without overwriting confident front data.
+ */
+export function mergeLicenseFields(
+  primary: OcrLicenseFields,
+  secondary: OcrLicenseFields,
+): OcrLicenseFields {
+  const out: OcrLicenseFields = { ...secondary };
+  for (const k of Object.keys(primary) as Array<keyof OcrLicenseFields>) {
+    const v = primary[k];
+    if (v !== undefined && v !== '') {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 export function extractLicenseFields(rawText: string): OcrLicenseFields {
   const text = rawText.replace(/\r/g, '\n');
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);

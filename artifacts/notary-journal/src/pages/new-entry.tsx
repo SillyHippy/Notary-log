@@ -384,15 +384,26 @@ export function NewEntry() {
     );
   };
 
-  const applyExtractedFields = (fields: Record<string, string>) => {
-    if (fields.fullName) form.setValue('signerFullName', fields.fullName);
-    if (fields.address) form.setValue('signerAddress', fields.address);
-    if (fields.city) form.setValue('signerCity', fields.city);
-    if (fields.state) form.setValue('signerState', fields.state);
-    if (fields.dob) form.setValue('signerDOB', fields.dob);
-    if (fields.idNumber) form.setValue('idNumber', fields.idNumber);
-    if (fields.idIssuingState) form.setValue('idIssuingState', fields.idIssuingState);
-    if (fields.expirationDate) form.setValue('idExpirationDate', fields.expirationDate);
+  const applyExtractedFields = (
+    fields: Record<string, string>,
+    mode: 'replace' | 'fillGaps' = 'replace',
+  ) => {
+    const FIELD_MAP: Array<[keyof typeof fields, string]> = [
+      ['fullName', 'signerFullName'],
+      ['address', 'signerAddress'],
+      ['city', 'signerCity'],
+      ['state', 'signerState'],
+      ['dob', 'signerDOB'],
+      ['idNumber', 'idNumber'],
+      ['idIssuingState', 'idIssuingState'],
+      ['expirationDate', 'idExpirationDate'],
+    ];
+    for (const [from, to] of FIELD_MAP) {
+      const v = fields[from as string];
+      if (!v) continue;
+      if (mode === 'fillGaps' && form.getValues(to as never)) continue;
+      form.setValue(to as never, v as never);
+    }
   };
 
   /**
@@ -413,9 +424,12 @@ export function NewEntry() {
    * In both cases we set scanResult, mark needsReview when confidence is low,
    * and (for passports) surface a check-digit warning if any fail.
    */
-  const processImageOCR = async (imageSrc: string) => {
+  const processImageOCR = async (
+    imageSrc: string,
+    applyMode: 'replace' | 'fillGaps' = 'replace',
+  ) => {
     setIsScanning(true);
-    setMrzWarning(null);
+    if (applyMode === 'replace') setMrzWarning(null);
     try {
       const { text, confidence } = await runOcr(imageSrc);
       const isPassport = form.getValues('idType') === 'passport';
@@ -423,7 +437,7 @@ export function NewEntry() {
       if (isPassport) {
         const mrz = parseMRZ(text);
         if (mrz.ok && mrz.passport) {
-          applyExtractedFields(mrzToSignerFields(mrz.passport));
+          applyExtractedFields(mrzToSignerFields(mrz.passport), applyMode);
           setScanResult({ method: 'mrz', text, confidence, passport: mrz.passport });
           // Compose warnings from check digits AND low OCR confidence so the
           // notary always sees a banner when the data is questionable.
@@ -460,7 +474,7 @@ export function NewEntry() {
       } else {
         const fields = extractLicenseFields(text);
         if (Object.keys(fields).length > 0) {
-          applyExtractedFields(fields as Record<string, string>);
+          applyExtractedFields(fields as Record<string, string>, applyMode);
         }
         if (confidence < 70) {
           setNeedsReview(true);
@@ -504,11 +518,17 @@ export function NewEntry() {
     }
 
     if (!idFrontImage) {
+      // OCR the FRONT immediately — that's where printed name, address,
+      // DOB, ID number and expiry live on US licenses. The result is
+      // applied in 'replace' mode so any prior partial data is cleared.
       setIdFrontImage(dataUrl);
-      toast({ title: 'Front captured', description: 'Now point at the BACK of the ID for OCR.' });
+      processImageOCR(dataUrl, 'replace');
+      toast({ title: 'Front captured', description: 'Optionally capture the BACK to fill any missing fields.' });
     } else {
+      // BACK image is processed in 'fillGaps' mode so a confident front
+      // OCR is never overwritten by a noisier back scan.
       setIdBackImage(dataUrl);
-      processImageOCR(dataUrl);
+      processImageOCR(dataUrl, 'fillGaps');
       stopPhotoCamera();
       setScanMode('idle');
     }
@@ -1241,7 +1261,7 @@ export function NewEntry() {
         </Button>
         
         {currentStep < 3 && (
-          <Button onClick={nextStep} className="gap-2">
+          <Button onClick={nextStep} className="gap-2" disabled={isScanning} data-testid="button-next">
             Next Step <ChevronRight className="w-4 h-4" />
           </Button>
         )}
