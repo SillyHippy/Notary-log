@@ -648,6 +648,37 @@ export async function inspectLegacy(): Promise<LegacySnapshot> {
   };
 }
 
+/**
+ * Pure helper used by `migratePlaintext` (and tested directly): given the set
+ * of already-encrypted-then-decrypted entries plus the remaining plaintext
+ * entries, fill in `previousEntryHash` and `hash` on each completed/amended
+ * plaintext entry so the resulting chain links cleanly off the most recent
+ * already-migrated entry. Mutates `plaintext` in place. `plaintext` must
+ * already be sorted by `entryNumber`.
+ */
+export async function rebuildChainForResume(
+  encrypted: JournalEntry[],
+  plaintext: JournalEntry[],
+): Promise<void> {
+  const minPlainEntryNumber = plaintext.length
+    ? plaintext[0].entryNumber
+    : Number.POSITIVE_INFINITY;
+  let prevHash = '';
+  const upstream = encrypted
+    .filter(e => (e.status === 'completed' || e.status === 'amended') && e.entryNumber < minPlainEntryNumber)
+    .sort((a, b) => a.entryNumber - b.entryNumber);
+  if (upstream.length > 0) {
+    prevHash = await generateEntryHash(upstream[upstream.length - 1]);
+  }
+  for (const entry of plaintext) {
+    if (entry.status === 'completed' || entry.status === 'amended') {
+      entry.previousEntryHash = prevHash;
+      entry.hash = await generateEntryHash(entry);
+      prevHash = entry.hash;
+    }
+  }
+}
+
 export async function needsMigration(): Promise<boolean> {
   const db = await getDB();
   const entries = await db.getAll('entries');
@@ -676,15 +707,21 @@ export async function migratePlaintext(
   let done = 0;
   onProgress?.(done, total);
 
-  // Rebuild the chain in entryNumber order
+  // Decrypt any already-migrated entries so we can seed `prevHash` from the
+  // last encrypted completed entry whose `entryNumber` is below the lowest
+  // remaining plaintext entry. Without this, resuming a partially-finished
+  // migration would stamp the next plaintext entry as a new genesis and
+  // permanently break the chain.
+  const encryptedRaw = allRaw.filter(e => (e as StoredEntry)._enc) as StoredEntry[];
+  const encrypted: JournalEntry[] = [];
+  for (const r of encryptedRaw) {
+    encrypted.push(await decryptStoredEntry(r));
+  }
+
   plaintextEntries.sort((a, b) => a.entryNumber - b.entryNumber);
-  let prevHash = '';
+  await rebuildChainForResume(encrypted, plaintextEntries);
+
   for (const entry of plaintextEntries) {
-    if (entry.status === 'completed' || entry.status === 'amended') {
-      entry.previousEntryHash = prevHash;
-      entry.hash = await generateEntryHash(entry);
-      prevHash = entry.hash;
-    }
     await db.put('entries', await encryptEntry(entry));
     done++;
     onProgress?.(done, total);
