@@ -1,5 +1,45 @@
 import jsPDF from 'jspdf';
 import type { JournalEntry, NotarySettings } from './db';
+import {
+  resolveFeeType,
+  rollupYear,
+  MONTH_LABELS,
+  type YearRollup,
+} from './fees';
+
+// ── PDF helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Stamp the notary's seal in the lower-right corner of the *current* page.
+ * Silently no-ops when no seal is configured. We try to detect PNG vs JPEG
+ * from the data URL; jsPDF needs the format to be explicit.
+ */
+function addSealToCurrentPage(doc: jsPDF, sealImage?: string): void {
+  if (!sealImage) return;
+  try {
+    const fmt = /^data:image\/jpe?g/i.test(sealImage) ? 'JPEG' : 'PNG';
+    const w = 35;
+    const h = 35;
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    doc.addImage(sealImage, fmt, pageW - w - 12, pageH - h - 12, w, h);
+  } catch (err) {
+    // Don't let a malformed seal break PDF generation
+    console.warn('Failed to embed notary seal in PDF:', err);
+  }
+}
+
+/** Stamp the seal on every page that's currently in the PDF. */
+function stampSealOnAllPages(doc: jsPDF, sealImage?: string): void {
+  if (!sealImage) return;
+  const total = doc.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    addSealToCurrentPage(doc, sealImage);
+  }
+}
+
+// ── Single-entry PDF ───────────────────────────────────────────────────────
 
 export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): void {
   const doc = new jsPDF();
@@ -14,39 +54,51 @@ export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): v
   doc.text(`Entry #${entry.entryNumber}`, 20, 55);
   doc.text(`Status: ${entry.status}`, 20, 62);
   doc.text(`Date: ${new Date(entry.createdAt).toLocaleString()}`, 20, 69);
-  
+
   doc.setFontSize(14);
   doc.text('Signer Information', 20, 85);
   doc.setFontSize(12);
   doc.text(`Name: ${entry.signerFullName}`, 20, 95);
   doc.text(`Address: ${entry.signerAddress}`, 20, 102);
   doc.text(`City, State: ${entry.signerCity}, ${entry.signerState}`, 20, 109);
-  
+
   doc.setFontSize(14);
   doc.text('Identification', 20, 125);
   doc.setFontSize(12);
   doc.text(`Type: ${entry.idType}`, 20, 135);
   doc.text(`Number: ${entry.idNumber}`, 20, 142);
   doc.text(`Expiration: ${entry.idExpirationDate}`, 20, 149);
-  
+
   doc.setFontSize(14);
   doc.text('Notarial Act', 20, 165);
   doc.setFontSize(12);
   doc.text(`Act Type: ${entry.notarialActType}`, 20, 175);
   doc.text(`Document: ${entry.documentType}`, 20, 182);
-  doc.text(`Fee: $${(entry.feeCharged / 100).toFixed(2)}`, 20, 189);
+  const feeStr = entry.feeWaived
+    ? 'Waived'
+    : `$${(entry.feeCharged / 100).toFixed(2)}`;
+  doc.text(`Fee (${resolveFeeType(entry)}): ${feeStr}`, 20, 189);
 
   // Signature image
   if (entry.signatureImage) {
-    doc.addImage(entry.signatureImage, 'PNG', 20, 200, 80, 30);
-    doc.text('Signer Signature:', 20, 195);
+    doc.text('Signer Signature:', 20, 200);
+    doc.addImage(entry.signatureImage, 'PNG', 20, 205, 80, 30);
   }
 
   // Footer
   doc.setFontSize(9);
-  doc.text(`Generated: ${new Date().toISOString()} | Entry #${entry.entryNumber}`, 105, 280, { align: 'center' });
+  doc.text(
+    `Generated: ${new Date().toISOString()} | Entry #${entry.entryNumber}`,
+    105, 280, { align: 'center' },
+  );
+
+  // Notary seal in lower-right of every page
+  stampSealOnAllPages(doc, settings.sealImage);
+
   doc.save(`notary-entry-${entry.entryNumber}.pdf`);
 }
+
+// ── CSV ────────────────────────────────────────────────────────────────────
 
 const CSV_HEADERS = [
   'Entry Number',
@@ -68,6 +120,7 @@ const CSV_HEADERS = [
   'Document Date',
   'Document Description',
   'Notarial Act Type',
+  'Fee Type',
   'Fee Charged (USD)',
   'Fee Waived',
   'Location Address',
@@ -110,6 +163,7 @@ function generateCSVRow(entry: JournalEntry): string {
     entry.documentDate ?? '',
     entry.documentDescription ?? '',
     entry.notarialActType,
+    resolveFeeType(entry),
     (entry.feeCharged / 100).toFixed(2),
     entry.feeWaived ? 'true' : 'false',
     entry.locationAddress ?? '',
@@ -144,6 +198,8 @@ export function exportAllCSV(entries: JournalEntry[]): void {
   downloadBlob(new Blob([csvContent], { type: 'text/csv' }), `notary-journal-export-${Date.now()}.csv`);
 }
 
+// ── Backup envelope ────────────────────────────────────────────────────────
+
 export const BACKUP_FORMAT_VERSION = 2;
 
 export interface BackupEnvelope {
@@ -170,8 +226,11 @@ const REQUIRED_ENTRY_FIELDS: Array<keyof JournalEntry> = [
  *   - v1 envelope: { entries: [...] }            (no version field)
  *   - v1 bare array: [...]                        (legacy export)
  *   - single-entry object                         (per-entry export)
- * Throws Error with a user-readable message on any malformed input,
- * a missing required field, or a future-version backup.
+ *
+ * The optional `feeType` per-entry field and `defaultFees`/`sealImage` settings
+ * fields added in Task #15 are additive — older v2 backups without them parse
+ * cleanly here, and newer backups with them are accepted by older versions
+ * because `REQUIRED_ENTRY_FIELDS` does not include them.
  */
 export function parseBackupFile(text: string): ParsedBackup {
   let parsed: unknown;
@@ -229,6 +288,8 @@ export function exportAllJSON(entries: JournalEntry[], settings: NotarySettings)
   downloadBlob(new Blob([jsonContent], { type: 'application/json' }), `notary-journal-export-${Date.now()}.json`);
 }
 
+// ── Bulk PDF (journal index) ───────────────────────────────────────────────
+
 export function exportAllPDF(entries: JournalEntry[], settings: NotarySettings): void {
   const doc = new jsPDF();
   doc.setFontSize(18);
@@ -237,19 +298,119 @@ export function exportAllPDF(entries: JournalEntry[], settings: NotarySettings):
   doc.text(`Notary: ${settings.notaryName}`, 20, 35);
   doc.text(`Commission: ${settings.commissionNumber}`, 20, 42);
   doc.text(`Generated: ${new Date().toLocaleString()}`, 20, 49);
-  
+
   let y = 60;
-  entries.forEach((entry, idx) => {
+  entries.forEach((entry) => {
     if (y > 270) {
       doc.addPage();
       y = 20;
     }
+    const fee = entry.feeWaived ? 'Waived' : `$${(entry.feeCharged / 100).toFixed(2)}`;
     doc.setFontSize(10);
-    doc.text(`#${entry.entryNumber} | ${new Date(entry.createdAt).toLocaleDateString()} | ${entry.signerFullName} | ${entry.notarialActType} | $${(entry.feeCharged / 100).toFixed(2)}`, 20, y);
+    doc.text(
+      `#${entry.entryNumber} | ${new Date(entry.createdAt).toLocaleDateString()} | ${entry.signerFullName} | ${entry.notarialActType} | ${resolveFeeType(entry)} | ${fee}`,
+      20, y,
+    );
     y += 10;
   });
-  
+
+  stampSealOnAllPages(doc, settings.sealImage);
   doc.save(`notary-journal-export-${Date.now()}.pdf`);
+}
+
+// ── Annual report exports ──────────────────────────────────────────────────
+
+function fmtUSD(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+/**
+ * Generate a year-end PDF report covering the requested calendar year.
+ * Includes a totals row, a monthly breakdown, and a per-fee-type breakdown.
+ */
+export function exportYearReportPDF(
+  entries: JournalEntry[],
+  settings: NotarySettings,
+  year: number,
+): void {
+  const r = rollupYear(entries, year);
+  const doc = new jsPDF();
+
+  doc.setFontSize(18);
+  doc.text(`Annual Notary Report — ${year}`, 105, 20, { align: 'center' });
+  doc.setFontSize(11);
+  doc.text(`Notary: ${settings.notaryName}`, 20, 35);
+  doc.text(`Commission: ${settings.commissionNumber}`, 20, 42);
+  doc.text(`Generated: ${new Date().toLocaleString()}`, 20, 49);
+
+  doc.setFontSize(14);
+  doc.text('Totals', 20, 65);
+  doc.setFontSize(11);
+  doc.text(`Total acts: ${r.totals.count}`, 20, 74);
+  doc.text(`Fees collected: ${fmtUSD(r.totals.collectedCents)}`, 20, 81);
+  doc.text(`Fees waived (count): ${r.totals.waivedCount}`, 20, 88);
+
+  doc.setFontSize(14);
+  doc.text('Monthly Breakdown', 20, 105);
+  doc.setFontSize(10);
+  doc.text('Month', 20, 114);
+  doc.text('Acts', 70, 114);
+  doc.text('Collected', 100, 114);
+  doc.text('Waived', 150, 114);
+  let y = 121;
+  for (let m = 0; m < 12; m++) {
+    if (y > 270) { doc.addPage(); y = 20; }
+    const b = r.monthly[m];
+    doc.text(MONTH_LABELS[m], 20, y);
+    doc.text(String(b.count), 70, y);
+    doc.text(fmtUSD(b.collectedCents), 100, y);
+    doc.text(String(b.waivedCount), 150, y);
+    y += 7;
+  }
+
+  if (y > 240) { doc.addPage(); y = 20; } else { y += 8; }
+  doc.setFontSize(14);
+  doc.text('Breakdown by Fee Type', 20, y);
+  y += 9;
+  doc.setFontSize(10);
+  doc.text('Fee Type', 20, y);
+  doc.text('Acts', 100, y);
+  doc.text('Collected', 130, y);
+  doc.text('Waived', 170, y);
+  y += 7;
+  const feeTypes = Object.keys(r.byType).sort();
+  for (const ft of feeTypes) {
+    if (y > 270) { doc.addPage(); y = 20; }
+    const b = r.byType[ft];
+    doc.text(ft, 20, y);
+    doc.text(String(b.count), 100, y);
+    doc.text(fmtUSD(b.collectedCents), 130, y);
+    doc.text(String(b.waivedCount), 170, y);
+    y += 7;
+  }
+
+  stampSealOnAllPages(doc, settings.sealImage);
+  doc.save(`notary-annual-report-${year}.pdf`);
+}
+
+/** Year-end CSV report: one row per month plus totals + fee-type summary. */
+export function exportYearReportCSV(entries: JournalEntry[], year: number): void {
+  const r: YearRollup = rollupYear(entries, year);
+  const lines: string[] = [];
+  lines.push('Section,Label,Acts,Collected (USD),Waived');
+  for (let m = 0; m < 12; m++) {
+    const b = r.monthly[m];
+    lines.push(['Month', MONTH_LABELS[m], b.count, (b.collectedCents / 100).toFixed(2), b.waivedCount]
+      .map(csvField).join(','));
+  }
+  for (const ft of Object.keys(r.byType).sort()) {
+    const b = r.byType[ft];
+    lines.push(['Fee Type', ft, b.count, (b.collectedCents / 100).toFixed(2), b.waivedCount]
+      .map(csvField).join(','));
+  }
+  lines.push(['Total', `Year ${year}`, r.totals.count, (r.totals.collectedCents / 100).toFixed(2), r.totals.waivedCount]
+    .map(csvField).join(','));
+  downloadBlob(new Blob([lines.join('\n') + '\n'], { type: 'text/csv' }), `notary-annual-report-${year}.csv`);
 }
 
 function downloadBlob(blob: Blob, filename: string) {

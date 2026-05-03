@@ -14,6 +14,7 @@ import { NewEntry } from "@/pages/new-entry";
 import { EntryDetail } from "@/pages/entry-detail";
 import { EditEntry } from "@/pages/edit-entry";
 import { Settings } from "@/pages/settings";
+import { Reports } from "@/pages/reports";
 
 import { hasCryptoSetup, inspectLegacy, getDarkModePref } from "@/lib/db";
 
@@ -28,6 +29,7 @@ function Router() {
         <Route path="/entry/new" component={NewEntry} />
         <Route path="/entry/:id/edit" component={EditEntry} />
         <Route path="/entry/:id" component={EntryDetail} />
+        <Route path="/reports" component={Reports} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

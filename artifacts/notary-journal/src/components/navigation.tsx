@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'wouter';
-import { LayoutDashboard, BookOpen, Plus, Settings } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Plus, Settings, FileBarChart } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function Navigation() {
@@ -8,6 +8,7 @@ export function Navigation() {
   const navItems = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/journal', label: 'Journal', icon: BookOpen },
+    { href: '/reports', label: 'Reports', icon: FileBarChart },
   ];
 
   const secondaryNavItems = [
@@ -28,7 +29,12 @@ export function Navigation() {
             <BookOpen className="w-5 h-5 mb-1" />
             <span className="sr-only">Journal</span>
           </Link>
-          
+
+          <Link href="/reports" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors", location.startsWith('/reports') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-reports">
+            <FileBarChart className="w-5 h-5 mb-1" />
+            <span className="sr-only">Reports</span>
+          </Link>
+
           <div className="flex-1 flex justify-center -mt-6">
             <Link href="/entry/new" className="flex items-center justify-center w-14 h-14 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 active:translate-y-0" data-testid="link-nav-new-entry">
               <Plus className="w-6 h-6" />

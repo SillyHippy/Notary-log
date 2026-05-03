@@ -18,9 +18,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { Checkbox } from '@/components/ui/checkbox';
 
-import { createEntry, completeEntry, getSettings, getAllEntries, type JournalEntry } from '@/lib/db';
+import { createEntry, completeEntry, getSettings, getAllEntries, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { parseAAMVA } from '@/lib/aamva';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
+import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, getDefaultFeeCents, type FeeType } from '@/lib/fees';
 
 const entrySchema = z.object({
   signerFullName: z.string().min(1, 'Full name is required'),
@@ -37,6 +38,7 @@ const entrySchema = z.object({
   documentDate: z.string().optional(),
   documentDescription: z.string().optional(),
   notarialActType: z.enum(['acknowledgment', 'jurat', 'copy_certification', 'signature_witnessing', 'other']),
+  feeType: z.enum(FEE_TYPES),
   feeCharged: z.coerce.number().min(0),
   feeWaived: z.boolean().default(false),
   locationCity: z.string().min(1, 'Location city is required'),
@@ -110,6 +112,7 @@ export function NewEntry() {
       documentType: '',
       documentDate: new Date().toISOString().split('T')[0],
       notarialActType: 'acknowledgment',
+      feeType: 'Acknowledgment',
       feeCharged: 0,
       feeWaived: false,
       locationCity: '',
@@ -118,13 +121,40 @@ export function NewEntry() {
     }
   });
 
+  const [appSettings, setAppSettings] = useState<NotarySettings | null>(null);
+
   // Load defaults
   useEffect(() => {
     getSettings().then(settings => {
+      setAppSettings(settings);
       form.setValue('locationCity', settings.defaultCity);
       form.setValue('locationState', settings.defaultState);
+      // Prefill the initial fee from the default for "Acknowledgment" if any.
+      const defaultCents = getDefaultFeeCents(settings, 'Acknowledgment');
+      if (defaultCents > 0) form.setValue('feeCharged', defaultCents / 100);
     });
   }, [form]);
+
+  // When the user picks a different notarial act, sync the fee category and
+  // auto-fill the fee from saved defaults — but only if the user hasn't yet
+  // typed a custom fee or waived this entry. This keeps the wizard helpful
+  // without ever overwriting deliberate input.
+  useEffect(() => {
+    const sub = form.watch((value, { name }) => {
+      if (name !== 'notarialActType') return;
+      const act = value.notarialActType as JournalEntry['notarialActType'] | undefined;
+      if (!act) return;
+      const mappedFeeType = ACT_TYPE_TO_FEE_TYPE[act];
+      form.setValue('feeType', mappedFeeType);
+      const currentFee = Number(value.feeCharged ?? 0);
+      const isWaived = !!value.feeWaived;
+      if (!isWaived && currentFee === 0 && appSettings) {
+        const cents = getDefaultFeeCents(appSettings, mappedFeeType);
+        if (cents > 0) form.setValue('feeCharged', cents / 100);
+      }
+    });
+    return () => sub.unsubscribe();
+  }, [form, appSettings]);
 
   // Init SignaturePad when step 3 becomes active
   useEffect(() => {
@@ -891,6 +921,35 @@ export function NewEntry() {
                           )} />
                         </div>
                       </div>
+
+                      <FormField control={form.control} name="feeType" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Fee Type *</FormLabel>
+                          <Select onValueChange={(v) => {
+                            field.onChange(v);
+                            // When the user explicitly picks a fee category,
+                            // also auto-fill the dollar amount from the saved
+                            // default if no fee has been entered yet.
+                            const cur = Number(form.getValues('feeCharged') ?? 0);
+                            const waived = !!form.getValues('feeWaived');
+                            if (!waived && cur === 0 && appSettings) {
+                              const cents = getDefaultFeeCents(appSettings, v as FeeType);
+                              if (cents > 0) form.setValue('feeCharged', cents / 100);
+                            }
+                          }} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger data-testid="select-fee-type"><SelectValue /></SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {FEE_TYPES.map(ft => (
+                                <SelectItem key={ft} value={ft}>{ft}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription className="text-xs">For year-end report breakdowns.</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
 
                       <FormField control={form.control} name="feeCharged" render={({ field }) => (
                         <FormItem>

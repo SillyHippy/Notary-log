@@ -40,6 +40,12 @@ export interface JournalEntry {
   notarialActType: 'acknowledgment' | 'jurat' | 'copy_certification' | 'signature_witnessing' | 'other';
   feeCharged: number; // in cents
   feeWaived: boolean;
+  // Itemized fee category (Acknowledgment, Jurat, Oath, Copy Certification,
+  // Signature Witnessing, Travel, Other). Optional for backward compatibility
+  // with v1/v2 backups and pre-Task-15 entries — when missing, callers should
+  // resolve a default via `resolveFeeType` (see lib/fees.ts) rather than
+  // back-filling on disk (which would invalidate the entry's signed hash).
+  feeType?: string;
   locationCity: string;
   locationState: string;
   locationAddress?: string;
@@ -83,6 +89,13 @@ export interface NotarySettings {
   darkMode: boolean;
   autoBackup?: boolean;
   googleEmail?: string;
+  // Per-fee-type default amounts in cents, e.g. { Acknowledgment: 1000 }.
+  // Used by the new-entry wizard to auto-fill the fee. Stored encrypted.
+  defaultFees?: Record<string, number>;
+  // Notary's official seal as a data URL (PNG). Embedded into PDF exports.
+  // Caller is expected to keep this ≤ ~200 KB to avoid bloating backups.
+  // Stored encrypted along with the rest of settings.
+  sealImage?: string;
 }
 
 // ── Storage shapes (encrypted records actually written to IDB) ─────────────

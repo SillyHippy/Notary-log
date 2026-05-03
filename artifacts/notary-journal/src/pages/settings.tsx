@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
+import { FEE_TYPES, type FeeType } from '@/lib/fees';
 import { exportAllCSV, exportAllJSON, exportAllPDF, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
@@ -72,6 +73,13 @@ export function Settings() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
 
+  // Default fees + seal image state
+  const [defaultFees, setDefaultFees] = useState<Record<string, string>>({});
+  const [savingFees, setSavingFees] = useState(false);
+  const [sealImage, setSealImage] = useState<string | undefined>(undefined);
+  const [sealBusy, setSealBusy] = useState(false);
+  const sealInputRef = useRef<HTMLInputElement>(null);
+
   // Google Drive state
   const [isConnected, setIsConnected] = useState(false);
   const [googleEmail, setGoogleEmail] = useState('');
@@ -127,6 +135,15 @@ export function Settings() {
       setAutoBackup(settings.autoBackup ?? false);
       setGoogleEmail(settings.googleEmail ?? '');
 
+      // Initialize default-fees editor with dollar strings (cents → "12.50").
+      const fees: Record<string, string> = {};
+      for (const ft of FEE_TYPES) {
+        const cents = settings.defaultFees?.[ft] ?? 0;
+        fees[ft] = cents > 0 ? (cents / 100).toFixed(2) : '';
+      }
+      setDefaultFees(fees);
+      setSealImage(settings.sealImage);
+
       const entries = await getAllEntries();
       setEntryCount(entries.length);
       setIsLoading(false);
@@ -177,6 +194,90 @@ export function Settings() {
   const handleLockNow = () => {
     lock();
     window.location.reload();
+  };
+
+  const handleSaveDefaultFees = async () => {
+    setSavingFees(true);
+    try {
+      const cents: Record<string, number> = {};
+      for (const ft of FEE_TYPES) {
+        const raw = (defaultFees[ft] ?? '').trim();
+        const dollars = Number(raw);
+        cents[ft] = raw === '' || !Number.isFinite(dollars) || dollars < 0
+          ? 0
+          : Math.round(dollars * 100);
+      }
+      const current = await getSettings();
+      await saveSettings({ ...current, defaultFees: cents } as NotarySettings);
+      toast({ title: 'Default fees saved', description: 'New entries will use these amounts.' });
+    } catch (err) {
+      toast({ title: 'Failed to save fees', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setSavingFees(false);
+  };
+
+  // Resize an uploaded seal image to a max edge (~600px) and return a JPEG/PNG
+  // data URL ≤ ~200 KB. Keeps backups light (the seal is embedded on every PDF).
+  async function resizeImageToDataUrl(file: File, maxEdge = 600, maxBytes = 200_000): Promise<string> {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = () => reject(r.error ?? new Error('Read failed'));
+      r.readAsDataURL(file);
+    });
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Invalid image'));
+      i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas not supported');
+    ctx.drawImage(img, 0, 0, w, h);
+    // Try PNG first to preserve transparency; fall back to JPEG if too big.
+    let out = canvas.toDataURL('image/png');
+    if (out.length > maxBytes * 1.37 /* base64 overhead */) {
+      let q = 0.85;
+      out = canvas.toDataURL('image/jpeg', q);
+      while (out.length > maxBytes * 1.37 && q > 0.4) {
+        q -= 0.1;
+        out = canvas.toDataURL('image/jpeg', q);
+      }
+    }
+    return out;
+  }
+
+  const handleSealUpload = async (file: File) => {
+    setSealBusy(true);
+    try {
+      const dataUrl = await resizeImageToDataUrl(file);
+      const current = await getSettings();
+      await saveSettings({ ...current, sealImage: dataUrl } as NotarySettings);
+      setSealImage(dataUrl);
+      toast({ title: 'Seal saved', description: 'Your seal will appear on exported PDFs.' });
+    } catch (err) {
+      toast({ title: 'Could not save seal', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setSealBusy(false);
+  };
+
+  const handleRemoveSeal = async () => {
+    setSealBusy(true);
+    try {
+      const current = await getSettings();
+      const { sealImage: _drop, ...rest } = current;
+      await saveSettings({ ...rest } as NotarySettings);
+      setSealImage(undefined);
+      toast({ title: 'Seal removed' });
+    } catch (err) {
+      toast({ title: 'Failed to remove seal', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setSealBusy(false);
   };
 
   const handleVerifyChain = async () => {
@@ -616,6 +717,104 @@ export function Settings() {
           </Card>
         </form>
       </Form>
+
+      {/* ── Default Fees Card ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="w-5 h-5 text-primary" />
+            Default Fees
+          </CardTitle>
+          <CardDescription>
+            Pre-fill the fee on new entries based on the type of notarial act. Leave blank to use $0.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {FEE_TYPES.map(ft => (
+            <div key={ft} className="flex items-center justify-between gap-3">
+              <Label htmlFor={`fee-${ft}`} className="text-sm">{ft}</Label>
+              <div className="relative w-32">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                <Input
+                  id={`fee-${ft}`}
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  className="pl-6"
+                  value={defaultFees[ft] ?? ''}
+                  onChange={e => setDefaultFees(prev => ({ ...prev, [ft]: e.target.value }))}
+                  data-testid={`input-default-fee-${ft.toLowerCase().replace(/\s+/g, '-')}`}
+                />
+              </div>
+            </div>
+          ))}
+        </CardContent>
+        <CardFooter className="bg-muted/30 border-t px-6 py-4">
+          <Button onClick={handleSaveDefaultFees} disabled={savingFees} className="gap-2" data-testid="button-save-default-fees">
+            <Save className="w-4 h-4" /> {savingFees ? 'Saving...' : 'Save Default Fees'}
+          </Button>
+        </CardFooter>
+      </Card>
+
+      {/* ── Notary Seal Card ──────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Stamp className="w-5 h-5 text-primary" />
+            Notary Seal
+          </CardTitle>
+          <CardDescription>
+            Upload a small image of your seal. It will be stamped in the lower-right corner of every page in your exported PDFs.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {sealImage ? (
+            <div className="flex items-center gap-4 p-3 border rounded-lg bg-muted/30">
+              <img src={sealImage} alt="Notary seal" className="w-20 h-20 object-contain bg-white border rounded" />
+              <div className="flex-1 text-sm text-muted-foreground">
+                Seal saved. It will be embedded in PDF exports.
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={handleRemoveSeal}
+                disabled={sealBusy}
+                data-testid="button-remove-seal"
+              >
+                <Trash2 className="w-4 h-4" /> Remove
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No seal uploaded yet.</p>
+          )}
+          <input
+            ref={sealInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={e => {
+              const f = e.target.files?.[0];
+              if (f) handleSealUpload(f);
+              if (sealInputRef.current) sealInputRef.current.value = '';
+            }}
+            data-testid="input-seal-upload"
+          />
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => sealInputRef.current?.click()}
+            disabled={sealBusy}
+            data-testid="button-upload-seal"
+          >
+            <Upload className="w-4 h-4" /> {sealBusy ? 'Processing...' : sealImage ? 'Replace Seal' : 'Upload Seal Image'}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Image is resized to about 600px and stored locally. PNG with transparency works best.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* ── Cloud Backup Card ─────────────────────────────────────────── */}
       <Card>

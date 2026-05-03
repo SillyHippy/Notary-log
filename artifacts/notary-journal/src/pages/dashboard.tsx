@@ -11,7 +11,8 @@ import {
   ShieldCheck,
   User,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  FileBarChart
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -147,15 +148,18 @@ export function Dashboard() {
           </CardContent>
         </Card>
         
-        <Card className="shadow-sm hover-elevate">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between space-y-0 pb-2">
-              <p className="text-sm font-medium text-muted-foreground">Total Fees</p>
-              <Wallet className="w-4 h-4 text-muted-foreground" />
-            </div>
-            <div className="text-3xl font-bold">${(stats.totalFees / 100).toFixed(2)}</div>
-          </CardContent>
-        </Card>
+        <Link href="/reports" data-testid="link-dashboard-reports">
+          <Card className="shadow-sm hover-elevate cursor-pointer">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between space-y-0 pb-2">
+                <p className="text-sm font-medium text-muted-foreground">Total Fees</p>
+                <FileBarChart className="w-4 h-4 text-muted-foreground" />
+              </div>
+              <div className="text-3xl font-bold">${(stats.totalFees / 100).toFixed(2)}</div>
+              <p className="text-xs text-muted-foreground mt-1">View annual report →</p>
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
       {/* Recent Entries */}

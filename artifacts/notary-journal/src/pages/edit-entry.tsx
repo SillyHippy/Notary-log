@@ -13,6 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { getEntry, updateEntry, type JournalEntry } from '@/lib/db';
+import { FEE_TYPES, resolveFeeType } from '@/lib/fees';
 
 const editSchema = z.object({
   signerFullName: z.string().min(1, 'Full name is required'),
@@ -29,6 +30,7 @@ const editSchema = z.object({
   documentDate: z.string().optional(),
   documentDescription: z.string().optional(),
   notarialActType: z.enum(['acknowledgment', 'jurat', 'copy_certification', 'signature_witnessing', 'other']),
+  feeType: z.enum(FEE_TYPES),
   feeCharged: z.coerce.number().min(0),
   feeWaived: z.boolean().default(false),
   locationCity: z.string().min(1, 'Location city is required'),
@@ -62,6 +64,7 @@ export function EditEntry() {
       idExpirationDate: '',
       documentType: '',
       notarialActType: 'acknowledgment',
+      feeType: 'Acknowledgment',
       feeCharged: 0,
       feeWaived: false,
       locationCity: '',
@@ -99,6 +102,7 @@ export function EditEntry() {
         documentDate: e.documentDate || '',
         documentDescription: e.documentDescription || '',
         notarialActType: e.notarialActType,
+        feeType: resolveFeeType(e),
         feeCharged: e.feeCharged / 100,
         feeWaived: e.feeWaived,
         locationCity: e.locationCity,
@@ -286,6 +290,24 @@ export function EditEntry() {
                       <SelectItem value="copy_certification">Copy Certification</SelectItem>
                       <SelectItem value="signature_witnessing">Signature Witnessing</SelectItem>
                       <SelectItem value="other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="feeType" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Fee Type</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-fee-type-edit">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {FEE_TYPES.map(ft => (
+                        <SelectItem key={ft} value={ft}>{ft}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FormMessage />
