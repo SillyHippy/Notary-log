@@ -93,11 +93,27 @@ To re-link an existing Netlify site to a git repo (instead of replacing it), go 
 
 ## Option 3 — Cloudflare Pages
 
-Cloudflare Pages also reads the same `_redirects` file syntax Netlify uses, so the SPA routing setup is identical.
+Cloudflare Pages reads the same `_redirects` file syntax Netlify uses, so the SPA routing setup is identical — but unlike Netlify, the redirect rule has to live inside the build output (Cloudflare doesn't read `netlify.toml`). Do the one-time setup *before* the first deploy or your first deep-link refresh will 404.
 
-### Connect
+### Step 1 — Add the SPA redirect file (one-time, before first deploy)
 
-1. Push the repo to GitHub or GitLab.
+Run this once from the repo root, then commit:
+
+```bash
+mkdir -p artifacts/notary-journal/public
+echo '/*    /index.html   200' > artifacts/notary-journal/public/_redirects
+git add artifacts/notary-journal/public/_redirects
+git commit -m "Add SPA redirects for Netlify and Cloudflare Pages builds"
+git push
+```
+
+Vite copies anything in `public/` straight into `dist/public/`, so the file lands at `dist/public/_redirects` on every build automatically. The same file works on Netlify, so this is also helpful for Netlify drag-and-drop deploys (you can skip the manual `echo` step in Option 1 once this is committed).
+
+> If you skip this step, the home page will load on Cloudflare but refreshing on `/journal` or any deep link returns a 404.
+
+### Step 2 — Connect to Cloudflare Pages
+
+1. Push the repo to GitHub or GitLab (with the `_redirects` file from Step 1 included).
 2. Cloudflare Dashboard → **Workers & Pages → Create → Pages → Connect to Git**.
 3. Pick the repo. Configure the build:
    - **Framework preset**: None (or "Vite" if listed — both work).
@@ -108,22 +124,6 @@ Cloudflare Pages also reads the same `_redirects` file syntax Netlify uses, so t
    - `NODE_VERSION` = `22`
    - `VITE_GOOGLE_CLIENT_ID` = your Google OAuth client ID (see [Shared setup](#shared-setup))
 5. Click **Save and Deploy**. First build takes 2–4 minutes.
-
-### SPA redirects on Cloudflare (one-time setup)
-
-The build doesn't ship a `_redirects` file by default. **For Cloudflare git-connected builds, you need to make sure a `_redirects` file ends up in the publish folder.** The easiest way is to commit one to the repo so Vite copies it into the build output on every build. Run this once from the repo root, then commit:
-
-```bash
-mkdir -p artifacts/notary-journal/public
-echo '/*    /index.html   200' > artifacts/notary-journal/public/_redirects
-git add artifacts/notary-journal/public/_redirects
-git commit -m "Add SPA redirects for Netlify and Cloudflare Pages builds"
-git push
-```
-
-Vite copies anything in `public/` straight into `dist/public/`, so the file will land at `dist/public/_redirects` on every build. Both Netlify and Cloudflare Pages honor the same `_redirects` syntax. Alternatively, add a Cloudflare Pages redirect rule in the dashboard, but the static file is simpler and works on both hosts.
-
-> If you skip this, deep links like `/journal` will 404 on Cloudflare. The home page will load fine, but refreshing inside the app will break.
 
 ---
 
