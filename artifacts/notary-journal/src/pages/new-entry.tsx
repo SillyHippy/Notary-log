@@ -425,18 +425,25 @@ export function NewEntry() {
         if (mrz.ok && mrz.passport) {
           applyExtractedFields(mrzToSignerFields(mrz.passport));
           setScanResult({ method: 'mrz', text, confidence, passport: mrz.passport });
-          if (!mrz.passport.allCheckDigitsValid) {
+          // Compose warnings from check digits AND low OCR confidence so the
+          // notary always sees a banner when the data is questionable.
+          const lowConfidence = confidence < 70;
+          if (!mrz.passport.allCheckDigitsValid || lowConfidence) {
             const failing = Object.entries(mrz.passport.checkDigits)
               .filter(([, ok]) => !ok)
-              .map(([name]) => name)
-              .join(', ');
-            setMrzWarning(
-              `MRZ check digit mismatch (${failing}) — please verify before saving.`,
-            );
+              .map(([name]) => name);
+            const parts: string[] = [];
+            if (failing.length > 0) {
+              parts.push(`MRZ check digit mismatch (${failing.join(', ')})`);
+            }
+            if (lowConfidence) {
+              parts.push(`low OCR confidence (${Math.round(confidence)}%)`);
+            }
+            setMrzWarning(`${parts.join(' and ')} — please verify before saving.`);
             setNeedsReview(true);
             toast({
               title: 'MRZ Read with Warnings',
-              description: 'Some check digits failed. Verify the extracted fields.',
+              description: parts.join(' / ') + '. Verify the extracted fields.',
               variant: 'destructive',
             });
           } else {
@@ -557,6 +564,7 @@ export function NewEntry() {
       
       const extractionMethod: JournalEntry['extractionMethod'] =
         scanResult?.method === 'barcode' ? 'barcode'
+        : scanResult?.method === 'mrz' ? 'mrz'
         : scanResult?.method === 'ocr' ? 'ocr'
         : 'manual';
 
@@ -569,8 +577,10 @@ export function NewEntry() {
         signatureImage,
         needsReview,
         extractionMethod,
-        extractedRawText: scanResult?.method === 'ocr' ? scanResult.text : undefined,
-        extractionConfidence: scanResult?.method === 'ocr' ? scanResult.confidence : undefined,
+        extractedRawText:
+          scanResult?.method === 'ocr' || scanResult?.method === 'mrz' ? scanResult.text : undefined,
+        extractionConfidence:
+          scanResult?.method === 'ocr' || scanResult?.method === 'mrz' ? scanResult.confidence : undefined,
         completedAt: status === 'completed' ? new Date().toISOString() : undefined,
       };
 

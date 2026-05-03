@@ -60,7 +60,7 @@ export interface JournalEntry {
 
   // Extraction metadata
   extractedRawText?: string;
-  extractionMethod?: 'barcode' | 'ocr' | 'manual';
+  extractionMethod?: 'barcode' | 'ocr' | 'mrz' | 'manual';
   extractionConfidence?: number;
   needsReview?: boolean;
 

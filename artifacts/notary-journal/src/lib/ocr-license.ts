@@ -165,14 +165,30 @@ function extractIdNumber(text: string, lines: string[]): string | undefined {
   // generic LICENSE label below grab a name token.
   const pa = text.match(/\bDLN[\s#:.]*([0-9][0-9 ]{6,14})/i);
   if (pa) return pa[1].replace(/\s+/g, '');
-  // Labeled forms — most reliable. Require at least one digit in the
-  // capture so labels like "DRIVER LICENSE" followed by a surname on the
-  // next line don't pick up the surname.
-  const labeled = text.match(
-    /\b(?:DL|LIC|LICENSE|ID|NO\.?|NUM(?:BER)?|USID|EDL)[\s#:.]+(?=[A-Z0-9\-]{6,18})((?=[^\s]*\d)[A-Z0-9\-]{6,18})\b/i,
-  );
-  if (labeled && !/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(labeled[1])) {
-    return labeled[1].toUpperCase();
+  // Labeled forms — most reliable. We scan line-by-line (to avoid the
+  // "DRIVER LICENSE" header capturing the *next* line as its number) and
+  // try the most specific labels first.
+  const LABELS: RegExp[] = [
+    /\b(?:DLN|USID|EDL)[\s#:.]+([A-Z0-9][A-Z0-9 \-]{5,20})/i,
+    /\bDL[\s#:.]+([A-Z0-9][A-Z0-9 \-]{5,20})/i,
+    /\bID[\s#:.]+([A-Z0-9][A-Z0-9 \-]{5,20})/i,
+    /\bLic\b[\s#:.]+([A-Z0-9][A-Z0-9 \-]{5,20})/i,
+    /\b(?:NO\.?|NUM(?:BER)?)[\s#:.]+([A-Z0-9][A-Z0-9 \-]{5,20})/i,
+    // Generic LICENSE label — last resort because the word also appears
+    // in "DRIVER LICENSE" headers.
+    /\bLICENSE[\s#:.]+([A-Z0-9][A-Z0-9 \-]{5,20})/i,
+  ];
+  for (const line of lines) {
+    for (const re of LABELS) {
+      const m = line.match(re);
+      if (!m) continue;
+      const raw = m[1];
+      const cleaned = raw.replace(/[\s\-]/g, '').toUpperCase();
+      if (cleaned.length < 6 || cleaned.length > 14) continue;
+      if (!/\d/.test(cleaned)) continue;
+      if (/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(raw)) continue;
+      return cleaned;
+    }
   }
   // Last-resort positional: look for a token of letters+digits (or 8+ digits)
   // on a line that doesn't otherwise look like a name or address.
