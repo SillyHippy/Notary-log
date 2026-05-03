@@ -89,10 +89,8 @@ export interface NotarySettings {
 
 interface StoredEntry {
   id?: number;
-  entryNumber: number;
-  status: string;
-  createdAt: string;
-  _enc: EncBlob; // encrypts everything except the indexed fields above
+  entryNumber: number; // cleartext index only — non-sensitive sequence number
+  _enc: EncBlob;       // encrypts every other field including status/createdAt
 }
 
 interface StoredSettings {
@@ -109,7 +107,7 @@ export interface CryptoMeta {
 }
 
 const DB_NAME = 'notary_journal_db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const DARK_MODE_LS_KEY = 'notary_dark_mode';
 const CANARY_PLAINTEXT = 'notary-journal-canary-v1';
 const FORMAT_VERSION = 2;
@@ -120,12 +118,17 @@ let cryptoKey: CryptoKey | null = null;
 export function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
+      upgrade(db, _oldVersion, _newVersion, tx) {
         if (!db.objectStoreNames.contains('entries')) {
           const entryStore = db.createObjectStore('entries', { keyPath: 'id', autoIncrement: true });
           entryStore.createIndex('entryNumber', 'entryNumber', { unique: true });
-          entryStore.createIndex('status', 'status', { unique: false });
-          entryStore.createIndex('createdAt', 'createdAt', { unique: false });
+        } else {
+          // v2 had plaintext indexes on status and createdAt; drop them so no
+          // sensitive metadata leaks into IDB. entryNumber stays as the only
+          // cleartext index (it's just a sequence number).
+          const entryStore = tx.objectStore('entries');
+          if (entryStore.indexNames.contains('status')) entryStore.deleteIndex('status');
+          if (entryStore.indexNames.contains('createdAt')) entryStore.deleteIndex('createdAt');
         }
         if (!db.objectStoreNames.contains('settings')) {
           db.createObjectStore('settings', { keyPath: 'id' });
@@ -267,9 +270,12 @@ export async function changePin(oldPin: string, newPin: string): Promise<boolean
 
 async function encryptEntry(entry: JournalEntry): Promise<StoredEntry> {
   const key = requireKey();
-  const { id, entryNumber, status, createdAt, ...rest } = entry;
+  // Only entryNumber stays cleartext (it is a non-sensitive sequence number used
+  // as the primary IDB index). status, createdAt, signer info, etc. all live
+  // inside the encrypted blob.
+  const { id, entryNumber, ...rest } = entry;
   const _enc = await encryptJSON(key, rest);
-  return { id, entryNumber, status, createdAt, _enc };
+  return { id, entryNumber, _enc };
 }
 
 async function decryptStoredEntry(stored: StoredEntry | JournalEntry): Promise<JournalEntry> {
@@ -284,8 +290,6 @@ async function decryptStoredEntry(stored: StoredEntry | JournalEntry): Promise<J
     ...(rest as JournalEntry),
     id: s.id,
     entryNumber: s.entryNumber,
-    status: s.status as JournalEntry['status'],
-    createdAt: s.createdAt,
   };
 }
 
@@ -360,30 +364,24 @@ export async function getEntry(id: number): Promise<JournalEntry | undefined> {
 
 export async function getAllEntries(): Promise<JournalEntry[]> {
   const db = await getDB();
-  const all = await db.getAllFromIndex('entries', 'createdAt');
-  return Promise.all(all.map(s => decryptStoredEntry(s)));
+  const all = await db.getAll('entries');
+  const decrypted = await Promise.all(all.map(s => decryptStoredEntry(s)));
+  // Sort newest-first by createdAt for stable journal-list order. createdAt is
+  // inside the encrypted blob, so this sort necessarily happens after decrypt.
+  return decrypted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export async function searchEntries(query: string): Promise<JournalEntry[]> {
   const all = await getAllEntries();
   const lower = query.toLowerCase();
-  return all
-    .filter(e => e.signerFullName.toLowerCase().includes(lower) || e.entryNumber.toString().includes(lower))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return all.filter(e =>
+    e.signerFullName.toLowerCase().includes(lower) || e.entryNumber.toString().includes(lower),
+  );
 }
 
 export async function getRecentEntries(limit: number): Promise<JournalEntry[]> {
-  const db = await getDB();
-  const tx = db.transaction('entries', 'readonly');
-  const store = tx.objectStore('entries');
-  const index = store.index('createdAt');
-  const stored: StoredEntry[] = [];
-  let cursor = await index.openCursor(null, 'prev');
-  while (cursor && stored.length < limit) {
-    stored.push(cursor.value as StoredEntry);
-    cursor = await cursor.continue();
-  }
-  return Promise.all(stored.map(s => decryptStoredEntry(s)));
+  const all = await getAllEntries();
+  return all.slice(0, limit);
 }
 
 export async function createEntry(
@@ -527,32 +525,83 @@ export interface ChainVerificationResult {
   issues: ChainVerificationIssue[];
 }
 
-export async function verifyChain(): Promise<ChainVerificationResult> {
-  const all = (await getAllEntries())
+/**
+ * Pure verification helper. Exported so it can be unit-tested without IDB.
+ * Critical: the chain link for entry N is checked against the *recomputed*
+ * hash of entry N-1, not its stored hash. That way, tampering with any older
+ * entry's content propagates as a chain break for every later entry, even if
+ * an attacker leaves the older entry's stored `hash` field untouched.
+ */
+export async function verifyChainPure(rawEntries: JournalEntry[]): Promise<ChainVerificationResult> {
+  const all = rawEntries
     .filter(e => e.status === 'completed' || e.status === 'amended')
     .sort((a, b) => a.entryNumber - b.entryNumber);
 
-  let prevHash = '';
+  let prevExpectedHash = '';
+  let chainBroken = false; // once true, every later entry is reported broken too
   let ok = 0;
   const issues: ChainVerificationIssue[] = [];
 
   for (const entry of all) {
     if (!entry.hash) {
       issues.push({ entryNumber: entry.entryNumber, reason: 'Missing integrity hash' });
-      prevHash = '';
+      chainBroken = true;
+      prevExpectedHash = '';
       continue;
     }
     const computed = await generateEntryHash(entry);
-    if (computed !== entry.hash) {
+    const stampedMatches = computed === entry.hash;
+    const linkMatches = (entry.previousEntryHash ?? '') === prevExpectedHash;
+    if (chainBroken) {
+      issues.push({ entryNumber: entry.entryNumber, reason: 'Chain integrity broken upstream' });
+    } else if (!stampedMatches) {
       issues.push({ entryNumber: entry.entryNumber, reason: 'Entry data has been modified since signing' });
-    } else if ((entry.previousEntryHash ?? '') !== prevHash) {
+      chainBroken = true;
+    } else if (!linkMatches) {
       issues.push({ entryNumber: entry.entryNumber, reason: 'Chain link does not match previous entry' });
+      chainBroken = true;
     } else {
       ok++;
     }
-    prevHash = entry.hash;
+    // Always advance using the *recomputed* hash, so downstream entries
+    // notice when an upstream entry's content changed even if their own
+    // stored hash is internally consistent.
+    prevExpectedHash = computed;
   }
   return { totalChecked: all.length, okCount: ok, issues };
+}
+
+export async function verifyChain(): Promise<ChainVerificationResult> {
+  return verifyChainPure(await getAllEntries());
+}
+
+/**
+ * Recompute the chain forward starting at `fromEntryNumber` (inclusive).
+ * Used after a legitimate amendment so the journal stays internally
+ * consistent: each later entry's previousEntryHash is restamped to the
+ * freshly recomputed hash of the entry before it, and its own hash is
+ * recomputed.
+ */
+export async function recomputeChainFrom(fromEntryNumber: number): Promise<void> {
+  const all = (await getAllEntries())
+    .filter(e => e.status === 'completed' || e.status === 'amended')
+    .sort((a, b) => a.entryNumber - b.entryNumber);
+  const startIdx = all.findIndex(e => e.entryNumber >= fromEntryNumber);
+  if (startIdx === -1) return;
+  let prevHash = '';
+  if (startIdx > 0) {
+    const prev = all[startIdx - 1];
+    prevHash = await generateEntryHash({ ...prev, previousEntryHash: prev.previousEntryHash ?? '' });
+  }
+  const db = await getDB();
+  for (let i = startIdx; i < all.length; i++) {
+    const e = all[i];
+    e.previousEntryHash = prevHash;
+    e.hash = await generateEntryHash(e);
+    if (typeof e.id !== 'number') continue;
+    await db.put('entries', await encryptEntry(e));
+    prevHash = e.hash;
+  }
 }
 
 // ── Migration: legacy plaintext IDB → encrypted-at-rest format ─────────────

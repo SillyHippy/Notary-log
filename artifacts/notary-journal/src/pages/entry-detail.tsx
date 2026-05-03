@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, getAllEntries, type JournalEntry, type NotarySettings } from '@/lib/db';
+import { getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, getAllEntries, recomputeChainFrom, verifyChainPure, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { exportEntryPDF, exportEntryCSV, exportEntryJSON } from '@/lib/export';
 
 export function EntryDetail() {
@@ -72,20 +72,20 @@ export function EntryDetail() {
           setHashStatus('invalid');
         } else {
           try {
-            const currentHash = await generateEntryHash(entryData);
-            if (currentHash !== entryData.hash) {
-              setHashStatus('invalid');
+            // Verify the FULL chain up to and including this entry, using
+            // recomputed (not stored) hashes so tampering with any older
+            // entry surfaces as a chain break here too.
+            const all = await getAllEntries();
+            const upTo = all.filter(e => e.entryNumber <= entryData!.entryNumber);
+            const result = await verifyChainPure(upTo);
+            const issue = result.issues.find(i => i.entryNumber === entryData!.entryNumber);
+            const upstream = result.issues.some(i => i.entryNumber < entryData!.entryNumber);
+            if (issue) {
+              setHashStatus(issue.reason.includes('Chain link') ? 'chain-broken' : 'invalid');
+            } else if (upstream) {
+              setHashStatus('chain-broken');
             } else {
-              const all = await getAllEntries();
-              const prior = all
-                .filter(e => e.entryNumber < entryData!.entryNumber && (e.status === 'completed' || e.status === 'amended') && e.hash)
-                .sort((a, b) => b.entryNumber - a.entryNumber)[0];
-              const expectedPrev = prior?.hash ?? '';
-              if ((entryData.previousEntryHash ?? '') !== expectedPrev) {
-                setHashStatus('chain-broken');
-              } else {
-                setHashStatus('valid');
-              }
+              setHashStatus('valid');
             }
           } catch (err) {
             console.error('Chain verification failed', err);
@@ -111,11 +111,13 @@ export function EntryDetail() {
     };
     
     const amendments = [...(entry.amendments || []), newAmendment];
-    
-    await updateEntry(id, {
-      status: 'amended',
-      amendments
-    });
+
+    // Append the amendment, then recompute this entry's signed hash AND
+    // restamp every later entry in the chain so the journal stays internally
+    // consistent. Without this, a legitimate amendment would later look like
+    // tampering during chain verification.
+    await updateEntry(id, { status: 'amended', amendments });
+    await recomputeChainFrom(entry.entryNumber);
     
     setEntry({ ...entry, status: 'amended', amendments });
     setIsAmending(false);

@@ -153,6 +153,71 @@ export interface BackupEnvelope {
   settings: NotarySettings;
 }
 
+export interface ParsedBackup {
+  detectedVersion: 1 | 2;
+  entries: JournalEntry[];
+  settings: NotarySettings | null;
+}
+
+const REQUIRED_ENTRY_FIELDS: Array<keyof JournalEntry> = [
+  'entryNumber', 'status', 'signerFullName', 'idType', 'idNumber',
+  'documentType', 'notarialActType', 'createdAt',
+];
+
+/**
+ * Parse and validate a backup/import payload. Accepts:
+ *   - v2 envelope: { version: 2, entries, settings, exportedAt }
+ *   - v1 envelope: { entries: [...] }            (no version field)
+ *   - v1 bare array: [...]                        (legacy export)
+ *   - single-entry object                         (per-entry export)
+ * Throws Error with a user-readable message on any malformed input,
+ * a missing required field, or a future-version backup.
+ */
+export function parseBackupFile(text: string): ParsedBackup {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { throw new Error('Not a valid JSON file.'); }
+
+  let entries: JournalEntry[] = [];
+  let settings: NotarySettings | null = null;
+  let detectedVersion: 1 | 2 = 1;
+
+  if (Array.isArray(parsed)) {
+    entries = parsed as JournalEntry[];
+    detectedVersion = 1;
+  } else if (parsed && typeof parsed === 'object') {
+    const obj = parsed as { version?: unknown; entries?: unknown; settings?: unknown; entryNumber?: unknown };
+    if (Array.isArray(obj.entries)) {
+      if (obj.version !== undefined && typeof obj.version !== 'number') {
+        throw new Error('Backup file has an invalid version field.');
+      }
+      const v = (obj.version as number | undefined) ?? 1;
+      if (v > 2) throw new Error(`Backup format v${v} is newer than this app supports.`);
+      detectedVersion = v >= 2 ? 2 : 1;
+      entries = obj.entries as JournalEntry[];
+      if (obj.settings && typeof obj.settings === 'object') {
+        settings = obj.settings as NotarySettings;
+      }
+    } else if ('entryNumber' in obj) {
+      entries = [obj as unknown as JournalEntry];
+      detectedVersion = 1;
+    } else {
+      throw new Error('Unrecognized file format. Expected a journal backup or entry export.');
+    }
+  } else {
+    throw new Error('Unrecognized file format.');
+  }
+
+  for (const e of entries) {
+    if (!e || typeof e !== 'object') throw new Error('Backup contains a non-object entry.');
+    for (const f of REQUIRED_ENTRY_FIELDS) {
+      if (!(f in e)) throw new Error(`Entry is missing required field "${String(f)}".`);
+    }
+    if (typeof e.entryNumber !== 'number') throw new Error('Entry has non-numeric entryNumber.');
+  }
+
+  return { detectedVersion, entries, settings };
+}
+
 export function exportAllJSON(entries: JournalEntry[], settings: NotarySettings): void {
   const payload: BackupEnvelope = {
     version: BACKUP_FORMAT_VERSION,

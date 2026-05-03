@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
-import { exportAllCSV, exportAllJSON, exportAllPDF } from '@/lib/export';
+import { exportAllCSV, exportAllJSON, exportAllPDF, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
   isGdriveReady,
@@ -195,50 +195,7 @@ export function Settings() {
     setImporting(true);
     try {
       const text = await file.text();
-      let parsed: unknown;
-      try { parsed = JSON.parse(text); } catch { throw new Error('Not a valid JSON file.'); }
-
-      // Resolve entries from one of: v1/v2 envelope, bare array, or single entry.
-      let entries: JournalEntry[] = [];
-      let detectedVersion: number | 'unknown' = 'unknown';
-
-      if (Array.isArray(parsed)) {
-        entries = parsed as JournalEntry[];
-        detectedVersion = 1; // legacy bare array
-      } else if (parsed && typeof parsed === 'object') {
-        const obj = parsed as { version?: unknown; entries?: unknown; entryNumber?: unknown };
-        if (Array.isArray(obj.entries)) {
-          // Versioned envelope (v1 or v2). v1 had no version field; v2 has version: 2.
-          if (obj.version !== undefined && typeof obj.version !== 'number') {
-            throw new Error('Backup file has an invalid version field.');
-          }
-          if (typeof obj.version === 'number' && obj.version > 2) {
-            throw new Error(`Backup format v${obj.version} is newer than this app supports.`);
-          }
-          entries = obj.entries as JournalEntry[];
-          detectedVersion = (obj.version as number | undefined) ?? 1;
-        } else if ('entryNumber' in obj) {
-          entries = [obj as unknown as JournalEntry];
-          detectedVersion = 1;
-        } else {
-          throw new Error('Unrecognized file format. Expected a journal backup or entry export.');
-        }
-      } else {
-        throw new Error('Unrecognized file format.');
-      }
-
-      // Per-entry schema validation — reject the whole file if any entry is malformed
-      const requiredFields: Array<keyof JournalEntry> = [
-        'entryNumber', 'status', 'signerFullName', 'idType', 'idNumber',
-        'documentType', 'notarialActType', 'createdAt',
-      ];
-      for (const e of entries) {
-        if (!e || typeof e !== 'object') throw new Error('Backup contains a non-object entry.');
-        for (const f of requiredFields) {
-          if (!(f in e)) throw new Error(`Entry is missing required field "${String(f)}".`);
-        }
-        if (typeof e.entryNumber !== 'number') throw new Error('Entry has non-numeric entryNumber.');
-      }
+      const { detectedVersion, entries, settings: importedSettings } = parseBackupFile(text);
 
       let imported = 0, skipped = 0;
       for (const e of entries) {
@@ -251,9 +208,22 @@ export function Settings() {
           else throw err;
         }
       }
+
+      // Apply settings if the user confirms — silently skipped on bare-array
+      // imports that have no settings to begin with.
+      let settingsRestored = false;
+      if (importedSettings && window.confirm(
+        'This backup includes settings (notary name, commission, defaults). ' +
+        'Overwrite your current settings with the values from the backup?'
+      )) {
+        const current = await getSettings();
+        await saveSettings({ ...current, ...importedSettings, id: 1 });
+        settingsRestored = true;
+      }
+
       toast({
         title: 'Import complete',
-        description: `Format v${detectedVersion}: imported ${imported}, skipped ${skipped} duplicates.`,
+        description: `Format v${detectedVersion}: imported ${imported}, skipped ${skipped} duplicates${settingsRestored ? ', settings restored' : ''}.`,
       });
       const all = await getAllEntries();
       setEntryCount(all.length);
@@ -387,9 +357,20 @@ export function Settings() {
         }
       }
 
+      let settingsRestored = false;
+      const importedSettings = payload.settings as Partial<NotarySettings> | undefined;
+      if (importedSettings && Object.keys(importedSettings).length > 0 && window.confirm(
+        'This backup includes notary settings (name, commission, defaults). ' +
+        'Overwrite your current settings with the values from the backup?'
+      )) {
+        const current = await getSettings();
+        await saveSettings({ ...current, ...importedSettings, id: 1 });
+        settingsRestored = true;
+      }
+
       toast({
         title: 'Restore complete',
-        description: `Imported ${imported} entries. Skipped ${skipped} duplicates.`,
+        description: `Imported ${imported} entries. Skipped ${skipped} duplicates${settingsRestored ? ', settings restored' : ''}.`,
       });
       setSelectedFile(null);
       setShowRestoreList(false);
