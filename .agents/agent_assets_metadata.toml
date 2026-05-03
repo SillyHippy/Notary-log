@@ -12,3 +12,9 @@ id = "q0cJJ_akBF9hP_PeQCA-J"
 uri = "file://.local/downloads/notary-journal-netlify.tar.gz"
 type = "unspecified"
 title = "notary-journal-netlify.tar.gz (drag onto Netlify after extracting)"
+
+[[outputs]]
+id = "skjaBWzjIDXCSemitizlG"
+uri = "file://.local/downloads/notary-journal-netlify.zip"
+type = "unspecified"
+title = "notary-journal-netlify.zip — drag this onto Netlify"
