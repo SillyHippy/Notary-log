@@ -71,3 +71,7 @@ Without this variable, the Cloud Backup section in Settings shows a "not enabled
 - `pnpm --filter @workspace/notary-journal run dev` — run notary journal locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## Deployment
+
+See `DEPLOYMENT.md` for Netlify and Cloudflare Pages deployment instructions (drag-and-drop and git-connected). For Replit's own `.replit.app` hosting, use the Publish button in the workspace — no extra config needed.
