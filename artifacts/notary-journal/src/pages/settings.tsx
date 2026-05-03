@@ -136,14 +136,7 @@ export function Settings() {
       setAutoBackup(settings.autoBackup ?? false);
       setGoogleEmail(settings.googleEmail ?? '');
 
-      // Initialize default-fees editor with dollar strings (cents → "12.50").
-      const fees: Record<string, string> = {};
-      for (const ft of FEE_TYPES) {
-        const cents = settings.defaultFees?.[ft] ?? 0;
-        fees[ft] = cents > 0 ? (cents / 100).toFixed(2) : '';
-      }
-      setDefaultFees(fees);
-      setSealImage(settings.sealImage);
+      hydrateFeeAndSealStateFrom(settings);
 
       const entries = await getAllEntries();
       setEntryCount(entries.length);
@@ -303,6 +296,22 @@ export function Settings() {
     setVerifying(false);
   };
 
+  /**
+   * Sync the on-page Default Fees editor and Notary Seal preview from a fresh
+   * `NotarySettings` snapshot. Called both on initial load and after any
+   * restore (JSON import or Drive restore) so the user sees their restored
+   * values immediately without having to reload the page.
+   */
+  function hydrateFeeAndSealStateFrom(settings: NotarySettings): void {
+    const fees: Record<string, string> = {};
+    for (const ft of FEE_TYPES) {
+      const cents = settings.defaultFees?.[ft] ?? 0;
+      fees[ft] = cents > 0 ? (cents / 100).toFixed(2) : '';
+    }
+    setDefaultFees(fees);
+    setSealImage(settings.sealImage);
+  }
+
   const handleImportJSON = async (file: File) => {
     setImporting(true);
     try {
@@ -349,6 +358,8 @@ export function Settings() {
         delete (sanitized as Partial<NotarySettings> & { pinHash?: string }).pinHash;
         await saveSettings({ ...current, ...sanitized, id: 1, pinEnabled: true });
         settingsRestored = true;
+        // Refresh local form state so restored fees/seal show up immediately.
+        hydrateFeeAndSealStateFrom(await getSettings());
       }
 
       toast({
@@ -514,6 +525,7 @@ export function Settings() {
         delete (sanitized as Partial<NotarySettings> & { pinHash?: string }).pinHash;
         await saveSettings({ ...current, ...sanitized, id: 1, pinEnabled: true });
         settingsRestored = true;
+        hydrateFeeAndSealStateFrom(await getSettings());
       }
 
       toast({
