@@ -92,6 +92,20 @@ const STATE_ABBR: Record<string, string> = {
   'District of Columbia':'DC',
 };
 
+/**
+ * Short, mobile-friendly label for an ID type. Used in narrow review cells
+ * where the full "Driver's License" string overflows the column.
+ */
+function shortIdType(idType: string): string {
+  switch (idType) {
+    case 'driver_license': return 'DL';
+    case 'state_id':       return 'State ID';
+    case 'passport':       return 'Passport';
+    case 'military_id':    return 'Military ID';
+    default:               return idType.replace('_', ' ');
+  }
+}
+
 function cameraErrorMessage(err: unknown): string {
   const e = err as { name?: string; message?: string } | null | undefined;
   const name = e?.name ?? '';
@@ -817,7 +831,9 @@ export function NewEntry() {
                       data-testid="doctype-license"
                       aria-pressed={!isPassport && !isStateId}
                     >
-                      <IdCard className="w-4 h-4" /> Driver's License
+                      <IdCard className="w-4 h-4" />
+                      <span className="sm:hidden">DL</span>
+                      <span className="hidden sm:inline">Driver's License</span>
                     </Button>
                     <Button
                       type="button"
@@ -827,7 +843,9 @@ export function NewEntry() {
                       data-testid="doctype-id"
                       aria-pressed={isStateId}
                     >
-                      <IdCard className="w-4 h-4" /> ID Card
+                      <IdCard className="w-4 h-4" />
+                      <span className="sm:hidden">ID</span>
+                      <span className="hidden sm:inline">ID Card</span>
                     </Button>
                     <Button
                       type="button"
@@ -1361,7 +1379,7 @@ export function NewEntry() {
                   <CardTitle className="text-sm font-medium">Identification</CardTitle>
                 </CardHeader>
                 <CardContent className="py-4 text-sm space-y-2">
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Type:</span> <span className="col-span-2 min-w-0 capitalize break-words">{form.getValues('idType').replace('_', ' ')}</span></div>
+                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Type:</span> <span className="col-span-2 min-w-0 capitalize break-words">{shortIdType(form.getValues('idType'))}</span></div>
                   <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Number:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idNumber')}</span></div>
                   <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Expires:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idExpirationDate')}</span></div>
                 </CardContent>
