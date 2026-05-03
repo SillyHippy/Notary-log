@@ -677,7 +677,16 @@ export function NewEntry() {
               const isPassport = currentIdType === 'passport';
               const isStateId = currentIdType === 'state_id';
               const setType = (t: 'driver_license' | 'state_id' | 'passport') => {
+                if (form.getValues('idType') === t) return;
                 form.setValue('idType', t);
+                // Clear stale scan artifacts so a leftover license front
+                // image (or vice-versa) can't be silently re-OCR'd in the
+                // wrong mode by upload/back-photo flows.
+                setIdFrontImage(undefined);
+                setIdBackImage(undefined);
+                setScanResult(null);
+                setMrzWarning(null);
+                setNeedsReview(false);
               };
               return (
                 <>
