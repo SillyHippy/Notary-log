@@ -5,6 +5,7 @@ import {
   getDefaultFeeCents,
   resolveFeeType,
   rollupYear,
+  shouldApplyAutoFee,
 } from './fees';
 import type { JournalEntry, NotarySettings } from './db';
 
@@ -105,6 +106,74 @@ describe('rollupYear', () => {
     expect(r.byType.Jurat.collectedCents).toBe(2500);
     expect(r.byType.Travel.collectedCents).toBe(1000);
     expect(r.byType.Oath.collectedCents).toBe(750);
+  });
+
+  it('separates charged vs waived counts on every bucket', () => {
+    expect(r.totals.chargedCount).toBe(4); // 1,2,4,7
+    expect(r.totals.waivedCount).toBe(1);
+    expect(r.byType.Acknowledgment.chargedCount).toBe(1);
+    expect(r.byType.Acknowledgment.waivedCount).toBe(1);
+  });
+
+  it('estimates waived monetary value from configured defaults', () => {
+    const settings = { defaultFees: { Acknowledgment: 1500, Jurat: 2500 } } as Pick<NotarySettings, 'defaultFees'>;
+    const r2 = rollupYear(entries, 2025, settings);
+    // Only entry #3 is waived; it's an Acknowledgment so estimated value = $15.00
+    expect(r2.totals.waivedEstimatedCents).toBe(1500);
+    expect(r2.byType.Acknowledgment.waivedEstimatedCents).toBe(1500);
+    // Without settings, falls back to 0
+    expect(r.totals.waivedEstimatedCents).toBe(0);
+  });
+
+  it('groups by notarial act type using human-readable labels', () => {
+    // All five 2025 entries default to notarialActType "acknowledgment" in
+    // makeEntry, so byAct collapses them under "Acknowledgment". This proves
+    // byAct reflects the recorded act-type, not the (independent) fee category.
+    expect(r.byAct.Acknowledgment.count).toBe(5);
+    expect(r.byAct.Acknowledgment.collectedCents).toBe(1500 + 2500 + 1000 + 750);
+    expect(r.byAct.Acknowledgment.chargedCount).toBe(4);
+    expect(r.byAct.Acknowledgment.waivedCount).toBe(1);
+  });
+
+  it('separates byAct buckets when entries have different notarialActType values', () => {
+    const mixed: JournalEntry[] = [
+      makeEntry({ entryNumber: 10, notarialActType: 'acknowledgment', feeCharged: 1500, createdAt: '2025-04-01T00:00:00Z' }),
+      makeEntry({ entryNumber: 11, notarialActType: 'jurat', feeCharged: 2500, createdAt: '2025-04-02T00:00:00Z' }),
+      makeEntry({ entryNumber: 12, notarialActType: 'copy_certification', feeCharged: 1000, createdAt: '2025-04-03T00:00:00Z' }),
+    ];
+    const r3 = rollupYear(mixed, 2025);
+    expect(Object.keys(r3.byAct).sort()).toEqual(['Acknowledgment', 'Copy Certification', 'Jurat']);
+    expect(r3.byAct.Jurat.collectedCents).toBe(2500);
+    expect(r3.byAct['Copy Certification'].count).toBe(1);
+  });
+});
+
+describe('shouldApplyAutoFee', () => {
+  const settings = { defaultFees: { Acknowledgment: 1500, Jurat: 2500 } } as Pick<NotarySettings, 'defaultFees'>;
+
+  it('returns the configured cents when fee is still app-derived', () => {
+    expect(shouldApplyAutoFee({ feeType: 'Acknowledgment', isWaived: false, isAppDerived: true, settings })).toBe(1500);
+    expect(shouldApplyAutoFee({ feeType: 'Jurat', isWaived: false, isAppDerived: true, settings })).toBe(2500);
+  });
+
+  it('returns 0 (still applies) when no default is configured for that category', () => {
+    expect(shouldApplyAutoFee({ feeType: 'Travel', isWaived: false, isAppDerived: true, settings })).toBe(0);
+  });
+
+  it('returns null (do not touch) once the user has manually edited the fee', () => {
+    expect(shouldApplyAutoFee({ feeType: 'Jurat', isWaived: false, isAppDerived: false, settings })).toBeNull();
+  });
+
+  it('returns null when the fee is waived (input is disabled)', () => {
+    expect(shouldApplyAutoFee({ feeType: 'Jurat', isWaived: true, isAppDerived: true, settings })).toBeNull();
+  });
+
+  it('still applies even when current value is non-zero, as long as ref is app-derived', () => {
+    // Regression: the previous logic only auto-filled when current === 0,
+    // which left a stale Acknowledgment fee in place after switching to Jurat.
+    // This test asserts the refactored behaviour: app-derived means we
+    // overwrite regardless of the current value.
+    expect(shouldApplyAutoFee({ feeType: 'Jurat', isWaived: false, isAppDerived: true, settings })).toBe(2500);
   });
 });
 

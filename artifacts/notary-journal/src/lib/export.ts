@@ -228,9 +228,9 @@ const REQUIRED_ENTRY_FIELDS: Array<keyof JournalEntry> = [
  *   - single-entry object                         (per-entry export)
  *
  * The optional `feeType` per-entry field and `defaultFees`/`sealImage` settings
- * fields added in Task #15 are additive — older v2 backups without them parse
- * cleanly here, and newer backups with them are accepted by older versions
- * because `REQUIRED_ENTRY_FIELDS` does not include them.
+ * fields are additive — older v2 backups without them parse cleanly here, and
+ * newer backups with them are accepted by older versions because
+ * `REQUIRED_ENTRY_FIELDS` does not include them.
  */
 export function parseBackupFile(text: string): ParsedBackup {
   let parsed: unknown;
@@ -333,7 +333,7 @@ export function exportYearReportPDF(
   settings: NotarySettings,
   year: number,
 ): void {
-  const r = rollupYear(entries, year);
+  const r = rollupYear(entries, year, settings);
   const doc = new jsPDF();
 
   doc.setFontSize(18);
@@ -347,45 +347,74 @@ export function exportYearReportPDF(
   doc.text('Totals', 20, 65);
   doc.setFontSize(11);
   doc.text(`Total acts: ${r.totals.count}`, 20, 74);
-  doc.text(`Fees collected: ${fmtUSD(r.totals.collectedCents)}`, 20, 81);
-  doc.text(`Fees waived (count): ${r.totals.waivedCount}`, 20, 88);
+  doc.text(`Charged acts: ${r.totals.chargedCount}`, 20, 81);
+  doc.text(`Fees collected: ${fmtUSD(r.totals.collectedCents)}`, 20, 88);
+  doc.text(`Waived acts: ${r.totals.waivedCount}`, 20, 95);
+  doc.text(`Fees waived (est. value): ${fmtUSD(r.totals.waivedEstimatedCents)}`, 20, 102);
 
   doc.setFontSize(14);
-  doc.text('Monthly Breakdown', 20, 105);
+  doc.text('Monthly Breakdown', 20, 118);
   doc.setFontSize(10);
-  doc.text('Month', 20, 114);
-  doc.text('Acts', 70, 114);
-  doc.text('Collected', 100, 114);
-  doc.text('Waived', 150, 114);
-  let y = 121;
+  doc.text('Month', 20, 127);
+  doc.text('Acts', 60, 127);
+  doc.text('Collected', 90, 127);
+  doc.text('Waived', 130, 127);
+  doc.text('Waived $', 165, 127);
+  let y = 134;
   for (let m = 0; m < 12; m++) {
     if (y > 270) { doc.addPage(); y = 20; }
     const b = r.monthly[m];
     doc.text(MONTH_LABELS[m], 20, y);
-    doc.text(String(b.count), 70, y);
-    doc.text(fmtUSD(b.collectedCents), 100, y);
-    doc.text(String(b.waivedCount), 150, y);
+    doc.text(String(b.count), 60, y);
+    doc.text(fmtUSD(b.collectedCents), 90, y);
+    doc.text(String(b.waivedCount), 130, y);
+    doc.text(fmtUSD(b.waivedEstimatedCents), 165, y);
     y += 7;
   }
 
-  if (y > 240) { doc.addPage(); y = 20; } else { y += 8; }
+  // Per-fee-type breakdown
+  if (y > 230) { doc.addPage(); y = 20; } else { y += 8; }
   doc.setFontSize(14);
   doc.text('Breakdown by Fee Type', 20, y);
   y += 9;
   doc.setFontSize(10);
   doc.text('Fee Type', 20, y);
-  doc.text('Acts', 100, y);
-  doc.text('Collected', 130, y);
-  doc.text('Waived', 170, y);
+  doc.text('Acts', 80, y);
+  doc.text('Collected', 105, y);
+  doc.text('Waived', 145, y);
+  doc.text('Waived $', 175, y);
   y += 7;
-  const feeTypes = Object.keys(r.byType).sort();
-  for (const ft of feeTypes) {
+  for (const ft of Object.keys(r.byType).sort()) {
     if (y > 270) { doc.addPage(); y = 20; }
     const b = r.byType[ft];
     doc.text(ft, 20, y);
-    doc.text(String(b.count), 100, y);
-    doc.text(fmtUSD(b.collectedCents), 130, y);
-    doc.text(String(b.waivedCount), 170, y);
+    doc.text(String(b.count), 80, y);
+    doc.text(fmtUSD(b.collectedCents), 105, y);
+    doc.text(String(b.waivedCount), 145, y);
+    doc.text(fmtUSD(b.waivedEstimatedCents), 175, y);
+    y += 7;
+  }
+
+  // Per-notarial-act-type breakdown
+  if (y > 230) { doc.addPage(); y = 20; } else { y += 8; }
+  doc.setFontSize(14);
+  doc.text('Breakdown by Notarial Act Type', 20, y);
+  y += 9;
+  doc.setFontSize(10);
+  doc.text('Notarial Act', 20, y);
+  doc.text('Acts', 80, y);
+  doc.text('Collected', 105, y);
+  doc.text('Waived', 145, y);
+  doc.text('Waived $', 175, y);
+  y += 7;
+  for (const act of Object.keys(r.byAct).sort()) {
+    if (y > 270) { doc.addPage(); y = 20; }
+    const b = r.byAct[act];
+    doc.text(act, 20, y);
+    doc.text(String(b.count), 80, y);
+    doc.text(fmtUSD(b.collectedCents), 105, y);
+    doc.text(String(b.waivedCount), 145, y);
+    doc.text(fmtUSD(b.waivedEstimatedCents), 175, y);
     y += 7;
   }
 
@@ -393,23 +422,30 @@ export function exportYearReportPDF(
   doc.save(`notary-annual-report-${year}.pdf`);
 }
 
-/** Year-end CSV report: one row per month plus totals + fee-type summary. */
-export function exportYearReportCSV(entries: JournalEntry[], year: number): void {
-  const r: YearRollup = rollupYear(entries, year);
+/**
+ * Year-end CSV report: monthly rows + per-fee-type rows + per-act-type rows + totals.
+ * Settings is used to estimate the monetary value of waived fees from the
+ * configured defaults.
+ */
+export function exportYearReportCSV(
+  entries: JournalEntry[],
+  settings: NotarySettings,
+  year: number,
+): void {
+  const r: YearRollup = rollupYear(entries, year, settings);
   const lines: string[] = [];
-  lines.push('Section,Label,Acts,Collected (USD),Waived');
-  for (let m = 0; m < 12; m++) {
-    const b = r.monthly[m];
-    lines.push(['Month', MONTH_LABELS[m], b.count, (b.collectedCents / 100).toFixed(2), b.waivedCount]
-      .map(csvField).join(','));
-  }
-  for (const ft of Object.keys(r.byType).sort()) {
-    const b = r.byType[ft];
-    lines.push(['Fee Type', ft, b.count, (b.collectedCents / 100).toFixed(2), b.waivedCount]
-      .map(csvField).join(','));
-  }
-  lines.push(['Total', `Year ${year}`, r.totals.count, (r.totals.collectedCents / 100).toFixed(2), r.totals.waivedCount]
-    .map(csvField).join(','));
+  lines.push('Section,Label,Acts,Charged Acts,Collected (USD),Waived Acts,Waived Est (USD)');
+
+  const row = (section: string, label: string, b: typeof r.totals) =>
+    [section, label, b.count, b.chargedCount, (b.collectedCents / 100).toFixed(2),
+      b.waivedCount, (b.waivedEstimatedCents / 100).toFixed(2)]
+      .map(csvField).join(',');
+
+  for (let m = 0; m < 12; m++) lines.push(row('Month', MONTH_LABELS[m], r.monthly[m]));
+  for (const ft of Object.keys(r.byType).sort()) lines.push(row('Fee Type', ft, r.byType[ft]));
+  for (const act of Object.keys(r.byAct).sort()) lines.push(row('Notarial Act', act, r.byAct[act]));
+  lines.push(row('Total', `Year ${year}`, r.totals));
+
   downloadBlob(new Blob([lines.join('\n') + '\n'], { type: 'text/csv' }), `notary-annual-report-${year}.csv`);
 }
 

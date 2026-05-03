@@ -37,14 +37,16 @@ export function Reports() {
       setEntries(e);
       setSettings(s);
       const years = availableReportYears(e);
-      // Default to the most recent year that actually has entries.
       if (years.length > 0) setYear(years[0]);
       setIsLoading(false);
     })();
   }, []);
 
   const years = useMemo(() => availableReportYears(entries), [entries]);
-  const rollup: YearRollup = useMemo(() => rollupYear(entries, year), [entries, year]);
+  const rollup: YearRollup = useMemo(
+    () => rollupYear(entries, year, settings),
+    [entries, year, settings],
+  );
 
   const monthlyChartData = useMemo(
     () => rollup.monthly.map((b, i) => ({
@@ -57,6 +59,11 @@ export function Reports() {
 
   const feeTypeRows = useMemo(
     () => Object.keys(rollup.byType).sort().map(ft => ({ ft, ...rollup.byType[ft] })),
+    [rollup],
+  );
+
+  const actRows = useMemo(
+    () => Object.keys(rollup.byAct).sort().map(act => ({ act, ...rollup.byAct[act] })),
     [rollup],
   );
 
@@ -74,8 +81,9 @@ export function Reports() {
   };
 
   const handleExportCSV = () => {
+    if (!settings) return;
     try {
-      exportYearReportCSV(entries, year);
+      exportYearReportCSV(entries, settings, year);
     } catch (err) {
       toast({
         title: 'Could not export CSV',
@@ -135,6 +143,9 @@ export function Reports() {
               <Calendar className="w-4 h-4 text-muted-foreground" />
             </div>
             <div className="text-3xl font-bold" data-testid="text-total-acts">{rollup.totals.count}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {rollup.totals.chargedCount} charged · {rollup.totals.waivedCount} waived
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -154,18 +165,23 @@ export function Reports() {
               <p className="text-sm font-medium text-muted-foreground">Fees Waived</p>
               <Wallet className="w-4 h-4 text-muted-foreground" />
             </div>
-            <div className="text-3xl font-bold" data-testid="text-total-waived">{rollup.totals.waivedCount}</div>
+            <div className="text-3xl font-bold" data-testid="text-total-waived">
+              {fmtUsd(rollup.totals.waivedEstimatedCents)}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {rollup.totals.waivedCount} act{rollup.totals.waivedCount === 1 ? '' : 's'} (est. value from defaults)
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center justify-between pb-2">
-              <p className="text-sm font-medium text-muted-foreground">Avg per Act</p>
+              <p className="text-sm font-medium text-muted-foreground">Avg per Charged Act</p>
               <Wallet className="w-4 h-4 text-muted-foreground" />
             </div>
             <div className="text-3xl font-bold">
-              {rollup.totals.count > 0
-                ? fmtUsd(Math.round(rollup.totals.collectedCents / rollup.totals.count))
+              {rollup.totals.chargedCount > 0
+                ? fmtUsd(Math.round(rollup.totals.collectedCents / rollup.totals.chargedCount))
                 : '$0.00'}
             </div>
           </CardContent>
@@ -222,8 +238,10 @@ export function Reports() {
                   <tr className="border-b text-left text-muted-foreground">
                     <th className="py-2 pr-4 font-medium">Fee Type</th>
                     <th className="py-2 pr-4 font-medium text-right">Acts</th>
+                    <th className="py-2 pr-4 font-medium text-right">Charged</th>
                     <th className="py-2 pr-4 font-medium text-right">Collected</th>
-                    <th className="py-2 pr-4 font-medium text-right">Waived</th>
+                    <th className="py-2 pr-4 font-medium text-right">Waived (acts)</th>
+                    <th className="py-2 pr-4 font-medium text-right">Waived (est. $)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -231,16 +249,64 @@ export function Reports() {
                     <tr key={row.ft}>
                       <td className="py-2 pr-4 font-medium">{row.ft}</td>
                       <td className="py-2 pr-4 text-right">{row.count}</td>
+                      <td className="py-2 pr-4 text-right">{row.chargedCount}</td>
                       <td className="py-2 pr-4 text-right">{fmtUsd(row.collectedCents)}</td>
                       <td className="py-2 pr-4 text-right">{row.waivedCount}</td>
+                      <td className="py-2 pr-4 text-right">{fmtUsd(row.waivedEstimatedCents)}</td>
                     </tr>
                   ))}
                   <tr className="border-t font-semibold bg-muted/30">
                     <td className="py-2 pr-4">Total</td>
                     <td className="py-2 pr-4 text-right">{rollup.totals.count}</td>
+                    <td className="py-2 pr-4 text-right">{rollup.totals.chargedCount}</td>
                     <td className="py-2 pr-4 text-right">{fmtUsd(rollup.totals.collectedCents)}</td>
                     <td className="py-2 pr-4 text-right">{rollup.totals.waivedCount}</td>
+                    <td className="py-2 pr-4 text-right">{fmtUsd(rollup.totals.waivedEstimatedCents)}</td>
                   </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Per-notarial-act-type breakdown */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Breakdown by Notarial Act Type</CardTitle>
+          <CardDescription>
+            Acts grouped by the notarial act recorded on each entry, for {year}.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {actRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No completed entries for {year} yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="table-act-type-breakdown">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="py-2 pr-4 font-medium">Notarial Act</th>
+                    <th className="py-2 pr-4 font-medium text-right">Acts</th>
+                    <th className="py-2 pr-4 font-medium text-right">Charged</th>
+                    <th className="py-2 pr-4 font-medium text-right">Collected</th>
+                    <th className="py-2 pr-4 font-medium text-right">Waived (acts)</th>
+                    <th className="py-2 pr-4 font-medium text-right">Waived (est. $)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {actRows.map(row => (
+                    <tr key={row.act}>
+                      <td className="py-2 pr-4 font-medium">{row.act}</td>
+                      <td className="py-2 pr-4 text-right">{row.count}</td>
+                      <td className="py-2 pr-4 text-right">{row.chargedCount}</td>
+                      <td className="py-2 pr-4 text-right">{fmtUsd(row.collectedCents)}</td>
+                      <td className="py-2 pr-4 text-right">{row.waivedCount}</td>
+                      <td className="py-2 pr-4 text-right">{fmtUsd(row.waivedEstimatedCents)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

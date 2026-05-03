@@ -42,9 +42,10 @@ export interface JournalEntry {
   feeWaived: boolean;
   // Itemized fee category (Acknowledgment, Jurat, Oath, Copy Certification,
   // Signature Witnessing, Travel, Other). Optional for backward compatibility
-  // with v1/v2 backups and pre-Task-15 entries — when missing, callers should
-  // resolve a default via `resolveFeeType` (see lib/fees.ts) rather than
-  // back-filling on disk (which would invalidate the entry's signed hash).
+  // with older entries and backups that predate the field — when missing,
+  // callers should resolve a default via `resolveFeeType` (see lib/fees.ts)
+  // rather than back-filling on disk (which would invalidate the entry's
+  // signed hash).
   feeType?: string;
   locationCity: string;
   locationState: string;

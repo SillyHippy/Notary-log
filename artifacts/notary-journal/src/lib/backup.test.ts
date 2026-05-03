@@ -92,6 +92,56 @@ describe('parseBackupFile (import format support)', () => {
   it('rejects malformed JSON', () => {
     expect(() => parseBackupFile('not json')).toThrow(/valid JSON/);
   });
+
+  it('round-trips the optional feeType field on entries and defaultFees/sealImage on settings', () => {
+    const envelope = {
+      version: BACKUP_FORMAT_VERSION,
+      exportedAt: '2025-06-01T00:00:00Z',
+      entries: [
+        baseEntry(1, { feeType: 'Jurat', feeCharged: 2500 }),
+        baseEntry(2, { feeType: 'Travel', feeCharged: 1500 }),
+        // Older entry without feeType — must still parse cleanly.
+        baseEntry(3),
+      ],
+      settings: {
+        id: 1,
+        notaryName: 'Jane',
+        commissionNumber: 'C1',
+        commissionExpiration: '',
+        defaultCity: '',
+        defaultState: '',
+        defaultFees: { Acknowledgment: 1500, Jurat: 2500, Travel: 1000 },
+        sealImage: 'data:image/png;base64,AAAA',
+      },
+    };
+    const r = parseBackupFile(JSON.stringify(envelope));
+    expect(r.detectedVersion).toBe(2);
+    expect(r.entries).toHaveLength(3);
+    expect(r.entries[0].feeType).toBe('Jurat');
+    expect(r.entries[1].feeType).toBe('Travel');
+    expect(r.entries[2].feeType).toBeUndefined();
+    expect(r.settings?.defaultFees).toEqual({ Acknowledgment: 1500, Jurat: 2500, Travel: 1000 });
+    expect(r.settings?.sealImage).toBe('data:image/png;base64,AAAA');
+  });
+
+  it('accepts a v2 backup that omits the new defaultFees/sealImage fields (forward-compatible)', () => {
+    const envelope = {
+      version: 2,
+      exportedAt: '2025-06-01T00:00:00Z',
+      entries: [baseEntry(1)],
+      settings: {
+        id: 1,
+        notaryName: 'Jane',
+        commissionNumber: 'C1',
+        commissionExpiration: '',
+        defaultCity: '',
+        defaultState: '',
+      },
+    };
+    const r = parseBackupFile(JSON.stringify(envelope));
+    expect(r.settings?.defaultFees).toBeUndefined();
+    expect(r.settings?.sealImage).toBeUndefined();
+  });
 });
 
 describe('verifyChainPure (tamper cascade)', () => {

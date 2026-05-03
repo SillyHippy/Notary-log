@@ -30,10 +30,9 @@ export const ACT_TYPE_TO_FEE_TYPE: Record<NotarialActType, FeeType> = {
 };
 
 /**
- * Resolve an entry's fee category. Pre-Task-15 entries lack the `feeType`
- * field; we derive a sensible default from `notarialActType` so reports and
- * exports work without rewriting (and thus invalidating) signed historical
- * entries.
+ * Resolve an entry's fee category. Older entries lack the `feeType` field;
+ * we derive a sensible default from `notarialActType` so reports and exports
+ * work without rewriting (and thus invalidating) signed historical entries.
  */
 export function resolveFeeType(entry: Pick<JournalEntry, 'feeType' | 'notarialActType'>): FeeType {
   if (entry.feeType && (FEE_TYPES as readonly string[]).includes(entry.feeType)) {
@@ -57,28 +56,52 @@ export function getDefaultFeeCents(
 }
 
 export interface FeeBucket {
-  count: number;        // total entries in this bucket
+  count: number;          // total entries in this bucket
+  chargedCount: number;   // entries with a non-waived, non-zero fee
   collectedCents: number; // sum of feeCharged for non-waived entries
-  waivedCount: number;  // entries with feeWaived=true
+  waivedCount: number;    // entries with feeWaived=true
+  /**
+   * Estimated $ value (cents) of waived fees, computed using the configured
+   * default for each waived entry's category. Lets reports show a meaningful
+   * "would-have-been" monetary total beside Collected. Zero when defaults
+   * are not configured for those categories.
+   */
+  waivedEstimatedCents: number;
 }
 
 export interface YearRollup {
   year: number;
   /** Index 0 = January, 11 = December. */
   monthly: FeeBucket[];
-  /** Map keyed by FeeType label. */
+  /** Map keyed by FeeType label (Acknowledgment, Jurat, …). */
   byType: Record<string, FeeBucket>;
+  /** Map keyed by display label of the underlying notarialActType. */
+  byAct: Record<string, FeeBucket>;
   totals: FeeBucket;
 }
 
+/** Human-readable label for the wizard's enum act-type. */
+export const ACT_TYPE_LABELS: Record<NotarialActType, string> = {
+  acknowledgment: 'Acknowledgment',
+  jurat: 'Jurat',
+  copy_certification: 'Copy Certification',
+  signature_witnessing: 'Signature Witnessing',
+  other: 'Other',
+};
+
 function emptyBucket(): FeeBucket {
-  return { count: 0, collectedCents: 0, waivedCount: 0 };
+  return { count: 0, chargedCount: 0, collectedCents: 0, waivedCount: 0, waivedEstimatedCents: 0 };
 }
 
-function applyEntry(bucket: FeeBucket, entry: JournalEntry): void {
+function applyEntry(
+  bucket: FeeBucket,
+  entry: JournalEntry,
+  settings: Pick<NotarySettings, 'defaultFees'> | null | undefined,
+): void {
   bucket.count += 1;
   if (entry.feeWaived) {
     bucket.waivedCount += 1;
+    bucket.waivedEstimatedCents += getDefaultFeeCents(settings, resolveFeeType(entry));
   } else {
     // Defensive: treat negative or non-finite values as 0 so a bad entry
     // can't poison the totals row.
@@ -86,6 +109,7 @@ function applyEntry(bucket: FeeBucket, entry: JournalEntry): void {
       ? Math.round(entry.feeCharged)
       : 0;
     bucket.collectedCents += cents;
+    if (cents > 0) bucket.chargedCount += 1;
   }
 }
 
@@ -93,10 +117,18 @@ function applyEntry(bucket: FeeBucket, entry: JournalEntry): void {
  * Build a year-end roll-up from the journal. Counts only entries whose
  * `createdAt` falls in the requested calendar year and whose status is
  * completed or amended (drafts are excluded — they are not finalized work).
+ *
+ * `settings` is optional; when provided, waived entries gain an estimated
+ * monetary value using the configured default for each fee category.
  */
-export function rollupYear(entries: JournalEntry[], year: number): YearRollup {
+export function rollupYear(
+  entries: JournalEntry[],
+  year: number,
+  settings?: Pick<NotarySettings, 'defaultFees'> | null,
+): YearRollup {
   const monthly: FeeBucket[] = Array.from({ length: 12 }, emptyBucket);
   const byType: Record<string, FeeBucket> = {};
+  const byAct: Record<string, FeeBucket> = {};
   const totals = emptyBucket();
 
   for (const e of entries) {
@@ -105,15 +137,40 @@ export function rollupYear(entries: JournalEntry[], year: number): YearRollup {
     if (Number.isNaN(d.getTime())) continue;
     if (d.getFullYear() !== year) continue;
 
-    applyEntry(monthly[d.getMonth()], e);
-    applyEntry(totals, e);
+    applyEntry(monthly[d.getMonth()], e, settings);
+    applyEntry(totals, e, settings);
 
     const ft = resolveFeeType(e);
     if (!byType[ft]) byType[ft] = emptyBucket();
-    applyEntry(byType[ft], e);
+    applyEntry(byType[ft], e, settings);
+
+    const actLabel = ACT_TYPE_LABELS[e.notarialActType] ?? 'Other';
+    if (!byAct[actLabel]) byAct[actLabel] = emptyBucket();
+    applyEntry(byAct[actLabel], e, settings);
   }
 
-  return { year, monthly, byType, totals };
+  return { year, monthly, byType, byAct, totals };
+}
+
+/**
+ * Pure rule for the new-entry wizard's auto-fill behaviour. The wizard treats
+ * the fee field as "app-derived" until the user types into it, at which point
+ * we stop overwriting their value. Toggling Waive on/off resets that flag
+ * because the fee field is intentionally cleared.
+ *
+ * Returns the cents value to set on the form, or `null` to leave the field
+ * untouched. Centralising this rule lets us cover it with unit tests.
+ */
+export function shouldApplyAutoFee(args: {
+  feeType: FeeType;
+  isWaived: boolean;
+  isAppDerived: boolean;
+  settings: Pick<NotarySettings, 'defaultFees'> | null | undefined;
+}): number | null {
+  if (args.isWaived) return null;
+  if (!args.isAppDerived) return null;
+  const cents = getDefaultFeeCents(args.settings, args.feeType);
+  return cents > 0 ? cents : 0;
 }
 
 /**

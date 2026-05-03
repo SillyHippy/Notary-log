@@ -21,7 +21,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { createEntry, completeEntry, getSettings, getAllEntries, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { parseAAMVA } from '@/lib/aamva';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
-import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, getDefaultFeeCents, type FeeType } from '@/lib/fees';
+import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, getDefaultFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
 
 const entrySchema = z.object({
   signerFullName: z.string().min(1, 'Full name is required'),
@@ -122,6 +122,11 @@ export function NewEntry() {
   });
 
   const [appSettings, setAppSettings] = useState<NotarySettings | null>(null);
+  // Tracks whether the current `feeCharged` value was put there by the app
+  // (true) or typed by the user (false). While app-derived, picking a new
+  // notarial-act/fee-type re-applies the configured default. As soon as the
+  // user types into the fee input we stop overwriting their value.
+  const isFeeAppDerivedRef = useRef(true);
 
   // Load defaults
   useEffect(() => {
@@ -131,26 +136,51 @@ export function NewEntry() {
       form.setValue('locationState', settings.defaultState);
       // Prefill the initial fee from the default for "Acknowledgment" if any.
       const defaultCents = getDefaultFeeCents(settings, 'Acknowledgment');
-      if (defaultCents > 0) form.setValue('feeCharged', defaultCents / 100);
+      form.setValue('feeCharged', defaultCents > 0 ? defaultCents / 100 : 0);
+      isFeeAppDerivedRef.current = true;
     });
   }, [form]);
 
-  // When the user picks a different notarial act, sync the fee category and
-  // auto-fill the fee from saved defaults — but only if the user hasn't yet
-  // typed a custom fee or waived this entry. This keeps the wizard helpful
-  // without ever overwriting deliberate input.
+  // When the user picks a different notarial act or fee category, keep the
+  // two in sync and re-apply the saved default whenever the fee is still
+  // app-derived. Manual edits (handled in the input's onChange below) flip
+  // the ref so we never clobber a deliberate value.
   useEffect(() => {
     const sub = form.watch((value, { name }) => {
-      if (name !== 'notarialActType') return;
-      const act = value.notarialActType as JournalEntry['notarialActType'] | undefined;
-      if (!act) return;
-      const mappedFeeType = ACT_TYPE_TO_FEE_TYPE[act];
-      form.setValue('feeType', mappedFeeType);
-      const currentFee = Number(value.feeCharged ?? 0);
-      const isWaived = !!value.feeWaived;
-      if (!isWaived && currentFee === 0 && appSettings) {
-        const cents = getDefaultFeeCents(appSettings, mappedFeeType);
-        if (cents > 0) form.setValue('feeCharged', cents / 100);
+      if (!appSettings) return;
+
+      // User picked a different notarial act → mirror its fee category and
+      // attempt to auto-fill the dollar amount.
+      if (name === 'notarialActType') {
+        const act = value.notarialActType as JournalEntry['notarialActType'] | undefined;
+        if (!act) return;
+        const mappedFeeType = ACT_TYPE_TO_FEE_TYPE[act];
+        form.setValue('feeType', mappedFeeType);
+        const next = shouldApplyAutoFee({
+          feeType: mappedFeeType,
+          isWaived: !!value.feeWaived,
+          isAppDerived: isFeeAppDerivedRef.current,
+          settings: appSettings,
+        });
+        if (next !== null) form.setValue('feeCharged', next / 100);
+      }
+
+      // User picked a different fee category directly.
+      if (name === 'feeType') {
+        const ft = value.feeType as FeeType | undefined;
+        if (!ft) return;
+        const next = shouldApplyAutoFee({
+          feeType: ft,
+          isWaived: !!value.feeWaived,
+          isAppDerived: isFeeAppDerivedRef.current,
+          settings: appSettings,
+        });
+        if (next !== null) form.setValue('feeCharged', next / 100);
+      }
+
+      // Toggling Waive off restores app-derived behaviour for the next change.
+      if (name === 'feeWaived' && !value.feeWaived) {
+        isFeeAppDerivedRef.current = true;
       }
     });
     return () => sub.unsubscribe();
@@ -925,18 +955,7 @@ export function NewEntry() {
                       <FormField control={form.control} name="feeType" render={({ field }) => (
                         <FormItem>
                           <FormLabel>Fee Type *</FormLabel>
-                          <Select onValueChange={(v) => {
-                            field.onChange(v);
-                            // When the user explicitly picks a fee category,
-                            // also auto-fill the dollar amount from the saved
-                            // default if no fee has been entered yet.
-                            const cur = Number(form.getValues('feeCharged') ?? 0);
-                            const waived = !!form.getValues('feeWaived');
-                            if (!waived && cur === 0 && appSettings) {
-                              const cents = getDefaultFeeCents(appSettings, v as FeeType);
-                              if (cents > 0) form.setValue('feeCharged', cents / 100);
-                            }
-                          }} value={field.value}>
+                          <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger data-testid="select-fee-type"><SelectValue /></SelectTrigger>
                             </FormControl>
@@ -956,13 +975,21 @@ export function NewEntry() {
                           <FormLabel>Fee Charged ($)</FormLabel>
                           <div className="flex gap-2">
                             <FormControl>
-                              <Input 
-                                type="number" 
-                                step="0.01" 
-                                min="0" 
-                                {...field} 
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                {...field}
                                 disabled={form.watch('feeWaived')}
                                 value={form.watch('feeWaived') ? 0 : field.value}
+                                data-testid="input-fee-charged"
+                                onChange={(e) => {
+                                  // Any keystroke from the user is treated as
+                                  // a manual override; stop auto-filling on
+                                  // subsequent act/fee-type changes.
+                                  isFeeAppDerivedRef.current = false;
+                                  field.onChange(e);
+                                }}
                               />
                             </FormControl>
                             <Button 
@@ -971,7 +998,14 @@ export function NewEntry() {
                               onClick={() => {
                                 const isWaived = !form.getValues('feeWaived');
                                 form.setValue('feeWaived', isWaived);
-                                if (isWaived) form.setValue('feeCharged', 0);
+                                if (isWaived) {
+                                  form.setValue('feeCharged', 0);
+                                } else {
+                                  // Reset to app-derived so toggling Waive off
+                                  // re-applies the configured default for the
+                                  // currently-selected fee type.
+                                  isFeeAppDerivedRef.current = true;
+                                }
                               }}
                             >
                               Waive Fee
