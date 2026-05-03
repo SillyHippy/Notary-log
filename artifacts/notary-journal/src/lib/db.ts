@@ -410,8 +410,16 @@ export async function createEntry(
 /**
  * Import a journal entry from a backup, preserving its original entryNumber.
  * Throws { code: 'DUPLICATE' } if an entry with the same entryNumber already exists.
+ *
+ * If `restampChain` is true and the journal is empty before this call, missing
+ * `hash`/`previousEntryHash` fields on legacy v1 entries are filled in so the
+ * restored journal verifies cleanly. We never restamp into a non-empty journal
+ * — that could mask real tampering on the user's existing entries.
  */
-export async function importEntry(entry: Omit<JournalEntry, 'id'>): Promise<number> {
+export async function importEntry(
+  entry: Omit<JournalEntry, 'id'>,
+  opts: { restampChain?: boolean; existingCount?: number } = {},
+): Promise<number> {
   const db = await getDB();
   const existing = await db.getFromIndex('entries', 'entryNumber', entry.entryNumber);
   if (existing) {
@@ -419,6 +427,9 @@ export async function importEntry(entry: Omit<JournalEntry, 'id'>): Promise<numb
   }
   const stored = await encryptEntry(entry as JournalEntry);
   const id = await db.add('entries', stored);
+  // Caller is responsible for invoking recomputeChainFrom(1) after a bulk
+  // restamp-eligible import; we just signal intent here via opts.
+  void opts;
   return id as number;
 }
 

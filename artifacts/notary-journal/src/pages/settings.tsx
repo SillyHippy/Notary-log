@@ -11,7 +11,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
+import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
 import { exportAllCSV, exportAllJSON, exportAllPDF, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
@@ -197,6 +197,9 @@ export function Settings() {
       const text = await file.text();
       const { detectedVersion, entries, settings: importedSettings } = parseBackupFile(text);
 
+      const startCount = (await getAllEntries()).length;
+      const isEmptyJournal = startCount === 0;
+
       let imported = 0, skipped = 0;
       for (const e of entries) {
         const { id: _id, ...rest } = e as JournalEntry & { id?: number };
@@ -209,21 +212,36 @@ export function Settings() {
         }
       }
 
-      // Apply settings if the user confirms — silently skipped on bare-array
-      // imports that have no settings to begin with.
+      // Restamp the chain for legacy/v1 imports into an empty journal so they
+      // verify cleanly. We never restamp into a non-empty journal — that could
+      // mask tampering on the user's existing entries.
+      let restamped = false;
+      if (isEmptyJournal && imported > 0 && entries.some(e => !e.hash || !e.previousEntryHash)) {
+        await recomputeChainFrom(1);
+        restamped = true;
+      }
+
+      // Apply settings if the user confirms. Strip legacy `pinHash` and force
+      // `pinEnabled: true` so an obsolete plaintext-mode hash is never carried
+      // forward into encrypted settings or future backups.
       let settingsRestored = false;
       if (importedSettings && window.confirm(
         'This backup includes settings (notary name, commission, defaults). ' +
         'Overwrite your current settings with the values from the backup?'
       )) {
         const current = await getSettings();
-        await saveSettings({ ...current, ...importedSettings, id: 1 });
+        const sanitized: Partial<NotarySettings> = { ...importedSettings };
+        delete (sanitized as Partial<NotarySettings> & { pinHash?: string }).pinHash;
+        await saveSettings({ ...current, ...sanitized, id: 1, pinEnabled: true });
         settingsRestored = true;
       }
 
       toast({
         title: 'Import complete',
-        description: `Format v${detectedVersion}: imported ${imported}, skipped ${skipped} duplicates${settingsRestored ? ', settings restored' : ''}.`,
+        description: `Format v${detectedVersion}: imported ${imported}, skipped ${skipped} duplicates`
+          + (restamped ? ', chain restamped' : '')
+          + (settingsRestored ? ', settings restored' : '')
+          + '.',
       });
       const all = await getAllEntries();
       setEntryCount(all.length);
@@ -364,7 +382,9 @@ export function Settings() {
         'Overwrite your current settings with the values from the backup?'
       )) {
         const current = await getSettings();
-        await saveSettings({ ...current, ...importedSettings, id: 1 });
+        const sanitized: Partial<NotarySettings> = { ...importedSettings };
+        delete (sanitized as Partial<NotarySettings> & { pinHash?: string }).pinHash;
+        await saveSettings({ ...current, ...sanitized, id: 1, pinEnabled: true });
         settingsRestored = true;
       }
 
