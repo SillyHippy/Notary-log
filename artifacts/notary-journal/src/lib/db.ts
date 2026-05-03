@@ -115,6 +115,16 @@ const FORMAT_VERSION = 2;
 let dbPromise: Promise<IDBPDatabase> | null = null;
 let cryptoKey: CryptoKey | null = null;
 
+/**
+ * IndexedDB schema:
+ *   - `entries`: { id (auto), entryNumber (UNIQUE INDEX, cleartext), _enc, iv }
+ *     Only `entryNumber` is cleartext on disk — it is a non-sensitive sequence
+ *     number used as the lookup index. ALL other entry fields (signer, ID,
+ *     document, location, notes, status, dates, hashes, amendments, photos)
+ *     live inside the AES-GCM-encrypted `_enc` blob with a per-record IV.
+ *   - `settings`: encrypted blob keyed by id=1.
+ *   - `meta`: PBKDF2 salt + canary used to verify the unlock PIN.
+ */
 export function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {

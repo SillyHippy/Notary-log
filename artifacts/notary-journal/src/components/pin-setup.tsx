@@ -92,7 +92,7 @@ export function PinSetup({ hasLegacyData, legacyPinHash, onComplete }: PinSetupP
           <Alert variant="default" className="bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900">
             <AlertTitle className="text-sm">Important</AlertTitle>
             <AlertDescription className="text-xs">
-              If you forget this PIN, your encrypted data on this device cannot be recovered. Always keep a recent backup (Google Drive or downloaded JSON) so you can restore on a new device.
+              If you forget this PIN, your encrypted data on this device cannot be recovered. Always keep a recent backup (Google Drive or downloaded JSON) so you can restore on a new device. A 4-digit PIN protects against casual access on a lost device but is not strong against an attacker with offline access to your browser storage — keep this device physically secure.
             </AlertDescription>
           </Alert>
         )}
