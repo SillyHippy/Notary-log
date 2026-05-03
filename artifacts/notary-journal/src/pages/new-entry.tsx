@@ -540,6 +540,16 @@ export function NewEntry() {
       const reader = new FileReader();
       reader.onload = (event) => {
         const dataUrl = event.target?.result as string;
+        // Passports are a single-page document; any upload — first or
+        // replacement — should be processed as the authoritative scan in
+        // 'replace' mode rather than the license front/back heuristic.
+        const isPassport = form.getValues('idType') === 'passport';
+        if (isPassport) {
+          setIdFrontImage(dataUrl);
+          setIdBackImage(undefined);
+          processImageOCR(dataUrl, 'replace');
+          return;
+        }
         if (isBack) setIdBackImage(dataUrl);
         else setIdFrontImage(dataUrl);
         // Mirror camera capture: front = replace, back = fillGaps so an
@@ -679,14 +689,22 @@ export function NewEntry() {
               const setType = (t: 'driver_license' | 'state_id' | 'passport') => {
                 if (form.getValues('idType') === t) return;
                 form.setValue('idType', t);
-                // Clear stale scan artifacts so a leftover license front
-                // image (or vice-versa) can't be silently re-OCR'd in the
-                // wrong mode by upload/back-photo flows.
+                // Clear stale scan artifacts AND any previously extracted
+                // signer/ID fields so PII from the prior document type
+                // isn't silently saved against the new one.
                 setIdFrontImage(undefined);
                 setIdBackImage(undefined);
                 setScanResult(null);
                 setMrzWarning(null);
                 setNeedsReview(false);
+                form.setValue('signerFullName', '');
+                form.setValue('signerAddress', '');
+                form.setValue('signerCity', '');
+                form.setValue('signerState', '');
+                form.setValue('signerDOB', '');
+                form.setValue('idNumber', '');
+                form.setValue('idIssuingState', '');
+                form.setValue('idExpirationDate', '');
               };
               return (
                 <>
