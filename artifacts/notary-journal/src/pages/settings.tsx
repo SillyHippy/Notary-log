@@ -381,9 +381,9 @@ export function Settings() {
       const current = await getSettings();
       await saveSettings({ ...current, sealImage: dataUrl } as NotarySettings);
       setSealImage(dataUrl);
-      toast({ title: 'Seal saved', description: 'Your seal will appear on exported PDFs.' });
+      toast({ title: 'Seal or logo saved', description: 'Your seal or logo will appear on exported PDFs.' });
     } catch (err) {
-      toast({ title: 'Could not save seal', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+      toast({ title: 'Could not save seal or logo', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
     }
     setSealBusy(false);
   };
@@ -395,9 +395,9 @@ export function Settings() {
       const { sealImage: _drop, ...rest } = current;
       await saveSettings({ ...rest } as NotarySettings);
       setSealImage(undefined);
-      toast({ title: 'Seal removed' });
+      toast({ title: 'Seal or logo removed' });
     } catch (err) {
-      toast({ title: 'Failed to remove seal', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+      toast({ title: 'Failed to remove seal or logo', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
     }
     setSealBusy(false);
   };
@@ -1071,23 +1071,23 @@ export function Settings() {
         </CardFooter>
       </Card>
 
-      {/* ── Notary Seal Card ──────────────────────────────────────────── */}
+      {/* ── Notary Seal or Logo Card ───────────────────────────────── */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Stamp className="w-5 h-5 text-primary" />
-            Notary Seal
+            Notary Seal or Logo
           </CardTitle>
           <CardDescription>
-            Upload a small PNG or JPG of your seal (recommended ~300×300 pixels). It will be stamped in the lower-right corner of every page in your exported PDFs.
+            Upload a small PNG or JPG of your seal or logo (recommended ~300×300 pixels). It will be stamped in the lower-right corner of every page in your exported PDFs.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {sealImage ? (
             <div className="flex items-center gap-4 p-3 border rounded-lg bg-muted/30">
-              <img src={sealImage} alt="Notary seal" className="w-20 h-20 object-contain bg-white border rounded" />
+              <img src={sealImage} alt="Notary seal or logo" className="w-20 h-20 object-contain bg-white border rounded" />
               <div className="flex-1 text-sm text-muted-foreground">
-                Seal saved. It will be embedded in PDF exports.
+                Seal or logo saved. It will be embedded in PDF exports.
               </div>
               <Button
                 variant="outline"
@@ -1101,7 +1101,7 @@ export function Settings() {
               </Button>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No seal uploaded yet.</p>
+            <p className="text-sm text-muted-foreground">No seal or logo uploaded yet.</p>
           )}
           <input
             ref={sealInputRef}
@@ -1122,7 +1122,7 @@ export function Settings() {
             disabled={sealBusy}
             data-testid="button-upload-seal"
           >
-            <Upload className="w-4 h-4" /> {sealBusy ? 'Processing...' : sealImage ? 'Replace Seal' : 'Upload Seal Image'}
+            <Upload className="w-4 h-4" /> {sealBusy ? 'Processing...' : sealImage ? 'Replace Seal or Logo' : 'Upload Seal or Logo'}
           </Button>
           <p className="text-xs text-muted-foreground">
             Image is resized to about 600px and stored locally. PNG with transparency works best.
