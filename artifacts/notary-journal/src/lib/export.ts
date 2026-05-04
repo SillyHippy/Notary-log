@@ -212,7 +212,12 @@ export function exportEntryCSV(entry: JournalEntry, settings?: NotarySettings | 
   downloadBlob(new Blob([csvContent], { type: 'text/csv' }), `notary-entry-${entry.entryNumber}.csv`);
 }
 
-export function exportEntryJSON(entry: JournalEntry, settings?: NotarySettings | null): void {
+/**
+ * Pure helper — returns a compliance-sanitized copy of the entry without
+ * triggering any download. Exported so it can be unit-tested independently
+ * of the browser download API.
+ */
+export function sanitizeEntryForExport(entry: JournalEntry, settings?: NotarySettings | null): JournalEntry {
   const recordDOB = shouldRecordSignerDOB(settings ?? undefined);
   const recordId = shouldRecordSignerIdNumber(settings ?? undefined);
   // Build a sanitized copy that drops keys disabled by compliance toggles
@@ -222,6 +227,11 @@ export function exportEntryJSON(entry: JournalEntry, settings?: NotarySettings |
   if (!recordDOB) delete sanitized.signerDOB;
   // Only idNumber is gated; idExpirationDate is part of the standard ID record.
   if (!recordId) delete sanitized.idNumber;
+  return sanitized;
+}
+
+export function exportEntryJSON(entry: JournalEntry, settings?: NotarySettings | null): void {
+  const sanitized = sanitizeEntryForExport(entry, settings);
   const jsonContent = JSON.stringify(sanitized, null, 2);
   downloadBlob(new Blob([jsonContent], { type: 'application/json' }), `notary-entry-${entry.entryNumber}.json`);
 }

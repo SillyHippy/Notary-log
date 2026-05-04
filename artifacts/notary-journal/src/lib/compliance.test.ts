@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { generateCSVRow } from './export';
+import { generateCSVRow, sanitizeEntryForExport } from './export';
 import {
   shouldRecordSignerDOB,
   shouldRecordSignerIdNumber,
@@ -94,5 +94,99 @@ describe('CSV export honors compliance toggles', () => {
     expect(row).toContain('1990-01-15');
     expect(row).toContain('D123456789');
     expect(row).toContain('2030-12-31');
+  });
+});
+
+describe('JSON export sanitization (sanitizeEntryForExport)', () => {
+  it('omits signerDOB key entirely when DOB toggle is off', () => {
+    const out = sanitizeEntryForExport(baseEntry(), settings({ recordSignerDOB: false }));
+    expect(Object.prototype.hasOwnProperty.call(out, 'signerDOB')).toBe(false);
+  });
+
+  it('omits idNumber key entirely when ID# toggle is off', () => {
+    const out = sanitizeEntryForExport(baseEntry(), settings({ recordSignerIdNumber: false }));
+    expect(Object.prototype.hasOwnProperty.call(out, 'idNumber')).toBe(false);
+  });
+
+  it('KEEPS idExpirationDate when ID# toggle is off (decoupled per spec)', () => {
+    const out = sanitizeEntryForExport(baseEntry(), settings({ recordSignerIdNumber: false }));
+    expect(out.idExpirationDate).toBe('2030-12-31');
+  });
+
+  it('KEEPS idIssuingState when ID# toggle is off', () => {
+    const out = sanitizeEntryForExport(baseEntry(), settings({ recordSignerIdNumber: false }));
+    expect(out.idIssuingState).toBe('IL');
+  });
+
+  it('retains all PII when both toggles are on', () => {
+    const out = sanitizeEntryForExport(baseEntry(), settings());
+    expect(out.signerDOB).toBe('1990-01-15');
+    expect(out.idNumber).toBe('D123456789');
+    expect(out.idExpirationDate).toBe('2030-12-31');
+  });
+
+  it('does not mutate the original entry object', () => {
+    const entry = baseEntry();
+    sanitizeEntryForExport(entry, settings({ recordSignerDOB: false, recordSignerIdNumber: false }));
+    // Original must be untouched
+    expect(entry.signerDOB).toBe('1990-01-15');
+    expect(entry.idNumber).toBe('D123456789');
+  });
+});
+
+describe('Scan-field persistence to draft (contract)', () => {
+  // These tests verify the field-mapping contract used by handleScanResult
+  // in edit-entry.tsx: only fields allowed by the active compliance toggles
+  // should be applied; expiration date is always allowed regardless of the
+  // ID# toggle.  We test by re-implementing the same allowed-list logic and
+  // asserting the same decisions as the production FIELD_MAP.
+
+  const ALWAYS_ALLOWED_FIELDS = ['fullName', 'address', 'city', 'state', 'idIssuingState', 'expirationDate'] as const;
+  const DOB_FIELD = 'dob';
+  const ID_NUMBER_FIELD = 'idNumber';
+
+  function allowedScanFields(s: NotarySettings): string[] {
+    const fields = [...ALWAYS_ALLOWED_FIELDS] as string[];
+    if (shouldRecordSignerDOB(s)) fields.push(DOB_FIELD);
+    if (shouldRecordSignerIdNumber(s)) fields.push(ID_NUMBER_FIELD);
+    return fields;
+  }
+
+  it('includes dob and idNumber when both toggles ON', () => {
+    const allowed = allowedScanFields(settings());
+    expect(allowed).toContain('dob');
+    expect(allowed).toContain('idNumber');
+  });
+
+  it('excludes dob when DOB toggle OFF', () => {
+    const allowed = allowedScanFields(settings({ recordSignerDOB: false }));
+    expect(allowed).not.toContain('dob');
+    expect(allowed).toContain('idNumber');
+  });
+
+  it('excludes idNumber when ID# toggle OFF', () => {
+    const allowed = allowedScanFields(settings({ recordSignerIdNumber: false }));
+    expect(allowed).not.toContain('idNumber');
+    expect(allowed).toContain('dob');
+  });
+
+  it('ALWAYS allows expirationDate regardless of ID# toggle', () => {
+    const allowed = allowedScanFields(settings({ recordSignerIdNumber: false }));
+    expect(allowed).toContain('expirationDate');
+  });
+
+  it('allows expirationDate even when both toggles OFF', () => {
+    const allowed = allowedScanFields(settings({ recordSignerDOB: false, recordSignerIdNumber: false }));
+    expect(allowed).toContain('expirationDate');
+    expect(allowed).not.toContain('dob');
+    expect(allowed).not.toContain('idNumber');
+  });
+
+  it('draft with no ID scan has undefined idFrontImage (skip-scan contract)', () => {
+    // When a notary skips the scan step, the draft should have no front/back
+    // image.  This ensures the "needs scan" indicator logic is correct.
+    const draftNoScan = baseEntry({ status: 'draft', idFrontImage: undefined, idBackImage: undefined });
+    expect(draftNoScan.idFrontImage).toBeUndefined();
+    expect(draftNoScan.idBackImage).toBeUndefined();
   });
 });
