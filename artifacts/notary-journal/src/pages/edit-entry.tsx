@@ -81,8 +81,11 @@ export function EditEntry() {
   // the scan UI without scrolling.
   const [scanAutoExpand, setScanAutoExpand] = useState(false);
 
-  // "Complete mode" — entered via ?complete=1 from "Continue & Sign" CTA.
-  // Shows the signature capture section and a "Sign & Complete Entry" button.
+  // completeMode is true when the user arrived via ?complete=1 (the
+  // "Continue & Sign" CTA). It no longer gates the signature surface —
+  // the signature card is always shown for draft entries. completeMode
+  // now only controls the page heading text and can be used to
+  // scroll the signature card into view on mount.
   const [completeMode, setCompleteMode] = useState(false);
   const [signatureImage, setSignatureImage] = useState<string | undefined>();
   const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -321,8 +324,11 @@ export function EditEntry() {
   // Without `isLoading` in deps, the effect never re-fires once the canvas
   // actually mounts, leaving `signaturePadRef.current` permanently null and
   // making the signature pad unresponsive.
+  // The signature pad initialises whenever the entry is loaded (isLoading →
+  // false). completeMode is no longer required — the canvas is always in the
+  // DOM for draft entries, so we only guard on isLoading.
   useEffect(() => {
-    if (!completeMode || isLoading) return;
+    if (isLoading) return;
     let rafId: number;
     rafId = requestAnimationFrame(() => {
       const canvas = sigCanvasRef.current;
@@ -341,7 +347,7 @@ export function EditEntry() {
       signaturePadRef.current?.off();
       signaturePadRef.current = null;
     };
-  }, [completeMode, isLoading]);
+  }, [isLoading]);
 
   // Returns a list of human-readable labels for fields that must be non-empty
   // before the entry can be completed (taking compliance toggles into account).
@@ -411,8 +417,11 @@ export function EditEntry() {
 
   const currentIdType = form.watch('idType');
 
-  const missingFields = completeMode ? getMissingFields() : [];
-  const canComplete = completeMode && missingFields.length === 0 && !isSaving;
+  // Always compute missing fields for drafts so the warning banner and
+  // the disabled state of the "Sign & Complete Entry" button are live
+  // regardless of whether the user arrived via ?complete=1 or Edit Draft.
+  const missingFields = getMissingFields();
+  const canComplete = missingFields.length === 0 && !isSaving;
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto pb-24 md:pb-8">
@@ -637,8 +646,9 @@ export function EditEntry() {
             </CardContent>
           </Card>
 
-          {/* SIGNATURE CAPTURE — only visible in complete mode */}
-          {completeMode && (
+          {/* SIGNATURE CAPTURE — always shown for draft entries so the
+              notary can sign from Edit Draft as well as Continue & Sign. */}
+          {entry.status === 'draft' && (
             <Card className="border-primary/30">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg">
@@ -696,7 +706,7 @@ export function EditEntry() {
               <Save className="w-4 h-4" />
               {isSaving ? 'Saving...' : 'Save Changes'}
             </Button>
-            {completeMode && (
+            {entry.status === 'draft' && (
               <Button
                 type="button"
                 disabled={!canComplete}
