@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'wouter';
 import { format } from 'date-fns';
-import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine } from 'lucide-react';
+import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine, ScanLine } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +27,7 @@ export function JournalList() {
   const [isLoading, setIsLoading] = useState(true);
   const [showMasked, setShowMasked] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [needsIdScanFilter, setNeedsIdScanFilter] = useState(false);
   const [settings, setSettings] = useState<NotarySettings | null>(null);
   // Compliance: when this notary's state forbids storing the ID number, hide
   // the entire ID Number column (header + cell + masking control) so it never
@@ -86,6 +87,9 @@ export function JournalList() {
   const filteredAndSorted = entries
     .filter(entry => {
       if (activeTab !== 'all' && entry.status !== activeTab) return false;
+      if (needsIdScanFilter) {
+        if (entry.status !== 'draft' || entry.idFrontImage) return false;
+      }
       const entryDate = new Date(entry.createdAt);
       if (dateFrom) {
         const from = new Date(dateFrom);
@@ -127,6 +131,7 @@ export function JournalList() {
   };
 
   const hasDateFilter = dateFrom || dateTo;
+  const hasActiveFilter = hasDateFilter || needsIdScanFilter;
 
   return (
     <div className="p-6 lg:p-8 max-w-6xl mx-auto h-full flex flex-col">
@@ -173,6 +178,22 @@ export function JournalList() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setNeedsIdScanFilter(v => !v)}
+            data-testid="chip-needs-id-scan"
+            className={cn(
+              "inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-xs font-medium transition-colors",
+              needsIdScanFilter
+                ? "bg-orange-100 border-orange-300 text-orange-800 dark:bg-orange-900/30 dark:border-orange-700 dark:text-orange-300"
+                : "bg-card border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            )}
+          >
+            <ScanLine className="w-3.5 h-3.5" />
+            Needs ID scan
+            {needsIdScanFilter && <X className="w-3 h-3 ml-0.5" />}
+          </button>
+
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Filter className="w-4 h-4" />
             <span>Date range:</span>
@@ -214,10 +235,10 @@ export function JournalList() {
             </div>
             <h3 className="text-lg font-medium text-foreground">No entries found</h3>
             <p className="text-muted-foreground mt-1 mb-6">
-              {searchQuery || hasDateFilter ? 'Try adjusting your filters.' : 'There are no entries in this view.'}
+              {searchQuery || hasActiveFilter ? 'Try adjusting your filters.' : 'There are no entries in this view.'}
             </p>
-            {(searchQuery || hasDateFilter) && (
-              <Button variant="outline" onClick={() => { setSearchQuery(''); setDateFrom(''); setDateTo(''); setLocation('/journal'); }} data-testid="button-clear-search">
+            {(searchQuery || hasActiveFilter) && (
+              <Button variant="outline" onClick={() => { setSearchQuery(''); setDateFrom(''); setDateTo(''); setNeedsIdScanFilter(false); setLocation('/journal'); }} data-testid="button-clear-search">
                 Clear Filters
               </Button>
             )}
@@ -278,10 +299,22 @@ export function JournalList() {
                       {entry.feeWaived ? 'Waived' : entry.feeCharged === 0 ? '$0.00' : `$${(entry.feeCharged / 100).toFixed(2)}`}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <Badge variant="outline" className={cn("capitalize shadow-sm font-medium", getStatusColor(entry.status))}>
-                        {entry.status === 'draft' && <AlertCircle className="w-3 h-3 mr-1 inline-block" />}
-                        {entry.status}
-                      </Badge>
+                      <div className="flex flex-col items-center gap-1">
+                        <Badge variant="outline" className={cn("capitalize shadow-sm font-medium", getStatusColor(entry.status))}>
+                          {entry.status === 'draft' && <AlertCircle className="w-3 h-3 mr-1 inline-block" />}
+                          {entry.status}
+                        </Badge>
+                        {entry.status === 'draft' && !entry.idFrontImage && (
+                          <Badge
+                            variant="outline"
+                            className="text-orange-800 bg-orange-50 border-orange-200 dark:text-orange-300 dark:bg-orange-900/20 dark:border-orange-800 font-medium shadow-sm whitespace-nowrap"
+                            data-testid={`badge-needs-id-scan-${entry.id}`}
+                          >
+                            <ScanLine className="w-3 h-3 mr-1 inline-block" />
+                            Needs ID scan
+                          </Badge>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                       {confirmDeleteId === entry.id ? (

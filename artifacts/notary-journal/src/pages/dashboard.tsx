@@ -14,7 +14,8 @@ import {
   AlertCircle,
   FileBarChart,
   CloudUpload,
-  X
+  X,
+  ScanLine
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -49,7 +50,7 @@ export function Dashboard() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
-  const [stats, setStats] = useState({ total: 0, completed: 0, draft: 0, thisMonth: 0, totalFees: 0 });
+  const [stats, setStats] = useState({ total: 0, completed: 0, draft: 0, thisMonth: 0, totalFees: 0, needsIdScan: 0 });
   const [recentEntries, setRecentEntries] = useState<JournalEntry[]>([]);
   const [settings, setSettings] = useState<NotarySettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -221,7 +222,7 @@ export function Dashboard() {
       )}
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <Card className="shadow-sm hover-elevate">
           <CardContent className="p-6">
             <div className="flex items-center justify-between space-y-0 pb-2">
@@ -265,6 +266,26 @@ export function Dashboard() {
           </Card>
         </Link>
       </div>
+
+      {/* Needs ID scan nudge */}
+      {stats.needsIdScan > 0 && (
+        <Link href="/journal" data-testid="link-needs-id-scan-widget">
+          <div className="mb-8 rounded-lg border border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800 p-4 flex items-center gap-4 hover:bg-orange-100 dark:hover:bg-orange-950/30 transition-colors cursor-pointer">
+            <div className="w-10 h-10 rounded-lg bg-orange-100 dark:bg-orange-900/40 border border-orange-200 dark:border-orange-800 flex items-center justify-center shrink-0">
+              <ScanLine className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-orange-900 dark:text-orange-200">
+                {stats.needsIdScan} draft{stats.needsIdScan !== 1 ? 's' : ''} need{stats.needsIdScan === 1 ? 's' : ''} an ID scan
+              </p>
+              <p className="text-xs text-orange-700 dark:text-orange-400 mt-0.5">
+                These entries were saved without an ID image. Tap to review them in your journal.
+              </p>
+            </div>
+            <ArrowRight className="w-4 h-4 text-orange-500 dark:text-orange-400 shrink-0" />
+          </div>
+        </Link>
+      )}
 
       {/* Recent Entries */}
       <Card className="shadow-md border-border/60">

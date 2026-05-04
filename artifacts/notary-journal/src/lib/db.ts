@@ -778,17 +778,18 @@ export async function getStats() {
   const all = await getAllEntries();
   const now = new Date();
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  let totalFees = 0, completed = 0, draft = 0, thisMonth = 0;
+  let totalFees = 0, completed = 0, draft = 0, thisMonth = 0, needsIdScan = 0;
   for (const e of all) {
     if (e.status === 'completed' || e.status === 'amended') {
       completed++;
       totalFees += e.feeCharged;
     } else {
       draft++;
+      if (!e.idFrontImage) needsIdScan++;
     }
     if (e.createdAt >= thisMonthStart) thisMonth++;
   }
-  return { total: all.length, completed, draft, thisMonth, totalFees };
+  return { total: all.length, completed, draft, thisMonth, totalFees, needsIdScan };
 }
 
 // ── Tamper-evident hash chain ─────────────────────────────────────────────
