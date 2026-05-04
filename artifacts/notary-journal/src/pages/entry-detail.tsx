@@ -174,20 +174,20 @@ export function EntryDetail() {
           {entry.status === 'draft' && (
             <>
               {/* Distinct CTA for the "draft now, scan later" workflow.
-                  Routes into the same edit page but auto-opens the scan
-                  card via the ?scan=1 query param. */}
-              {!entry.idFrontImage && (
-                <Button
-                  variant="default"
-                  className="gap-2"
-                  onClick={() => setLocation(`/entry/${entry.id}/edit?scan=1`)}
-                  data-testid="button-scan-id-now"
-                >
-                  <ScanLine className="w-4 h-4" /> Scan ID Now
-                </Button>
-              )}
+                  Always visible on a draft so the notary can re-scan or
+                  replace the ID images at any time. Routes into the same
+                  edit page but auto-opens the scan card via ?scan=1. */}
               <Button
-                variant={entry.idFrontImage ? 'default' : 'outline'}
+                variant="default"
+                className="gap-2"
+                onClick={() => setLocation(`/entry/${entry.id}/edit?scan=1`)}
+                data-testid="button-scan-id-now"
+              >
+                <ScanLine className="w-4 h-4" />
+                {entry.idFrontImage ? 'Re-scan ID' : 'Scan ID Now'}
+              </Button>
+              <Button
+                variant="outline"
                 className="gap-2"
                 onClick={() => setLocation(`/entry/${entry.id}/edit`)}
                 data-testid="button-edit-draft"
@@ -279,10 +279,12 @@ export function EntryDetail() {
               {shouldRecordSignerIdNumber(settings) && (
                 <DetailItem label="ID Number" value={entry.idNumber} />
               )}
+              {/* Expiration date is intentionally NOT gated by the ID-number
+                  toggle — every state allows recording the expiration
+                  date as part of the standard "what kind of ID did you
+                  check" record. Only the full ID# is sensitive. */}
               <DetailItem label="Issuing State" value={entry.idIssuingState} />
-              {shouldRecordSignerIdNumber(settings) && (
-                <DetailItem label="Expiration Date" value={entry.idExpirationDate} />
-              )}
+              <DetailItem label="Expiration Date" value={entry.idExpirationDate} />
               
               {(entry.idFrontImage || entry.idBackImage) && (
                 <div className="col-span-2 mt-2 pt-4 border-t">

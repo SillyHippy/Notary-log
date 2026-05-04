@@ -79,7 +79,8 @@ export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): v
   if (recordId && entry.idNumber) {
     doc.text(`Number: ${entry.idNumber}`, 20, y); y += 7;
   }
-  if (recordId && entry.idExpirationDate) {
+  // Expiration date is always shown — never gated by the ID# toggle.
+  if (entry.idExpirationDate) {
     doc.text(`Expiration: ${entry.idExpirationDate}`, 20, y); y += 7;
   }
   y += 9;
@@ -156,11 +157,14 @@ function csvField(value: unknown): string {
   return `"${String(value ?? '').replace(/"/g, '""')}"`;
 }
 
-function generateCSVRow(entry: JournalEntry, settings?: NotarySettings | null): string {
+export function generateCSVRow(entry: JournalEntry, settings?: NotarySettings | null): string {
   const amendments = entry.amendments ?? [];
   // Honor compliance toggles: if the notary's state forbids storing DOB or
   // ID#, we omit those values from the CSV row even if the entry happens to
   // have them on record (older entries written before the toggle flipped).
+  // NOTE: idExpirationDate is intentionally NOT gated by the ID-number
+  // toggle — every state allows expiration date as part of the standard
+  // "what kind of ID did you check" record. Only the full ID# is sensitive.
   const recordDOB = shouldRecordSignerDOB(settings ?? undefined);
   const recordId = shouldRecordSignerIdNumber(settings ?? undefined);
   return [
@@ -178,7 +182,7 @@ function generateCSVRow(entry: JournalEntry, settings?: NotarySettings | null): 
     entry.idType,
     recordId ? (entry.idNumber ?? '') : '',
     entry.idIssuingState ?? '',
-    recordId ? (entry.idExpirationDate ?? '') : '',
+    entry.idExpirationDate ?? '',
     entry.documentType,
     entry.documentDate ?? '',
     entry.documentDescription ?? '',
@@ -216,10 +220,8 @@ export function exportEntryJSON(entry: JournalEntry, settings?: NotarySettings |
   // accidentally treat a present-but-empty field as recorded data.
   const sanitized: JournalEntry = { ...entry };
   if (!recordDOB) delete sanitized.signerDOB;
-  if (!recordId) {
-    delete sanitized.idNumber;
-    delete sanitized.idExpirationDate;
-  }
+  // Only idNumber is gated; idExpirationDate is part of the standard ID record.
+  if (!recordId) delete sanitized.idNumber;
   const jsonContent = JSON.stringify(sanitized, null, 2);
   downloadBlob(new Blob([jsonContent], { type: 'application/json' }), `notary-entry-${entry.entryNumber}.json`);
 }

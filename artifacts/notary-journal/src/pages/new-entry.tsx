@@ -480,7 +480,8 @@ export function NewEntry() {
     ];
     for (const [from, to] of FIELD_MAP) {
       if (!recordDOB && to === 'signerDOB') continue;
-      if (!recordId && (to === 'idNumber' || to === 'idExpirationDate')) continue;
+      // Only the full ID# is gated; expiration date is always allowed.
+      if (!recordId && to === 'idNumber') continue;
       const v = fields[from as string];
       if (!v) continue;
       if (mode === 'fillGaps' && form.getValues(to as never)) continue;
@@ -670,8 +671,11 @@ export function NewEntry() {
       if (shouldRecordSignerDOB(appSettings ?? undefined)) {
         fieldsToCheck.push('signerDOB');
       }
+      // Expiration is always required (every state allows it); ID# only when
+      // the compliance toggle is on.
+      fieldsToCheck.push('idExpirationDate');
       if (shouldRecordSignerIdNumber(appSettings ?? undefined)) {
-        fieldsToCheck.push('idNumber', 'idExpirationDate');
+        fieldsToCheck.push('idNumber');
       }
       const isValid = await form.trigger(fieldsToCheck);
       if (!isValid) return;
@@ -682,13 +686,14 @@ export function NewEntry() {
         form.setError('signerDOB', { type: 'manual', message: 'Date of birth is required' });
         return;
       }
+      // Expiration is always required regardless of the ID# toggle.
+      if (!form.getValues('idExpirationDate')) {
+        form.setError('idExpirationDate', { type: 'manual', message: 'Expiration date is required' });
+        return;
+      }
       if (shouldRecordSignerIdNumber(appSettings ?? undefined)) {
         if (!form.getValues('idNumber')) {
           form.setError('idNumber', { type: 'manual', message: 'ID number is required' });
-          return;
-        }
-        if (!form.getValues('idExpirationDate')) {
-          form.setError('idExpirationDate', { type: 'manual', message: 'Expiration date is required' });
           return;
         }
       }
@@ -716,10 +721,8 @@ export function NewEntry() {
       const recordId = shouldRecordSignerIdNumber(appSettings ?? undefined);
       const scrubbed = { ...data };
       if (!recordDOB) scrubbed.signerDOB = '';
-      if (!recordId) {
-        scrubbed.idNumber = '';
-        scrubbed.idExpirationDate = '';
-      }
+      // Only the full ID# is gated; expiration is always recorded.
+      if (!recordId) scrubbed.idNumber = '';
 
       // Build the entry, omitting optional scan-only fields entirely when
       // they don't apply (don't write `undefined` into the encrypted blob).
@@ -962,6 +965,25 @@ export function NewEntry() {
                           onChange={(e) => handleFileUpload(e, !!idFrontImage)}
                         />
                       </div>
+                    </div>
+
+                    {/* Skip path: lets the notary advance past the scan step
+                        without scanning, so they can fill the entry while
+                        talking to the signer and scan the ID later from the
+                        entry detail page or the edit page. The "Save as
+                        Draft" footer button is still available too, but a
+                        clearly-labeled Skip on this step makes the
+                        draft-then-scan workflow discoverable. */}
+                    <div className="mt-5 pt-4 border-t border-primary/10 text-center">
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="text-sm text-muted-foreground hover:text-primary"
+                        onClick={() => setCurrentStep(1)}
+                        data-testid="button-skip-scan"
+                      >
+                        Skip — fill manually or scan later
+                      </Button>
                     </div>
                   </div>
                 </>
@@ -1209,7 +1231,9 @@ export function NewEntry() {
                           <FormMessage />
                         </FormItem>
                       )} />
-                      {shouldRecordSignerIdNumber(appSettings ?? undefined) && (
+                      {/* Expiration date is always shown — not gated by the
+                          ID-number toggle. */}
+                      {true && (
                         <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
                           <FormItem>
                             <FormLabel>Expiration Date *</FormLabel>
@@ -1443,11 +1467,10 @@ export function NewEntry() {
                 <CardContent className="py-4 text-sm space-y-2">
                   <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Type:</span> <span className="col-span-2 min-w-0 capitalize break-words">{shortIdType(form.getValues('idType'))}</span></div>
                   {shouldRecordSignerIdNumber(appSettings ?? undefined) && (
-                    <>
-                      <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Number:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idNumber')}</span></div>
-                      <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Expires:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idExpirationDate')}</span></div>
-                    </>
+                    <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Number:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idNumber')}</span></div>
                   )}
+                  {/* Expiration always shown — not toggle-gated. */}
+                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Expires:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idExpirationDate')}</span></div>
                 </CardContent>
               </Card>
 

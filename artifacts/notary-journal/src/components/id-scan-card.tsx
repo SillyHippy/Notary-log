@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BrowserPDF417Reader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
-import { Camera, Upload, ScanLine, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Camera, Upload, ScanLine, Loader2, CheckCircle2, AlertTriangle, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -44,11 +44,12 @@ interface IdScanCardProps {
 }
 
 /**
- * Reusable ID-scan UI for draft entries on the edit page. Uses a file input
- * with `capture="environment"` so mobile users get the native camera, and
- * desktops fall back to a regular file picker. We intentionally skip the
- * live PDF417 video reader here — drafts get edited at a desk far more often
- * than at the signing table, and the upload path covers both.
+ * Reusable ID-scan UI for draft entries on the edit page. Mirrors the same
+ * three-mode flow used in the new-entry wizard:
+ *   - Live PDF417 barcode scan (camera + ZXing video reader) for licenses
+ *   - Photo capture / file upload + OCR fallback (front/back of card)
+ *   - Manual entry — the host form's signer/ID inputs are always editable
+ *     beneath the card, so a notary can always type the data by hand.
  *
  * For licenses we first try a PDF417 decode of the (back-of-card) image,
  * since the barcode contains all the structured AAMVA fields. If that fails
@@ -68,11 +69,159 @@ export function IdScanCard({
   const [frontImage, setFrontImage] = useState<string | undefined>(initialFrontImage);
   const [backImage, setBackImage] = useState<string | undefined>(initialBackImage);
   const [lastResult, setLastResult] = useState<ScanResultPayload | null>(null);
+  const [liveScanActive, setLiveScanActive] = useState(false);
 
   const frontInputRef = useRef<HTMLInputElement>(null);
   const backInputRef = useRef<HTMLInputElement>(null);
+  const liveVideoRef = useRef<HTMLVideoElement>(null);
+  const liveStreamRef = useRef<MediaStream | null>(null);
+  const liveReaderRef = useRef<BrowserPDF417Reader | null>(null);
+  const liveLoopActiveRef = useRef(false);
 
   const isPassport = idType === 'passport';
+
+  const stopLiveScan = () => {
+    liveLoopActiveRef.current = false;
+    if (liveStreamRef.current) {
+      liveStreamRef.current.getTracks().forEach((t) => t.stop());
+      liveStreamRef.current = null;
+    }
+    if (liveVideoRef.current) {
+      liveVideoRef.current.srcObject = null;
+    }
+    liveReaderRef.current = null;
+    setLiveScanActive(false);
+  };
+
+  // Make absolutely sure the camera stream is released when the card
+  // unmounts (e.g. user navigates away mid-scan).
+  useEffect(() => {
+    return () => {
+      stopLiveScan();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Open the rear camera and run a PDF417 frame loop until we either decode
+   * a barcode or the user cancels. Captures the snapshot frame as the
+   * "back of ID" image so the host entry has visible evidence of the scan.
+   */
+  const startLiveScan = async () => {
+    if (isPassport) {
+      toast({
+        title: 'Passports use photo mode',
+        description: 'Live barcode scan is for driver licenses and state IDs only.',
+      });
+      return;
+    }
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Camera not available in this browser.');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      });
+      liveStreamRef.current = stream;
+      liveReaderRef.current = new BrowserPDF417Reader();
+      setLiveScanActive(true);
+    } catch (err) {
+      console.error('Live scan camera error', err);
+      toast({
+        title: 'Camera unavailable',
+        description: 'Use Upload / Camera below to capture a photo instead.',
+        variant: 'destructive',
+      });
+      stopLiveScan();
+    }
+  };
+
+  // Once the video element is mounted, attach the stream and start a
+  // throttled frame-grab loop that tries to decode a PDF417 barcode.
+  useEffect(() => {
+    if (!liveScanActive || !liveVideoRef.current || !liveStreamRef.current) return;
+    const videoEl = liveVideoRef.current;
+    videoEl.srcObject = liveStreamRef.current;
+    videoEl.setAttribute('playsinline', 'true');
+
+    let lastAttempt = 0;
+    let raf = 0;
+    liveLoopActiveRef.current = true;
+
+    const tryFrame = () => {
+      if (!liveLoopActiveRef.current) return;
+      const now = performance.now();
+      // Throttle to ~2.5 fps — PDF417 decode is CPU-heavy on phones.
+      if (
+        now - lastAttempt >= 400 &&
+        videoEl.readyState >= videoEl.HAVE_ENOUGH_DATA &&
+        videoEl.videoWidth > 0
+      ) {
+        lastAttempt = now;
+        const canvas = document.createElement('canvas');
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx && liveReaderRef.current) {
+          try {
+            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            const result = liveReaderRef.current.decodeFromCanvas(canvas);
+            if (result) {
+              const fields = parseAAMVA(result.getText()) as Record<string, string>;
+              if (Object.keys(fields).length > 0) {
+                // Capture the frame as the back-of-ID image so the entry
+                // has visible scan evidence.
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                liveLoopActiveRef.current = false;
+                stopLiveScan();
+                const payload: ScanResultPayload = {
+                  fields,
+                  extraction: { method: 'barcode' },
+                };
+                setBackImage(dataUrl);
+                setLastResult(payload);
+                onScan({ frontImage, backImage: dataUrl, result: payload });
+                toast({
+                  title: 'Barcode Scanned!',
+                  description: 'Data extracted. Review the fields below.',
+                });
+                return;
+              }
+            }
+          } catch {
+            // ZXing throws when no barcode is present in the frame —
+            // ignore and try the next one.
+          }
+        }
+      }
+      raf = requestAnimationFrame(tryFrame);
+    };
+
+    videoEl
+      .play()
+      .then(() => {
+        raf = requestAnimationFrame(tryFrame);
+      })
+      .catch((err) => {
+        console.error('Could not start live video', err);
+        toast({
+          title: 'Camera Error',
+          description: 'Could not start live preview. Try Upload / Camera below.',
+          variant: 'destructive',
+        });
+        stopLiveScan();
+      });
+
+    return () => {
+      liveLoopActiveRef.current = false;
+      if (raf) cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveScanActive]);
 
   const tryDecodeBarcode = async (dataUrl: string): Promise<Record<string, string> | null> => {
     try {
@@ -286,6 +435,57 @@ export function IdScanCard({
 
       {isExpanded && (
         <CardContent className="space-y-4">
+          {/* ── LIVE BARCODE SCAN MODE ── */}
+          {liveScanActive && (
+            <div className="flex flex-col gap-3" data-testid="live-scan-panel">
+              <div
+                className="relative rounded-xl overflow-hidden bg-black w-full mx-auto"
+                style={{ aspectRatio: '4/3', maxHeight: '50vh' }}
+              >
+                <video
+                  ref={liveVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <div className="border-2 border-emerald-400 rounded-lg w-4/5 h-1/2 opacity-70" />
+                </div>
+              </div>
+              <p className="text-xs text-center text-muted-foreground">
+                Hold the back of the license inside the box. Scan happens
+                automatically when the barcode is recognized.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={stopLiveScan}
+                className="gap-2"
+                data-testid="button-cancel-live-scan"
+              >
+                <X className="w-4 h-4" /> Cancel Live Scan
+              </Button>
+            </div>
+          )}
+
+          {/* Live PDF417 entry point — only shown for licenses / state IDs.
+              Manual entry is always available because the host form's
+              signer/ID inputs sit beneath the card. */}
+          {!liveScanActive && !isPassport && (
+            <Button
+              type="button"
+              variant="default"
+              className="w-full gap-2"
+              onClick={startLiveScan}
+              disabled={isScanning}
+              data-testid="button-start-live-scan"
+            >
+              <ScanLine className="w-4 h-4" />
+              Scan Barcode (Live)
+            </Button>
+          )}
+
           {lastResult?.warning && (
             <Alert className="bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900">
               <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500" />

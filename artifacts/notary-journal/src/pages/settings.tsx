@@ -827,10 +827,12 @@ export function Settings() {
                 render={({ field }) => (
                   <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
                     <div className="space-y-0.5">
-                      <FormLabel className="text-base font-medium">Record signer ID number & expiration</FormLabel>
+                      <FormLabel className="text-base font-medium">Record signer ID number</FormLabel>
                       <FormDescription>
-                        Turn off if your state prohibits storing the full ID number / expiration.
-                        ID type and issuing state are still recorded.
+                        Turn off if your state prohibits storing the full ID number.
+                        ID type, issuing state, and expiration date are still recorded
+                        regardless — those are the standard "what kind of ID did you check"
+                        fields that every state allows.
                       </FormDescription>
                     </div>
                     <FormControl>
@@ -1495,7 +1497,7 @@ export function Settings() {
       </Card>
 
       <div className="text-center text-sm text-muted-foreground pt-4 pb-8">
-        <p>Notary Journal App v1.0.0</p>
+        <p>Notary Journal App v1.1.0</p>
       </div>
     </div>
   );

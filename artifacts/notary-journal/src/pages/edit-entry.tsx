@@ -177,29 +177,41 @@ export function EditEntry() {
 
     // Apply extracted fields. Honor the compliance toggles — we don't want
     // to silently fill DOB / ID# when the notary has them disabled.
-    const FIELD_MAP: Array<[string, keyof EditFormValues, boolean]> = [
-      ['fullName', 'signerFullName', true],
-      ['address', 'signerAddress', true],
-      ['city', 'signerCity', true],
-      ['state', 'signerState', true],
-      ['dob', 'signerDOB', wantsDOB],
-      ['idNumber', 'idNumber', wantsIdNumber],
-      ['idIssuingState', 'idIssuingState', true],
-      ['expirationDate', 'idExpirationDate', wantsIdNumber],
+    // Maps scan-result key → (formField, journalEntryField, allowedByToggle).
+    const FIELD_MAP: Array<[string, keyof EditFormValues, keyof JournalEntry, boolean]> = [
+      ['fullName', 'signerFullName', 'signerFullName', true],
+      ['address', 'signerAddress', 'signerAddress', true],
+      ['city', 'signerCity', 'signerCity', true],
+      ['state', 'signerState', 'signerState', true],
+      ['dob', 'signerDOB', 'signerDOB', wantsDOB],
+      ['idNumber', 'idNumber', 'idNumber', wantsIdNumber],
+      ['idIssuingState', 'idIssuingState', 'idIssuingState', true],
+      // Expiration date is never gated by the ID-number toggle — every
+      // state allows recording it as part of the standard ID record.
+      ['expirationDate', 'idExpirationDate', 'idExpirationDate', true],
     ];
-    for (const [from, to, allowed] of FIELD_MAP) {
+
+    // Build the IndexedDB patch in lockstep with the form updates so the
+    // parsed signer/ID values are persisted to disk *immediately*, not just
+    // pushed into transient form state. Spec: "on a successful scan,
+    // populates the draft's signer fields and ID fields, attaches the
+    // front/back ID images, and saves the updated draft in place."
+    const fieldPatch: Partial<JournalEntry> = {};
+    for (const [from, formKey, entryKey, allowed] of FIELD_MAP) {
       if (!allowed) continue;
       const v = result.fields[from];
-      if (v) form.setValue(to as never, v as never, { shouldDirty: true });
+      if (!v) continue;
+      form.setValue(formKey as never, v as never, { shouldDirty: true });
+      (fieldPatch as Record<string, unknown>)[entryKey] = v;
     }
 
     // Auto-persist the scan result back onto the draft so the captured
-    // image and extraction metadata survive even if the notary navigates
-    // away before clicking Save Changes. We only patch fields owned by the
-    // scan flow — the form values themselves still require Save Changes.
+    // image, extraction metadata, AND parsed signer/ID values survive even
+    // if the notary navigates away before clicking Save Changes.
     if (entry?.id != null) {
       try {
         const patch: Partial<JournalEntry> = {
+          ...fieldPatch,
           extractionMethod: result.extraction.method,
           extractedRawText: result.extraction.text,
           extractionConfidence: result.extraction.confidence,
@@ -207,7 +219,13 @@ export function EditEntry() {
         if (frontImage !== undefined) patch.idFrontImage = frontImage;
         if (backImage !== undefined) patch.idBackImage = backImage;
         await updateEntry(entry.id, patch);
-        toast({ title: 'Scan saved', description: 'ID image attached to this draft.' });
+        const fieldCount = Object.keys(fieldPatch).length;
+        toast({
+          title: 'Scan saved',
+          description: fieldCount > 0
+            ? `Draft updated with ${fieldCount} field${fieldCount === 1 ? '' : 's'} from the ID.`
+            : 'ID image attached to this draft.',
+        });
       } catch (err) {
         // Non-fatal: the form-level Save Changes button will retry the write.
         console.error('Auto-save of scan result failed', err);
@@ -223,15 +241,14 @@ export function EditEntry() {
       form.setError('signerDOB', { type: 'manual', message: 'Date of birth is required' });
       return;
     }
-    if (wantsIdNumber) {
-      if (!data.idNumber) {
-        form.setError('idNumber', { type: 'manual', message: 'ID number is required' });
-        return;
-      }
-      if (!data.idExpirationDate) {
-        form.setError('idExpirationDate', { type: 'manual', message: 'Expiration date is required' });
-        return;
-      }
+    // Expiration date is always required.
+    if (!data.idExpirationDate) {
+      form.setError('idExpirationDate', { type: 'manual', message: 'Expiration date is required' });
+      return;
+    }
+    if (wantsIdNumber && !data.idNumber) {
+      form.setError('idNumber', { type: 'manual', message: 'ID number is required' });
+      return;
     }
 
     setIsSaving(true);
@@ -243,10 +260,8 @@ export function EditEntry() {
       // persisted entry.
       const scrubbed: EditFormValues = { ...data };
       if (!wantsDOB) scrubbed.signerDOB = '';
-      if (!wantsIdNumber) {
-        scrubbed.idNumber = '';
-        scrubbed.idExpirationDate = '';
-      }
+      // Only the full ID# is gated; expiration is always allowed.
+      if (!wantsIdNumber) scrubbed.idNumber = '';
       await updateEntry(id, {
         ...scrubbed,
         feeCharged: feeCents,
@@ -407,15 +422,14 @@ export function EditEntry() {
                   <FormMessage />
                 </FormItem>
               )} />
-              {wantsIdNumber && (
-                <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Expiration Date</FormLabel>
-                    <FormControl><Input type="date" {...field} data-testid="input-id-expiration" /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )} />
-              )}
+              {/* Expiration is always shown — never gated by the ID# toggle. */}
+              <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Expiration Date</FormLabel>
+                  <FormControl><Input type="date" {...field} data-testid="input-id-expiration" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
             </CardContent>
           </Card>
 
