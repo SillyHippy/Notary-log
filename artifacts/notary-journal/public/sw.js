@@ -1,9 +1,10 @@
-const CACHE_NAME = 'notary-journal-v9';
+const CACHE_NAME = 'notary-journal-v10';
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/favicon.png',
   '/icon-192.png',
   '/icon-512.png',
 ];

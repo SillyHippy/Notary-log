@@ -42,6 +42,17 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Heavy libs get their own chunks — only fetched when needed
+          'vendor-pdf': ['jspdf'],
+          'vendor-scan': ['@zxing/browser', '@zxing/library'],
+          'vendor-ocr': ['tesseract.js'],
+          'vendor-sig': ['signature_pad'],
+        },
+      },
+    },
   },
   server: {
     port,

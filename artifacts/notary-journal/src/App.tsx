@@ -1,38 +1,50 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
 
 import { Layout } from "@/components/layout";
 import { PinLock } from "@/components/pin-lock";
 import { PinSetup } from "@/components/pin-setup";
-import { Dashboard } from "@/pages/dashboard";
-import { JournalList } from "@/pages/journal-list";
-import { NewEntry } from "@/pages/new-entry";
-import { EntryDetail } from "@/pages/entry-detail";
-import { EditEntry } from "@/pages/edit-entry";
-import { Settings } from "@/pages/settings";
-import { Reports } from "@/pages/reports";
+
+// Lazy-load pages so the initial bundle stays small
+const Dashboard = lazy(() => import("@/pages/dashboard").then(m => ({ default: m.Dashboard })));
+const JournalList = lazy(() => import("@/pages/journal-list").then(m => ({ default: m.JournalList })));
+const NewEntry = lazy(() => import("@/pages/new-entry").then(m => ({ default: m.NewEntry })));
+const EntryDetail = lazy(() => import("@/pages/entry-detail").then(m => ({ default: m.EntryDetail })));
+const EditEntry = lazy(() => import("@/pages/edit-entry").then(m => ({ default: m.EditEntry })));
+const Settings = lazy(() => import("@/pages/settings").then(m => ({ default: m.Settings })));
+const Reports = lazy(() => import("@/pages/reports").then(m => ({ default: m.Reports })));
+const NotFound = lazy(() => import("@/pages/not-found"));
 
 import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked } from "@/lib/db";
 
 const queryClient = new QueryClient();
 
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center py-24">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  );
+}
+
 function Router() {
   return (
     <Layout>
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/journal" component={JournalList} />
-        <Route path="/entry/new" component={NewEntry} />
-        <Route path="/entry/:id/edit" component={EditEntry} />
-        <Route path="/entry/:id" component={EntryDetail} />
-        <Route path="/reports" component={Reports} />
-        <Route path="/settings" component={Settings} />
-        <Route component={NotFound} />
-      </Switch>
+      <Suspense fallback={<PageLoader />}>
+        <Switch>
+          <Route path="/" component={Dashboard} />
+          <Route path="/journal" component={JournalList} />
+          <Route path="/entry/new" component={NewEntry} />
+          <Route path="/entry/:id/edit" component={EditEntry} />
+          <Route path="/entry/:id" component={EntryDetail} />
+          <Route path="/reports" component={Reports} />
+          <Route path="/settings" component={Settings} />
+          <Route component={NotFound} />
+        </Switch>
+      </Suspense>
     </Layout>
   );
 }

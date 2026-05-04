@@ -17,7 +17,27 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Instant splash screen — visible before any JS loads -->
+      <style>
+        #splash{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;background:#f0f4f8;font-family:Inter,system-ui,sans-serif;color:#1e3a5f}
+        @media(prefers-color-scheme:dark){#splash{background:#0f1729;color:#e2e8f0}}
+        #splash img{width:80px;height:80px;border-radius:18px;margin-bottom:20px;animation:splash-pop .4s ease-out}
+        #splash p{font-size:1.125rem;font-weight:600;letter-spacing:-.01em;opacity:0;animation:splash-fade .5s .2s ease forwards}
+        #splash .dot-loader{display:flex;gap:6px;margin-top:16px}
+        #splash .dot-loader span{width:8px;height:8px;border-radius:50%;background:#3b82f6;animation:splash-bounce 1.2s infinite}
+        #splash .dot-loader span:nth-child(2){animation-delay:.15s}
+        #splash .dot-loader span:nth-child(3){animation-delay:.3s}
+        @keyframes splash-pop{0%{transform:scale(.7);opacity:0}100%{transform:scale(1);opacity:1}}
+        @keyframes splash-fade{to{opacity:1}}
+        @keyframes splash-bounce{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-10px);opacity:1}}
+      </style>
+      <div id="splash">
+        <img src="/favicon.png" alt="" width="80" height="80">
+        <p>Notary Journal</p>
+        <div class="dot-loader"><span></span><span></span><span></span></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
