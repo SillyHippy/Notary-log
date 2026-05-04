@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import type { JournalEntry, NotarySettings } from './db';
+import { shouldRecordSignerDOB, shouldRecordSignerIdNumber } from './db';
 import {
   resolveFeeType,
   rollupYear,
@@ -43,6 +44,9 @@ function stampSealOnAllPages(doc: jsPDF, sealImage?: string): void {
 
 export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): void {
   const doc = new jsPDF();
+  const recordDOB = shouldRecordSignerDOB(settings);
+  const recordId = shouldRecordSignerIdNumber(settings);
+
   // Header
   doc.setFontSize(18);
   doc.text('Official Notary Journal Record', 105, 20, { align: 'center' });
@@ -55,34 +59,45 @@ export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): v
   doc.text(`Status: ${entry.status}`, 20, 62);
   doc.text(`Date: ${new Date(entry.createdAt).toLocaleString()}`, 20, 69);
 
+  // Cursor-based layout so disabled-by-compliance rows don't leave gaps.
+  let y = 85;
   doc.setFontSize(14);
-  doc.text('Signer Information', 20, 85);
+  doc.text('Signer Information', 20, y); y += 10;
   doc.setFontSize(12);
-  doc.text(`Name: ${entry.signerFullName}`, 20, 95);
-  doc.text(`Address: ${entry.signerAddress}`, 20, 102);
-  doc.text(`City, State: ${entry.signerCity}, ${entry.signerState}`, 20, 109);
+  doc.text(`Name: ${entry.signerFullName}`, 20, y); y += 7;
+  doc.text(`Address: ${entry.signerAddress}`, 20, y); y += 7;
+  doc.text(`City, State: ${entry.signerCity}, ${entry.signerState}`, 20, y); y += 7;
+  if (recordDOB && entry.signerDOB) {
+    doc.text(`Date of Birth: ${entry.signerDOB}`, 20, y); y += 7;
+  }
+  y += 9;
 
   doc.setFontSize(14);
-  doc.text('Identification', 20, 125);
+  doc.text('Identification', 20, y); y += 10;
   doc.setFontSize(12);
-  doc.text(`Type: ${entry.idType}`, 20, 135);
-  doc.text(`Number: ${entry.idNumber}`, 20, 142);
-  doc.text(`Expiration: ${entry.idExpirationDate}`, 20, 149);
+  doc.text(`Type: ${entry.idType}`, 20, y); y += 7;
+  if (recordId && entry.idNumber) {
+    doc.text(`Number: ${entry.idNumber}`, 20, y); y += 7;
+  }
+  if (recordId && entry.idExpirationDate) {
+    doc.text(`Expiration: ${entry.idExpirationDate}`, 20, y); y += 7;
+  }
+  y += 9;
 
   doc.setFontSize(14);
-  doc.text('Notarial Act', 20, 165);
+  doc.text('Notarial Act', 20, y); y += 10;
   doc.setFontSize(12);
-  doc.text(`Act Type: ${entry.notarialActType}`, 20, 175);
-  doc.text(`Document: ${entry.documentType}`, 20, 182);
+  doc.text(`Act Type: ${entry.notarialActType}`, 20, y); y += 7;
+  doc.text(`Document: ${entry.documentType}`, 20, y); y += 7;
   const feeStr = entry.feeWaived
     ? 'Waived'
     : `$${(entry.feeCharged / 100).toFixed(2)}`;
-  doc.text(`Fee (${resolveFeeType(entry)}): ${feeStr}`, 20, 189);
+  doc.text(`Fee (${resolveFeeType(entry)}): ${feeStr}`, 20, y); y += 11;
 
   // Signature image
   if (entry.signatureImage) {
-    doc.text('Signer Signature:', 20, 200);
-    doc.addImage(entry.signatureImage, 'PNG', 20, 205, 80, 30);
+    doc.text('Signer Signature:', 20, y); y += 5;
+    doc.addImage(entry.signatureImage, 'PNG', 20, y, 80, 30);
   }
 
   // Footer
@@ -153,12 +168,12 @@ function generateCSVRow(entry: JournalEntry): string {
     entry.signerAddress,
     entry.signerCity,
     entry.signerState,
-    entry.signerDOB,
+    entry.signerDOB ?? '',
     entry.signerPhone ?? '',
     entry.idType,
-    entry.idNumber,
+    entry.idNumber ?? '',
     entry.idIssuingState ?? '',
-    entry.idExpirationDate,
+    entry.idExpirationDate ?? '',
     entry.documentType,
     entry.documentDate ?? '',
     entry.documentDescription ?? '',
@@ -215,8 +230,12 @@ export interface ParsedBackup {
   settings: NotarySettings | null;
 }
 
+// `idNumber` was historically required but is now optional (compliance
+// toggle). Older backups will still have it as a string; newer backups from
+// notaries who disabled the toggle will omit it. Keep the universally-present
+// fields here so v1 backups still validate.
 const REQUIRED_ENTRY_FIELDS: Array<keyof JournalEntry> = [
-  'entryNumber', 'status', 'signerFullName', 'idType', 'idNumber',
+  'entryNumber', 'status', 'signerFullName', 'idType',
   'documentType', 'notarialActType', 'createdAt',
 ];
 

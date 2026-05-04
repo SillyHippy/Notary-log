@@ -112,8 +112,8 @@ export function JournalList() {
     }
   };
 
-  const maskIdNumber = (id: string) => {
-    if (!id) return '';
+  const maskIdNumber = (id: string | undefined) => {
+    if (!id) return <span className="text-muted-foreground italic">—</span>;
     if (showMasked) return id;
     if (id.length <= 4) return '****' + id;
     return '****' + id.slice(-4);

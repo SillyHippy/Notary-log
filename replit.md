@@ -27,9 +27,10 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Features**:
   - Dashboard with stats and recent entries
   - Journal list with masked ID numbers, search/filter
-  - New entry wizard: camera-based ID scanning (PDF417 barcode + OCR fallback), signer info, notarial act, signature pad, review
-  - Entry detail: all fields, integrity verification (SHA-256 hash), amendments, export
-  - Settings: notary profile, PIN lock, dark mode toggle, export all
+  - New entry wizard: camera-based ID scanning (PDF417 barcode + OCR fallback), signer info, notarial act, signature pad, review. Supports a "draft now, scan ID later" workflow — users can save a partially complete entry as a draft from any step and finish scanning later.
+  - Entry detail: all fields, integrity verification (SHA-256 hash), amendments, export. Drafts without an ID image surface a "Scan ID Now" CTA that opens the edit page with the scan card auto-expanded (`?scan=1`).
+  - Edit draft entry: lenient schema that respects the per-notary compliance toggles; embedded `IdScanCard` (PDF417 barcode for licenses, MRZ via OCR for passports) so a draft can be completed without retyping.
+  - Settings: notary profile, **Journal Compliance toggles** (`recordSignerDOB`, `recordSignerIdNumber` — default ON; turning off hides those fields from the new/edit flows and omits them from PDF/CSV exports for state-prohibition compliance, e.g. California), PIN lock, dark mode toggle, export all
   - PDF/CSV/JSON export (single entry and bulk)
   - Google Drive backup/restore (auto-backup after each entry, manual backup, restore with duplicate-skip merge)
   - GPS auto-detect location for notarization address
@@ -41,6 +42,8 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 #### Architectural decisions
 - **Legacy `feeType` migration**: Pre-existing entries are NOT physically backfilled with `feeType = 'Other'`. Doing so would rewrite signed records and invalidate the SHA-256 hash chain. Instead, `resolveFeeType` in `lib/fees.ts` derives a fee type at read time from `notarialActType` (with `Other` as final fallback). All rollups, reports, and exports honor this read-time resolution; never add a backfill migration.
 - **Annual report bucketing**: rollups bucket by `createdAt` (entry creation date), which matches the act/notarization date for the no-backend single-user flow.
+- **Compliance toggles & hash stability**: `signerDOB`, `idNumber`, and `idExpirationDate` are optional on `JournalEntry`. The `shouldRecordSignerDOB` / `shouldRecordSignerIdNumber` helpers treat an undefined setting as ON so existing notaries default to legacy behavior. Hashes are stable: `canonicalJson` sorts keys and `JSON.stringify` omits `undefined` values, so completed entries written before the toggles existed verify identically.
+- **Draft-then-scan workflow**: Drafts may be saved with empty DOB / ID number / expiration regardless of compliance toggles. `IMMUTABLE_FIELDS` still protects completed entries — only drafts can be edited or have their ID re-scanned. The edit page's submit handler enforces required fields conditionally based on the active toggles (manual `setError` after the lenient Zod schema passes).
 
 ### API Server (`artifacts/api-server`)
 - **Type**: Express 5 REST API

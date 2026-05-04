@@ -18,7 +18,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { Checkbox } from '@/components/ui/checkbox';
 
-import { createEntry, completeEntry, getSettings, getAllEntries, type JournalEntry, type NotarySettings } from '@/lib/db';
+import { createEntry, completeEntry, getSettings, getAllEntries, shouldRecordSignerDOB, shouldRecordSignerIdNumber, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { parseAAMVA } from '@/lib/aamva';
 import { extractLicenseFields } from '@/lib/ocr-license';
 import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
@@ -34,12 +34,16 @@ const entrySchema = z
     signerAddress: z.string().optional().default(''),
     signerCity: z.string().optional().default(''),
     signerState: z.string().max(2).optional().default(''),
-    signerDOB: z.string().min(1, 'Date of birth is required'),
+    // DOB / ID number / expiration are conditionally required based on the
+    // notary's compliance toggles in Settings. The schema accepts empty
+    // strings; nextStep() enforces presence only when the corresponding
+    // toggle is on, and the disabled fields are hidden in the UI.
+    signerDOB: z.string().optional().default(''),
     signerPhone: z.string().optional(),
     idType: z.enum(['driver_license', 'passport', 'state_id', 'military_id', 'other']),
-    idNumber: z.string().min(1, 'ID number is required'),
+    idNumber: z.string().optional().default(''),
     idIssuingState: z.string().optional(),
-    idExpirationDate: z.string().min(1, 'Expiration date is required'),
+    idExpirationDate: z.string().optional().default(''),
     documentType: z.string().min(1, 'Document type is required'),
     documentDate: z.string().optional(),
     documentDescription: z.string().optional(),
@@ -649,8 +653,37 @@ export function NewEntry() {
   const nextStep = async () => {
     // Validate step before advancing
     if (currentStep === 1) {
-      const isValid = await form.trigger(['signerFullName', 'signerAddress', 'signerCity', 'signerState', 'signerDOB', 'idNumber', 'idExpirationDate']);
+      const fieldsToCheck: Array<keyof EntryFormValues> = [
+        'signerFullName', 'signerAddress', 'signerCity', 'signerState',
+      ];
+      // Conditionally enforce DOB / ID# / expiration based on the notary's
+      // compliance toggles. A blank in a disabled field is fine — the row
+      // is hidden anyway and we treat it as "not collected".
+      if (shouldRecordSignerDOB(appSettings ?? undefined)) {
+        fieldsToCheck.push('signerDOB');
+      }
+      if (shouldRecordSignerIdNumber(appSettings ?? undefined)) {
+        fieldsToCheck.push('idNumber', 'idExpirationDate');
+      }
+      const isValid = await form.trigger(fieldsToCheck);
       if (!isValid) return;
+      // Manual safety net: form.trigger only checks the schema rules. Since
+      // these fields are now schema-optional, we re-check non-empty here so
+      // the toggle-on case still blocks an advance with empty inputs.
+      if (shouldRecordSignerDOB(appSettings ?? undefined) && !form.getValues('signerDOB')) {
+        form.setError('signerDOB', { type: 'manual', message: 'Date of birth is required' });
+        return;
+      }
+      if (shouldRecordSignerIdNumber(appSettings ?? undefined)) {
+        if (!form.getValues('idNumber')) {
+          form.setError('idNumber', { type: 'manual', message: 'ID number is required' });
+          return;
+        }
+        if (!form.getValues('idExpirationDate')) {
+          form.setError('idExpirationDate', { type: 'manual', message: 'Expiration date is required' });
+          return;
+        }
+      }
     }
     if (currentStep === 2) {
       const isValid = await form.trigger(['documentType', 'notarialActType', 'locationCity', 'locationState', 'feeCharged']);
@@ -1035,8 +1068,8 @@ export function NewEntry() {
             )}
 
             <div className="flex justify-end mt-auto pt-4">
-              <Button variant="ghost" onClick={() => setCurrentStep(1)} className="text-muted-foreground text-sm">
-                Skip Scanning <ChevronRight className="w-4 h-4 ml-1" />
+              <Button variant="ghost" onClick={() => setCurrentStep(1)} className="text-muted-foreground text-sm" data-testid="button-skip-scan">
+                Skip — scan ID later <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           </div>
@@ -1099,13 +1132,15 @@ export function NewEntry() {
                           <FormMessage />
                         </FormItem>
                       )} />
-                      <FormField control={form.control} name="signerDOB" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Date of Birth *</FormLabel>
-                          <FormControl><Input type="date" {...field} /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
+                      {shouldRecordSignerDOB(appSettings ?? undefined) && (
+                        <FormField control={form.control} name="signerDOB" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Date of Birth *</FormLabel>
+                            <FormControl><Input type="date" {...field} /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+                      )}
                       <FormField control={form.control} name="signerPhone" render={({ field }) => (
                         <FormItem>
                           <FormLabel>Phone Number</FormLabel>
@@ -1137,13 +1172,15 @@ export function NewEntry() {
                           <FormMessage />
                         </FormItem>
                       )} />
-                      <FormField control={form.control} name="idNumber" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>ID Number *</FormLabel>
-                          <FormControl><Input {...field} /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
+                      {shouldRecordSignerIdNumber(appSettings ?? undefined) && (
+                        <FormField control={form.control} name="idNumber" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>ID Number *</FormLabel>
+                            <FormControl><Input {...field} /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+                      )}
                       <FormField control={form.control} name="idIssuingState" render={({ field }) => (
                         <FormItem>
                           <FormLabel>Issuing State/Authority</FormLabel>
@@ -1151,13 +1188,15 @@ export function NewEntry() {
                           <FormMessage />
                         </FormItem>
                       )} />
-                      <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Expiration Date *</FormLabel>
-                          <FormControl><Input type="date" {...field} /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
+                      {shouldRecordSignerIdNumber(appSettings ?? undefined) && (
+                        <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Expiration Date *</FormLabel>
+                            <FormControl><Input type="date" {...field} /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+                      )}
                     </CardContent>
                   </Card>
                 </div>
@@ -1370,7 +1409,9 @@ export function NewEntry() {
                 <CardContent className="py-4 text-sm space-y-2">
                   <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Name:</span> <span className="col-span-2 min-w-0 font-medium break-words">{form.getValues('signerFullName')}</span></div>
                   <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Address:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('signerAddress')}, {form.getValues('signerCity')}, {form.getValues('signerState')}</span></div>
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">DOB:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('signerDOB')}</span></div>
+                  {shouldRecordSignerDOB(appSettings ?? undefined) && (
+                    <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">DOB:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('signerDOB')}</span></div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1380,8 +1421,12 @@ export function NewEntry() {
                 </CardHeader>
                 <CardContent className="py-4 text-sm space-y-2">
                   <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Type:</span> <span className="col-span-2 min-w-0 capitalize break-words">{shortIdType(form.getValues('idType'))}</span></div>
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Number:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idNumber')}</span></div>
-                  <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Expires:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idExpirationDate')}</span></div>
+                  {shouldRecordSignerIdNumber(appSettings ?? undefined) && (
+                    <>
+                      <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Number:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idNumber')}</span></div>
+                      <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Expires:</span> <span className="col-span-2 min-w-0 break-words">{form.getValues('idExpirationDate')}</span></div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1407,7 +1452,7 @@ export function NewEntry() {
       </div>
 
       {/* Footer Navigation */}
-      <div className="mt-6 pt-4 border-t border-border flex justify-between gap-4">
+      <div className="mt-6 pt-4 border-t border-border flex flex-wrap justify-between gap-3">
         <Button 
           variant="outline" 
           onClick={() => setCurrentStep(prev => Math.max(0, prev - 1))}
@@ -1415,29 +1460,45 @@ export function NewEntry() {
         >
           Back
         </Button>
-        
-        {currentStep < 3 && (
-          <Button onClick={nextStep} className="gap-2" disabled={isScanning} data-testid="button-next">
-            Next Step <ChevronRight className="w-4 h-4" />
-          </Button>
-        )}
-        
-        {currentStep === 3 && (
-          <Button onClick={confirmSignature} className="gap-2">
-            Confirm Signature <ChevronRight className="w-4 h-4" />
-          </Button>
-        )}
-        
-        {currentStep === 4 && (
-          <div className="flex gap-3 w-full sm:w-auto">
-            <Button variant="secondary" onClick={() => saveEntry('draft')} disabled={isSaving}>
-              Save Draft
+
+        <div className="flex flex-wrap gap-3 ml-auto">
+          {/* Save-as-draft is available from step 1 onward so notaries can
+              stash a partially-filled entry (e.g. before scanning the ID)
+              and finish it from the entry detail page later. */}
+          {currentStep >= 1 && currentStep < 4 && (
+            <Button
+              variant="secondary"
+              onClick={() => saveEntry('draft')}
+              disabled={isSaving}
+              data-testid="button-save-draft"
+            >
+              {isSaving ? 'Saving...' : 'Save as Draft'}
             </Button>
-            <Button onClick={() => saveEntry('completed')} disabled={isSaving} className="flex-1 sm:flex-none">
-              {isSaving ? 'Completing...' : 'Complete Entry'}
+          )}
+
+          {currentStep < 3 && (
+            <Button onClick={nextStep} className="gap-2" disabled={isScanning} data-testid="button-next">
+              Next Step <ChevronRight className="w-4 h-4" />
             </Button>
-          </div>
-        )}
+          )}
+
+          {currentStep === 3 && (
+            <Button onClick={confirmSignature} className="gap-2">
+              Confirm Signature <ChevronRight className="w-4 h-4" />
+            </Button>
+          )}
+
+          {currentStep === 4 && (
+            <div className="flex gap-3 w-full sm:w-auto">
+              <Button variant="secondary" onClick={() => saveEntry('draft')} disabled={isSaving}>
+                Save Draft
+              </Button>
+              <Button onClick={() => saveEntry('completed')} disabled={isSaving} className="flex-1 sm:flex-none">
+                {isSaving ? 'Completing...' : 'Complete Entry'}
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -24,14 +24,18 @@ export interface JournalEntry {
   signerAddress: string;
   signerCity: string;
   signerState: string;
-  signerDOB: string; // YYYY-MM-DD
+  // DOB / ID number / expiration are conditionally required based on the
+  // notary's state-compliance settings (`recordSignerDOB`, `recordSignerIdNumber`).
+  // Persisted as optional so jurisdictions that don't require them don't
+  // store a blank string in the encrypted blob.
+  signerDOB?: string; // YYYY-MM-DD
   signerPhone?: string;
 
   // ID info
   idType: 'driver_license' | 'passport' | 'state_id' | 'military_id' | 'other';
-  idNumber: string;
+  idNumber?: string;
   idIssuingState?: string;
-  idExpirationDate: string; // YYYY-MM-DD
+  idExpirationDate?: string; // YYYY-MM-DD
 
   // Document info
   documentType: string;
@@ -106,6 +110,12 @@ export interface NotarySettings {
   // responsibility for backing up via JSON export).
   backupReminderDays?: number;
   manualBackupOnly?: boolean;
+  // State-compliance toggles. Default to `true` (record everything) when
+  // unset so existing installs see no behavior change. When set to `false`,
+  // the corresponding fields are hidden in the new-entry / edit-entry forms,
+  // omitted from validation, and skipped in PDF/CSV exports.
+  recordSignerDOB?: boolean;
+  recordSignerIdNumber?: boolean;
 }
 
 // ── Storage shapes (encrypted records actually written to IDB) ─────────────
@@ -619,7 +629,22 @@ const DEFAULT_SETTINGS: NotarySettings = {
   defaultState: '',
   pinEnabled: true,
   darkMode: false,
+  recordSignerDOB: true,
+  recordSignerIdNumber: true,
 };
+
+/**
+ * Resolve the compliance toggles: an undefined value means "this setting
+ * predates the toggle and should default ON" (preserving prior behavior for
+ * existing users). Centralized so callers don't accidentally treat undefined
+ * as `false` and silently drop required fields.
+ */
+export function shouldRecordSignerDOB(s?: Pick<NotarySettings, 'recordSignerDOB'> | null): boolean {
+  return s?.recordSignerDOB !== false;
+}
+export function shouldRecordSignerIdNumber(s?: Pick<NotarySettings, 'recordSignerIdNumber'> | null): boolean {
+  return s?.recordSignerIdNumber !== false;
+}
 
 export async function getSettings(): Promise<NotarySettings> {
   const db = await getDB();

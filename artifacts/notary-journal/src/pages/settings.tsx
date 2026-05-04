@@ -44,6 +44,8 @@ const settingsSchema = z.object({
   defaultCity: z.string().min(1, 'Default city is required'),
   defaultState: z.string().min(2, 'Default state is required').max(2, 'Use 2-letter state code'),
   darkMode: z.boolean(),
+  recordSignerDOB: z.boolean(),
+  recordSignerIdNumber: z.boolean(),
 });
 
 type SettingsFormValues = z.infer<typeof settingsSchema>;
@@ -131,6 +133,8 @@ export function Settings() {
       defaultCity: '',
       defaultState: '',
       darkMode: false,
+      recordSignerDOB: true,
+      recordSignerIdNumber: true,
     }
   });
 
@@ -159,6 +163,10 @@ export function Settings() {
         defaultCity: settings.defaultCity || '',
         defaultState: settings.defaultState || '',
         darkMode: settings.darkMode || false,
+        // Treat undefined as ON so notaries who upgrade with prior data
+        // don't suddenly find DOB/ID# fields disappearing.
+        recordSignerDOB: settings.recordSignerDOB !== false,
+        recordSignerIdNumber: settings.recordSignerIdNumber !== false,
       });
       setAutoBackup(settings.autoBackup ?? false);
       setGoogleEmail(settings.googleEmail ?? '');
@@ -763,6 +771,83 @@ export function Settings() {
                   )}
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          {/* ── Journal Compliance Card ─────────────────────────────────
+              Some states (e.g. CA) bar notaries from recording a signer's
+              date of birth or full ID number in the journal. Toggling
+              these off hides the inputs in the new/edit flows, omits the
+              rows from PDF/CSV exports, and leaves the fields blank on
+              new entries. Defaults to ON to match the most common
+              jurisdictions.                                              */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Journal Compliance</CardTitle>
+              <CardDescription>
+                Match what your state allows you to record. Defaults are on for most states.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Compliance toggles save IMMEDIATELY on change, not on the
+                  bottom "Save Settings" button. These rules drive what's
+                  visible in the new-entry / edit-entry / detail screens, so
+                  forgetting to scroll down and click Save would silently put
+                  the notary out of compliance. */}
+              <FormField
+                control={form.control}
+                name="recordSignerDOB"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base font-medium">Record signer date of birth</FormLabel>
+                      <FormDescription>
+                        Turn off if your state prohibits storing signers' DOB (e.g. California).
+                        The DOB field is hidden from new entries and omitted from exports.
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={async (checked) => {
+                          field.onChange(checked);
+                          const current = await getSettings();
+                          await saveSettings({ ...current, recordSignerDOB: checked } as NotarySettings);
+                          toast({ title: checked ? 'Recording DOB' : 'DOB hidden', description: 'Compliance preference saved.' });
+                        }}
+                        data-testid="switch-record-signer-dob"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="recordSignerIdNumber"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base font-medium">Record signer ID number & expiration</FormLabel>
+                      <FormDescription>
+                        Turn off if your state prohibits storing the full ID number / expiration.
+                        ID type and issuing state are still recorded.
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={async (checked) => {
+                          field.onChange(checked);
+                          const current = await getSettings();
+                          await saveSettings({ ...current, recordSignerIdNumber: checked } as NotarySettings);
+                          toast({ title: checked ? 'Recording ID number' : 'ID number hidden', description: 'Compliance preference saved.' });
+                        }}
+                        data-testid="switch-record-signer-id-number"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
             </CardContent>
           </Card>
 

@@ -12,20 +12,32 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { getEntry, updateEntry, type JournalEntry } from '@/lib/db';
+import {
+  getEntry,
+  updateEntry,
+  getSettings,
+  shouldRecordSignerDOB,
+  shouldRecordSignerIdNumber,
+  type JournalEntry,
+  type NotarySettings,
+} from '@/lib/db';
 import { FEE_TYPES, feeDollarsToCents, resolveFeeType } from '@/lib/fees';
+import { IdScanCard } from '@/components/id-scan-card';
 
+// Schema is intentionally lenient on the optional-by-policy fields
+// (signerDOB, idNumber, idExpirationDate). Whether they're enforced is
+// driven by the notary's compliance toggles, checked in onSubmit below.
 const editSchema = z.object({
   signerFullName: z.string().min(1, 'Full name is required'),
   signerAddress: z.string().min(1, 'Address is required'),
   signerCity: z.string().min(1, 'City is required'),
   signerState: z.string().min(2, 'State is required').max(2),
-  signerDOB: z.string().min(1, 'Date of birth is required'),
+  signerDOB: z.string().optional().default(''),
   signerPhone: z.string().optional(),
   idType: z.enum(['driver_license', 'passport', 'state_id', 'military_id', 'other']),
-  idNumber: z.string().min(1, 'ID number is required'),
+  idNumber: z.string().optional().default(''),
   idIssuingState: z.string().optional(),
-  idExpirationDate: z.string().min(1, 'Expiration date is required'),
+  idExpirationDate: z.string().optional().default(''),
   documentType: z.string().min(1, 'Document type is required'),
   documentDate: z.string().optional(),
   documentDescription: z.string().optional(),
@@ -48,8 +60,21 @@ export function EditEntry() {
   const { toast } = useToast();
 
   const [entry, setEntry] = useState<JournalEntry | null>(null);
+  const [settings, setSettings] = useState<NotarySettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Local copy of the scan images so the user can re-scan a draft without
+  // needing to type anything. Saved alongside the form on submit.
+  const [idFrontImage, setIdFrontImage] = useState<string | undefined>();
+  const [idBackImage, setIdBackImage] = useState<string | undefined>();
+  const [scanMethod, setScanMethod] = useState<'barcode' | 'mrz' | 'ocr' | 'manual' | undefined>();
+  const [scanRawText, setScanRawText] = useState<string | undefined>();
+  const [scanConfidence, setScanConfidence] = useState<number | undefined>();
+  // Derived from URL: ?scan=1 auto-expands the scan card. Wired up in
+  // entry-detail.tsx's "Scan ID Now" button so the user lands directly on
+  // the scan UI without scrolling.
+  const [scanAutoExpand, setScanAutoExpand] = useState(false);
 
   const form = useForm<EditFormValues>({
     resolver: zodResolver(editSchema),
@@ -75,7 +100,15 @@ export function EditEntry() {
   useEffect(() => {
     const loadEntry = async () => {
       if (!id) return;
-      const e = await getEntry(id);
+      // Auto-open scan card when arriving from the "Scan ID Now" CTA.
+      try {
+        const u = new URL(window.location.href);
+        if (u.searchParams.get('scan') === '1') setScanAutoExpand(true);
+      } catch {
+        // Non-browser env; fine to skip.
+      }
+
+      const [e, s] = await Promise.all([getEntry(id), getSettings()]);
       if (!e) {
         toast({ title: 'Not Found', description: 'Entry not found.', variant: 'destructive' });
         setLocation('/journal');
@@ -87,17 +120,23 @@ export function EditEntry() {
         return;
       }
       setEntry(e);
+      setSettings(s);
+      setIdFrontImage(e.idFrontImage);
+      setIdBackImage(e.idBackImage);
+      setScanMethod(e.extractionMethod);
+      setScanRawText(e.extractedRawText);
+      setScanConfidence(e.extractionConfidence);
       form.reset({
         signerFullName: e.signerFullName,
         signerAddress: e.signerAddress,
         signerCity: e.signerCity,
         signerState: e.signerState,
-        signerDOB: e.signerDOB,
+        signerDOB: e.signerDOB || '',
         signerPhone: e.signerPhone || '',
         idType: e.idType,
-        idNumber: e.idNumber,
+        idNumber: e.idNumber || '',
         idIssuingState: e.idIssuingState || '',
-        idExpirationDate: e.idExpirationDate,
+        idExpirationDate: e.idExpirationDate || '',
         documentType: e.documentType,
         documentDate: e.documentDate || '',
         documentDescription: e.documentDescription || '',
@@ -115,14 +154,74 @@ export function EditEntry() {
     loadEntry();
   }, [id, form, setLocation, toast]);
 
+  const wantsDOB = shouldRecordSignerDOB(settings ?? undefined);
+  const wantsIdNumber = shouldRecordSignerIdNumber(settings ?? undefined);
+
+  const handleScanResult = ({
+    frontImage,
+    backImage,
+    result,
+  }: {
+    frontImage?: string;
+    backImage?: string;
+    result: { fields: Record<string, string>; extraction: { method: 'barcode' | 'ocr' | 'mrz'; text?: string; confidence?: number } };
+  }) => {
+    if (frontImage !== undefined) setIdFrontImage(frontImage);
+    if (backImage !== undefined) setIdBackImage(backImage);
+
+    setScanMethod(result.extraction.method);
+    setScanRawText(result.extraction.text);
+    setScanConfidence(result.extraction.confidence);
+
+    // Apply extracted fields. Honor the compliance toggles — we don't want
+    // to silently fill DOB / ID# when the notary has them disabled.
+    const FIELD_MAP: Array<[string, keyof EditFormValues, boolean]> = [
+      ['fullName', 'signerFullName', true],
+      ['address', 'signerAddress', true],
+      ['city', 'signerCity', true],
+      ['state', 'signerState', true],
+      ['dob', 'signerDOB', wantsDOB],
+      ['idNumber', 'idNumber', wantsIdNumber],
+      ['idIssuingState', 'idIssuingState', true],
+      ['expirationDate', 'idExpirationDate', wantsIdNumber],
+    ];
+    for (const [from, to, allowed] of FIELD_MAP) {
+      if (!allowed) continue;
+      const v = result.fields[from];
+      if (v) form.setValue(to as never, v as never, { shouldDirty: true });
+    }
+  };
+
   const onSubmit = async (data: EditFormValues) => {
     if (!entry) return;
+
+    // Conditional required-field check: only enforce when the toggle is on.
+    if (wantsDOB && !data.signerDOB) {
+      form.setError('signerDOB', { type: 'manual', message: 'Date of birth is required' });
+      return;
+    }
+    if (wantsIdNumber) {
+      if (!data.idNumber) {
+        form.setError('idNumber', { type: 'manual', message: 'ID number is required' });
+        return;
+      }
+      if (!data.idExpirationDate) {
+        form.setError('idExpirationDate', { type: 'manual', message: 'Expiration date is required' });
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       const feeCents = feeDollarsToCents(data.feeCharged);
       await updateEntry(id, {
         ...data,
         feeCharged: feeCents,
+        idFrontImage,
+        idBackImage,
+        extractionMethod: scanMethod,
+        extractedRawText: scanRawText,
+        extractionConfidence: scanConfidence,
         editHistory: [
           ...(entry.editHistory || []),
           { field: 'form', oldValue: '', newValue: 'updated', date: new Date().toISOString() },
@@ -158,6 +257,8 @@ export function EditEntry() {
 
   if (!entry) return null;
 
+  const currentIdType = form.watch('idType');
+
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto pb-24 md:pb-8">
       <div className="flex items-center gap-4 mb-8">
@@ -169,6 +270,17 @@ export function EditEntry() {
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          {/* Scan card lives at the top of the edit page so the "draft now,
+              scan later" workflow is one tap away. The card is collapsible
+              once the user has worked through it. */}
+          <IdScanCard
+            idType={currentIdType}
+            initialFrontImage={idFrontImage}
+            initialBackImage={idBackImage}
+            onScan={handleScanResult}
+            defaultExpanded={scanAutoExpand || (!idFrontImage && !idBackImage)}
+          />
+
           <Card>
             <CardHeader>
               <CardTitle>Signer Information</CardTitle>
@@ -202,13 +314,15 @@ export function EditEntry() {
                   <FormMessage />
                 </FormItem>
               )} />
-              <FormField control={form.control} name="signerDOB" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Date of Birth</FormLabel>
-                  <FormControl><Input type="date" {...field} data-testid="input-signer-dob" /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+              {wantsDOB && (
+                <FormField control={form.control} name="signerDOB" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Date of Birth</FormLabel>
+                    <FormControl><Input type="date" {...field} data-testid="input-signer-dob" /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              )}
               <FormField control={form.control} name="signerPhone" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Phone (optional)</FormLabel>
@@ -244,13 +358,15 @@ export function EditEntry() {
                   <FormMessage />
                 </FormItem>
               )} />
-              <FormField control={form.control} name="idNumber" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>ID Number</FormLabel>
-                  <FormControl><Input {...field} data-testid="input-id-number" /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+              {wantsIdNumber && (
+                <FormField control={form.control} name="idNumber" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>ID Number</FormLabel>
+                    <FormControl><Input {...field} data-testid="input-id-number" /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              )}
               <FormField control={form.control} name="idIssuingState" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Issuing State (optional)</FormLabel>
@@ -258,13 +374,15 @@ export function EditEntry() {
                   <FormMessage />
                 </FormItem>
               )} />
-              <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Expiration Date</FormLabel>
-                  <FormControl><Input type="date" {...field} data-testid="input-id-expiration" /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+              {wantsIdNumber && (
+                <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Expiration Date</FormLabel>
+                    <FormControl><Input type="date" {...field} data-testid="input-id-expiration" /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              )}
             </CardContent>
           </Card>
 

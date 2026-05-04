@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { useLocation, useParams } from 'wouter';
 import { format } from 'date-fns';
 import { type LucideIcon } from 'lucide-react';
-import { 
-  ArrowLeft, Download, FileText, User, CreditCard, CheckCircle, 
-  Clock, ShieldAlert, ShieldCheck, PenTool, Edit3, Image as ImageIcon, Trash2
+import {
+  ArrowLeft, Download, FileText, User, CreditCard, CheckCircle,
+  Clock, ShieldAlert, ShieldCheck, PenTool, Edit3, Image as ImageIcon, Trash2, ScanLine
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,7 +13,11 @@ import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, getAllEntries, recomputeChainFrom, verifyChainPure, type JournalEntry, type NotarySettings } from '@/lib/db';
+import {
+  getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, getAllEntries,
+  recomputeChainFrom, verifyChainPure, shouldRecordSignerDOB, shouldRecordSignerIdNumber,
+  type JournalEntry, type NotarySettings,
+} from '@/lib/db';
 import { exportEntryPDF, exportEntryCSV, exportEntryJSON } from '@/lib/export';
 
 export function EntryDetail() {
@@ -168,9 +172,29 @@ export function EntryDetail() {
         
         <div className="flex flex-wrap items-center gap-2">
           {entry.status === 'draft' && (
-            <Button variant="default" className="gap-2" onClick={() => setLocation(`/entry/${entry.id}/edit`)}>
-              <Edit3 className="w-4 h-4" /> Edit Draft
-            </Button>
+            <>
+              {/* Distinct CTA for the "draft now, scan later" workflow.
+                  Routes into the same edit page but auto-opens the scan
+                  card via the ?scan=1 query param. */}
+              {!entry.idFrontImage && (
+                <Button
+                  variant="default"
+                  className="gap-2"
+                  onClick={() => setLocation(`/entry/${entry.id}/edit?scan=1`)}
+                  data-testid="button-scan-id-now"
+                >
+                  <ScanLine className="w-4 h-4" /> Scan ID Now
+                </Button>
+              )}
+              <Button
+                variant={entry.idFrontImage ? 'default' : 'outline'}
+                className="gap-2"
+                onClick={() => setLocation(`/entry/${entry.id}/edit`)}
+                data-testid="button-edit-draft"
+              >
+                <Edit3 className="w-4 h-4" /> Edit Draft
+              </Button>
+            </>
           )}
 
           <Button variant="outline" size="sm" className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive" onClick={() => setShowDeleteDialog(true)}>
@@ -237,7 +261,9 @@ export function EntryDetail() {
               <div className="col-span-2">
                 <DetailItem label="Address" value={`${entry.signerAddress}, ${entry.signerCity}, ${entry.signerState}`} />
               </div>
-              <DetailItem label="Date of Birth" value={entry.signerDOB} />
+              {shouldRecordSignerDOB(settings) && (
+                <DetailItem label="Date of Birth" value={entry.signerDOB} />
+              )}
               <DetailItem label="Phone" value={entry.signerPhone} />
             </CardContent>
           </Card>
@@ -250,9 +276,13 @@ export function EntryDetail() {
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-y-6 gap-x-4">
               <DetailItem label="ID Type" value={entry.idType.replace('_', ' ').toUpperCase()} />
-              <DetailItem label="ID Number" value={entry.idNumber} />
+              {shouldRecordSignerIdNumber(settings) && (
+                <DetailItem label="ID Number" value={entry.idNumber} />
+              )}
               <DetailItem label="Issuing State" value={entry.idIssuingState} />
-              <DetailItem label="Expiration Date" value={entry.idExpirationDate} />
+              {shouldRecordSignerIdNumber(settings) && (
+                <DetailItem label="Expiration Date" value={entry.idExpirationDate} />
+              )}
               
               {(entry.idFrontImage || entry.idBackImage) && (
                 <div className="col-span-2 mt-2 pt-4 border-t">
