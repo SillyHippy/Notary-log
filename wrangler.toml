@@ -1,0 +1,5 @@
+name = "notary-log"
+compatibility_date = "2024-04-05"
+
+[assets]
+directory = "artifacts/notary-journal/dist/public"
