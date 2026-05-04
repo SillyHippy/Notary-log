@@ -205,10 +205,10 @@ export function EntryDetail() {
             <Button variant="ghost" size="sm" className="gap-1 h-8" onClick={() => exportEntryPDF(entry, settings)}>
               <Download className="w-3.5 h-3.5" /> PDF
             </Button>
-            <Button variant="ghost" size="sm" className="gap-1 h-8" onClick={() => exportEntryCSV(entry)}>
+            <Button variant="ghost" size="sm" className="gap-1 h-8" onClick={() => exportEntryCSV(entry, settings)}>
               <Download className="w-3.5 h-3.5" /> CSV
             </Button>
-            <Button variant="ghost" size="sm" className="gap-1 h-8" onClick={() => exportEntryJSON(entry)}>
+            <Button variant="ghost" size="sm" className="gap-1 h-8" onClick={() => exportEntryJSON(entry, settings)}>
               <Download className="w-3.5 h-3.5" /> JSON
             </Button>
           </div>

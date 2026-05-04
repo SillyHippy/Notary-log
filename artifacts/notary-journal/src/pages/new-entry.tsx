@@ -462,6 +462,12 @@ export function NewEntry() {
     fields: Record<string, string>,
     mode: 'replace' | 'fillGaps' = 'replace',
   ) => {
+    // Compliance toggles can hide the DOB / ID# / expiration fields entirely.
+    // When that's the case we MUST also drop them from the parsed scan
+    // payload, otherwise a hidden field could still be silently populated and
+    // persisted via the spread in saveEntry.
+    const recordDOB = shouldRecordSignerDOB(appSettings ?? undefined);
+    const recordId = shouldRecordSignerIdNumber(appSettings ?? undefined);
     const FIELD_MAP: Array<[keyof typeof fields, string]> = [
       ['fullName', 'signerFullName'],
       ['address', 'signerAddress'],
@@ -473,6 +479,8 @@ export function NewEntry() {
       ['expirationDate', 'idExpirationDate'],
     ];
     for (const [from, to] of FIELD_MAP) {
+      if (!recordDOB && to === 'signerDOB') continue;
+      if (!recordId && (to === 'idNumber' || to === 'idExpirationDate')) continue;
       const v = fields[from as string];
       if (!v) continue;
       if (mode === 'fillGaps' && form.getValues(to as never)) continue;
@@ -700,11 +708,24 @@ export function NewEntry() {
       // Coerce fee to a finite cents integer. An empty/NaN field becomes 0.
       const feeCents = feeDollarsToCents(data.feeCharged);
 
+      // Defense in depth: we already hide DOB / ID# / expiration in the UI
+      // when their toggles are off and we scrub them in applyExtractedFields,
+      // but a stale value could still be in form state if the notary toggled
+      // a setting mid-flow. Scrub once more right before persistence.
+      const recordDOB = shouldRecordSignerDOB(appSettings ?? undefined);
+      const recordId = shouldRecordSignerIdNumber(appSettings ?? undefined);
+      const scrubbed = { ...data };
+      if (!recordDOB) scrubbed.signerDOB = '';
+      if (!recordId) {
+        scrubbed.idNumber = '';
+        scrubbed.idExpirationDate = '';
+      }
+
       // Build the entry, omitting optional scan-only fields entirely when
       // they don't apply (don't write `undefined` into the encrypted blob).
       const baseEntry: Omit<JournalEntry, 'id' | 'entryNumber' | 'createdAt' | 'updatedAt'> = {
         status,
-        ...data,
+        ...scrubbed,
         feeCharged: feeCents,
         idFrontImage,
         idBackImage,

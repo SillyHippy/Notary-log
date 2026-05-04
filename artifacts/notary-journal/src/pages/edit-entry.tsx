@@ -21,6 +21,8 @@ import {
   type JournalEntry,
   type NotarySettings,
 } from '@/lib/db';
+// Note: updateEntry is imported above and reused for both the scan-time
+// auto-save (handleScanResult) and the user-clicks-Save path (onSubmit).
 import { FEE_TYPES, feeDollarsToCents, resolveFeeType } from '@/lib/fees';
 import { IdScanCard } from '@/components/id-scan-card';
 
@@ -157,7 +159,7 @@ export function EditEntry() {
   const wantsDOB = shouldRecordSignerDOB(settings ?? undefined);
   const wantsIdNumber = shouldRecordSignerIdNumber(settings ?? undefined);
 
-  const handleScanResult = ({
+  const handleScanResult = async ({
     frontImage,
     backImage,
     result,
@@ -190,6 +192,27 @@ export function EditEntry() {
       const v = result.fields[from];
       if (v) form.setValue(to as never, v as never, { shouldDirty: true });
     }
+
+    // Auto-persist the scan result back onto the draft so the captured
+    // image and extraction metadata survive even if the notary navigates
+    // away before clicking Save Changes. We only patch fields owned by the
+    // scan flow — the form values themselves still require Save Changes.
+    if (entry?.id != null) {
+      try {
+        const patch: Partial<JournalEntry> = {
+          extractionMethod: result.extraction.method,
+          extractedRawText: result.extraction.text,
+          extractionConfidence: result.extraction.confidence,
+        };
+        if (frontImage !== undefined) patch.idFrontImage = frontImage;
+        if (backImage !== undefined) patch.idBackImage = backImage;
+        await updateEntry(entry.id, patch);
+        toast({ title: 'Scan saved', description: 'ID image attached to this draft.' });
+      } catch (err) {
+        // Non-fatal: the form-level Save Changes button will retry the write.
+        console.error('Auto-save of scan result failed', err);
+      }
+    }
   };
 
   const onSubmit = async (data: EditFormValues) => {
@@ -214,8 +237,18 @@ export function EditEntry() {
     setIsSaving(true);
     try {
       const feeCents = feeDollarsToCents(data.feeCharged);
+      // Defense in depth: the form already hides DOB/ID#/expiration when the
+      // toggles are off, but we explicitly scrub them here too so a stale
+      // value (e.g. typed before the toggle flipped) cannot leak into the
+      // persisted entry.
+      const scrubbed: EditFormValues = { ...data };
+      if (!wantsDOB) scrubbed.signerDOB = '';
+      if (!wantsIdNumber) {
+        scrubbed.idNumber = '';
+        scrubbed.idExpirationDate = '';
+      }
       await updateEntry(id, {
-        ...data,
+        ...scrubbed,
         feeCharged: feeCents,
         idFrontImage,
         idBackImage,

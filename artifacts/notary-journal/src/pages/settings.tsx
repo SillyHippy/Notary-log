@@ -505,7 +505,7 @@ export function Settings() {
 
   const handleExportCSV = async () => {
     const entries = await getAllEntries();
-    exportAllCSV(entries);
+    exportAllCSV(entries, await getSettings());
   };
 
   const handleExportJSON = async () => {

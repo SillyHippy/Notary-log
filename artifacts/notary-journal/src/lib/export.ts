@@ -156,8 +156,13 @@ function csvField(value: unknown): string {
   return `"${String(value ?? '').replace(/"/g, '""')}"`;
 }
 
-function generateCSVRow(entry: JournalEntry): string {
+function generateCSVRow(entry: JournalEntry, settings?: NotarySettings | null): string {
   const amendments = entry.amendments ?? [];
+  // Honor compliance toggles: if the notary's state forbids storing DOB or
+  // ID#, we omit those values from the CSV row even if the entry happens to
+  // have them on record (older entries written before the toggle flipped).
+  const recordDOB = shouldRecordSignerDOB(settings ?? undefined);
+  const recordId = shouldRecordSignerIdNumber(settings ?? undefined);
   return [
     entry.entryNumber,
     entry.status,
@@ -168,12 +173,12 @@ function generateCSVRow(entry: JournalEntry): string {
     entry.signerAddress,
     entry.signerCity,
     entry.signerState,
-    entry.signerDOB ?? '',
+    recordDOB ? (entry.signerDOB ?? '') : '',
     entry.signerPhone ?? '',
     entry.idType,
-    entry.idNumber ?? '',
+    recordId ? (entry.idNumber ?? '') : '',
     entry.idIssuingState ?? '',
-    entry.idExpirationDate ?? '',
+    recordId ? (entry.idExpirationDate ?? '') : '',
     entry.documentType,
     entry.documentDate ?? '',
     entry.documentDescription ?? '',
@@ -198,18 +203,29 @@ function generateCSVRow(entry: JournalEntry): string {
 
 const csvHeader = CSV_HEADERS.join(',') + '\n';
 
-export function exportEntryCSV(entry: JournalEntry): void {
-  const csvContent = csvHeader + generateCSVRow(entry);
+export function exportEntryCSV(entry: JournalEntry, settings?: NotarySettings | null): void {
+  const csvContent = csvHeader + generateCSVRow(entry, settings);
   downloadBlob(new Blob([csvContent], { type: 'text/csv' }), `notary-entry-${entry.entryNumber}.csv`);
 }
 
-export function exportEntryJSON(entry: JournalEntry): void {
-  const jsonContent = JSON.stringify(entry, null, 2);
+export function exportEntryJSON(entry: JournalEntry, settings?: NotarySettings | null): void {
+  const recordDOB = shouldRecordSignerDOB(settings ?? undefined);
+  const recordId = shouldRecordSignerIdNumber(settings ?? undefined);
+  // Build a sanitized copy that drops keys disabled by compliance toggles
+  // entirely (vs. emitting empty strings) so downstream consumers cannot
+  // accidentally treat a present-but-empty field as recorded data.
+  const sanitized: JournalEntry = { ...entry };
+  if (!recordDOB) delete sanitized.signerDOB;
+  if (!recordId) {
+    delete sanitized.idNumber;
+    delete sanitized.idExpirationDate;
+  }
+  const jsonContent = JSON.stringify(sanitized, null, 2);
   downloadBlob(new Blob([jsonContent], { type: 'application/json' }), `notary-entry-${entry.entryNumber}.json`);
 }
 
-export function exportAllCSV(entries: JournalEntry[]): void {
-  const csvContent = csvHeader + entries.map(generateCSVRow).join('\n');
+export function exportAllCSV(entries: JournalEntry[], settings?: NotarySettings | null): void {
+  const csvContent = csvHeader + entries.map((e) => generateCSVRow(e, settings)).join('\n');
   downloadBlob(new Blob([csvContent], { type: 'text/csv' }), `notary-journal-export-${Date.now()}.csv`);
 }
 

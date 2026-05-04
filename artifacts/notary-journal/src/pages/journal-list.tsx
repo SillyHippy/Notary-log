@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getAllEntries, searchEntries, deleteEntry, type JournalEntry } from '@/lib/db';
+import { getAllEntries, searchEntries, deleteEntry, getSettings, shouldRecordSignerIdNumber, type JournalEntry, type NotarySettings } from '@/lib/db';
 
 type SortField = 'date' | 'name' | 'entry';
 type SortDir = 'asc' | 'desc';
@@ -27,9 +27,16 @@ export function JournalList() {
   const [isLoading, setIsLoading] = useState(true);
   const [showMasked, setShowMasked] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [settings, setSettings] = useState<NotarySettings | null>(null);
+  // Compliance: when this notary's state forbids storing the ID number, hide
+  // the entire ID Number column (header + cell + masking control) so it never
+  // appears on screen — even masked — for entries that may have been written
+  // before the toggle flipped.
+  const showIdColumn = shouldRecordSignerIdNumber(settings ?? undefined);
 
   useEffect(() => {
     loadEntries(initialQuery);
+    getSettings().then(setSettings).catch(() => setSettings(null));
   }, [initialQuery]);
 
   const loadEntries = async (query: string) => {
@@ -151,16 +158,18 @@ export function JournalList() {
             </TabsList>
           </Tabs>
           
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="gap-2"
-            onClick={() => setShowMasked(!showMasked)}
-            data-testid="button-toggle-mask"
-          >
-            {showMasked ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            {showMasked ? 'Hide ID Numbers' : 'Show ID Numbers'}
-          </Button>
+          {showIdColumn && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="gap-2"
+              onClick={() => setShowMasked(!showMasked)}
+              data-testid="button-toggle-mask"
+            >
+              {showMasked ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showMasked ? 'Hide ID Numbers' : 'Show ID Numbers'}
+            </Button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -233,7 +242,7 @@ export function JournalList() {
                       Signer <SortIcon field="name" />
                     </button>
                   </th>
-                  <th scope="col" className="px-4 py-3 font-medium">ID Number</th>
+                  {showIdColumn && <th scope="col" className="px-4 py-3 font-medium">ID Number</th>}
                   <th scope="col" className="px-4 py-3 font-medium">Act Type</th>
                   <th scope="col" className="px-4 py-3 font-medium text-right">Fee</th>
                   <th scope="col" className="px-4 py-3 font-medium text-center">Status</th>
@@ -257,9 +266,11 @@ export function JournalList() {
                     <td className="px-4 py-3 font-medium">
                       {entry.signerFullName || <span className="text-muted-foreground italic">None</span>}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                      {maskIdNumber(entry.idNumber)}
-                    </td>
+                    {showIdColumn && (
+                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                        {maskIdNumber(entry.idNumber)}
+                      </td>
+                    )}
                     <td className="px-4 py-3 capitalize">
                       {entry.notarialActType.replace('_', ' ')}
                     </td>
