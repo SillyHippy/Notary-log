@@ -26,6 +26,7 @@ import {
 // Note: updateEntry is imported above and reused for both the scan-time
 // auto-save (handleScanResult) and the user-clicks-Save path (onSubmit).
 import { FEE_TYPES, feeDollarsToCents, resolveFeeType } from '@/lib/fees';
+import { getMissingCompletionFields } from '@/lib/completion';
 import { IdScanCard } from '@/components/id-scan-card';
 
 // Schema is intentionally lenient on the optional-by-policy fields
@@ -329,21 +330,9 @@ export function EditEntry() {
 
   // Returns a list of human-readable labels for fields that must be non-empty
   // before the entry can be completed (taking compliance toggles into account).
-  const getMissingFields = (): string[] => {
-    const data = form.getValues();
-    const missing: string[] = [];
-    if (!data.signerFullName) missing.push('Signer full name');
-    if (!data.signerAddress) missing.push('Address');
-    if (!data.signerCity) missing.push('City');
-    if (!data.signerState) missing.push('State');
-    if (wantsDOB && !data.signerDOB) missing.push('Date of birth');
-    if (!data.idExpirationDate) missing.push('ID expiration date');
-    if (wantsIdNumber && !data.idNumber) missing.push('ID number');
-    if (!data.documentType) missing.push('Document type');
-    if (!data.locationCity) missing.push('Location city');
-    if (!data.locationState) missing.push('Location state');
-    return missing;
-  };
+  // Delegates to the pure getMissingCompletionFields helper so the same logic
+  // can be unit-tested without a React tree.
+  const getMissingFields = (): string[] => getMissingCompletionFields(form.getValues(), settings);
 
   const handleComplete = async (data: EditFormValues) => {
     if (!entry) return;

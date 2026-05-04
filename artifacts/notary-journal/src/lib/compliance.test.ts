@@ -7,6 +7,7 @@ import {
   type JournalEntry,
   type NotarySettings,
 } from './db';
+import { getMissingCompletionFields, type CompletionFields } from './completion';
 
 const baseEntry = (overrides: Partial<JournalEntry> = {}): JournalEntry => ({
   entryNumber: 1,
@@ -188,5 +189,96 @@ describe('Scan-field persistence to draft (contract)', () => {
     const draftNoScan = baseEntry({ status: 'draft', idFrontImage: undefined, idBackImage: undefined });
     expect(draftNoScan.idFrontImage).toBeUndefined();
     expect(draftNoScan.idBackImage).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMissingCompletionFields — compliance-aware required-field checker
+// ---------------------------------------------------------------------------
+
+const fullDraftFields = (): CompletionFields => ({
+  signerFullName: 'Jane Doe',
+  signerAddress: '1 Main St',
+  signerCity: 'Chicago',
+  signerState: 'IL',
+  signerDOB: '1990-01-15',
+  idNumber: 'D123456789',
+  idExpirationDate: '2030-12-31',
+  documentType: 'Affidavit',
+  locationCity: 'Chicago',
+  locationState: 'IL',
+});
+
+describe('getMissingCompletionFields', () => {
+  it('returns empty array when all required fields are present (both toggles ON)', () => {
+    const missing = getMissingCompletionFields(fullDraftFields(), settings());
+    expect(missing).toHaveLength(0);
+  });
+
+  it('does NOT require signerDOB when DOB toggle is OFF', () => {
+    const data = { ...fullDraftFields(), signerDOB: '' };
+    const missing = getMissingCompletionFields(data, settings({ recordSignerDOB: false }));
+    expect(missing).not.toContain('Date of birth');
+    expect(missing).toHaveLength(0);
+  });
+
+  it('REQUIRES signerDOB when DOB toggle is ON and it is blank', () => {
+    const data = { ...fullDraftFields(), signerDOB: '' };
+    const missing = getMissingCompletionFields(data, settings({ recordSignerDOB: true }));
+    expect(missing).toContain('Date of birth');
+  });
+
+  it('does NOT require idNumber when ID# toggle is OFF', () => {
+    const data = { ...fullDraftFields(), idNumber: '' };
+    const missing = getMissingCompletionFields(data, settings({ recordSignerIdNumber: false }));
+    expect(missing).not.toContain('ID number');
+    expect(missing).toHaveLength(0);
+  });
+
+  it('REQUIRES idNumber when ID# toggle is ON and it is blank', () => {
+    const data = { ...fullDraftFields(), idNumber: '' };
+    const missing = getMissingCompletionFields(data, settings({ recordSignerIdNumber: true }));
+    expect(missing).toContain('ID number');
+  });
+
+  it('ALWAYS requires idExpirationDate regardless of ID# toggle', () => {
+    const data = { ...fullDraftFields(), idExpirationDate: '' };
+    const missingToggleOn = getMissingCompletionFields(data, settings({ recordSignerIdNumber: true }));
+    const missingToggleOff = getMissingCompletionFields(data, settings({ recordSignerIdNumber: false }));
+    expect(missingToggleOn).toContain('ID expiration date');
+    expect(missingToggleOff).toContain('ID expiration date');
+  });
+
+  it('lists all core fields when data is empty and both toggles ON', () => {
+    const missing = getMissingCompletionFields({}, settings());
+    expect(missing).toContain('Signer full name');
+    expect(missing).toContain('Address');
+    expect(missing).toContain('City');
+    expect(missing).toContain('State');
+    expect(missing).toContain('Date of birth');
+    expect(missing).toContain('ID expiration date');
+    expect(missing).toContain('ID number');
+    expect(missing).toContain('Document type');
+    expect(missing).toContain('Location city');
+    expect(missing).toContain('Location state');
+  });
+
+  it('lists all core fields when data is empty and both toggles OFF (DOB/ID# excluded)', () => {
+    const missing = getMissingCompletionFields(
+      {},
+      settings({ recordSignerDOB: false, recordSignerIdNumber: false }),
+    );
+    expect(missing).not.toContain('Date of birth');
+    expect(missing).not.toContain('ID number');
+    expect(missing).toContain('Signer full name');
+    expect(missing).toContain('ID expiration date');
+    expect(missing).toContain('Document type');
+  });
+
+  it('treats undefined settings the same as toggles ON (legacy default)', () => {
+    const data = { ...fullDraftFields(), signerDOB: '', idNumber: '' };
+    const missing = getMissingCompletionFields(data, undefined);
+    expect(missing).toContain('Date of birth');
+    expect(missing).toContain('ID number');
   });
 });
