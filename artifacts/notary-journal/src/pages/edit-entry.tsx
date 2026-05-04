@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation, useParams } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { ArrowLeft, Save } from 'lucide-react';
+import SignaturePad from 'signature_pad';
+import { ArrowLeft, Save, PenTool, Eraser, CheckCircle2, AlertCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   getEntry,
   updateEntry,
+  completeEntry,
   getSettings,
   shouldRecordSignerDOB,
   shouldRecordSignerIdNumber,
@@ -78,6 +80,13 @@ export function EditEntry() {
   // the scan UI without scrolling.
   const [scanAutoExpand, setScanAutoExpand] = useState(false);
 
+  // "Complete mode" — entered via ?complete=1 from "Continue & Sign" CTA.
+  // Shows the signature capture section and a "Sign & Complete Entry" button.
+  const [completeMode, setCompleteMode] = useState(false);
+  const [signatureImage, setSignatureImage] = useState<string | undefined>();
+  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const signaturePadRef = useRef<SignaturePad | null>(null);
+
   const form = useForm<EditFormValues>({
     resolver: zodResolver(editSchema),
     defaultValues: {
@@ -103,9 +112,11 @@ export function EditEntry() {
     const loadEntry = async () => {
       if (!id) return;
       // Auto-open scan card when arriving from the "Scan ID Now" CTA.
+      // Activate complete mode when arriving from "Continue & Sign" CTA.
       try {
         const u = new URL(window.location.href);
         if (u.searchParams.get('scan') === '1') setScanAutoExpand(true);
+        if (u.searchParams.get('complete') === '1') setCompleteMode(true);
       } catch {
         // Non-browser env; fine to skip.
       }
@@ -295,6 +306,95 @@ export function EditEntry() {
     }
   };
 
+  // Initialise the signature pad whenever complete mode becomes active and the
+  // canvas element is in the DOM.  We do this in a separate effect so the
+  // canvas has had a chance to render.
+  useEffect(() => {
+    if (!completeMode || !sigCanvasRef.current) return;
+    const canvas = sigCanvasRef.current;
+    const parent = canvas.parentElement;
+    if (parent) {
+      canvas.width = parent.clientWidth;
+      canvas.height = parent.clientHeight;
+    }
+    signaturePadRef.current = new SignaturePad(canvas, {
+      backgroundColor: 'rgba(255, 255, 255, 0)',
+      penColor: 'rgb(0, 0, 0)',
+    });
+    return () => {
+      signaturePadRef.current?.off();
+      signaturePadRef.current = null;
+    };
+  }, [completeMode]);
+
+  // Returns a list of human-readable labels for fields that must be non-empty
+  // before the entry can be completed (taking compliance toggles into account).
+  const getMissingFields = (): string[] => {
+    const data = form.getValues();
+    const missing: string[] = [];
+    if (!data.signerFullName) missing.push('Signer full name');
+    if (!data.signerAddress) missing.push('Address');
+    if (!data.signerCity) missing.push('City');
+    if (!data.signerState) missing.push('State');
+    if (wantsDOB && !data.signerDOB) missing.push('Date of birth');
+    if (!data.idExpirationDate) missing.push('ID expiration date');
+    if (wantsIdNumber && !data.idNumber) missing.push('ID number');
+    if (!data.documentType) missing.push('Document type');
+    if (!data.locationCity) missing.push('Location city');
+    if (!data.locationState) missing.push('Location state');
+    return missing;
+  };
+
+  const handleComplete = async (data: EditFormValues) => {
+    if (!entry) return;
+
+    if (signaturePadRef.current?.isEmpty()) {
+      toast({ title: 'Signature required', description: 'Please have the signer sign before completing.', variant: 'destructive' });
+      return;
+    }
+    const sigData = signaturePadRef.current?.toDataURL('image/png');
+
+    setIsSaving(true);
+    try {
+      const feeCents = feeDollarsToCents(data.feeCharged);
+      const scrubbed: EditFormValues = { ...data };
+      if (!wantsDOB) scrubbed.signerDOB = '';
+      if (!wantsIdNumber) scrubbed.idNumber = '';
+      // Persist the latest form values + signature image first, then call
+      // completeEntry() which stamps the chain hash.
+      await updateEntry(id, {
+        ...scrubbed,
+        feeCharged: feeCents,
+        idFrontImage,
+        idBackImage,
+        signatureImage: sigData,
+        extractionMethod: scanMethod,
+        extractedRawText: scanRawText,
+        extractionConfidence: scanConfidence,
+        editHistory: [
+          ...(entry.editHistory || []),
+          { field: 'form', oldValue: '', newValue: 'updated before sign', date: new Date().toISOString() },
+        ],
+      });
+      await completeEntry(id);
+      toast({ title: 'Entry completed', description: `Entry #${entry.entryNumber} has been signed and completed.` });
+      setLocation(`/entry/${id}`);
+    } catch (err) {
+      console.error('Complete entry failed', err);
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      if (/locked/i.test(rawMsg)) {
+        window.location.reload();
+        return;
+      }
+      toast({
+        title: 'Failed to complete entry',
+        description: rawMsg || 'Unknown error — the entry remains a draft.',
+        variant: 'destructive',
+      });
+      setIsSaving(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="p-6 max-w-4xl mx-auto flex items-center justify-center min-h-64">
@@ -307,13 +407,18 @@ export function EditEntry() {
 
   const currentIdType = form.watch('idType');
 
+  const missingFields = completeMode ? getMissingFields() : [];
+  const canComplete = completeMode && missingFields.length === 0 && !isSaving;
+
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto pb-24 md:pb-8">
       <div className="flex items-center gap-4 mb-8">
         <Button variant="ghost" className="gap-2 pl-0 hover:bg-transparent hover:text-primary" onClick={() => setLocation(`/entry/${id}`)}>
           <ArrowLeft className="w-4 h-4" /> Back to Entry
         </Button>
-        <h1 className="text-2xl font-bold tracking-tight">Edit Draft Entry #{entry.entryNumber}</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {completeMode ? `Complete Entry #${entry.entryNumber}` : `Edit Draft Entry #${entry.entryNumber}`}
+        </h1>
       </div>
 
       <Form {...form}>
@@ -528,6 +633,57 @@ export function EditEntry() {
             </CardContent>
           </Card>
 
+          {/* SIGNATURE CAPTURE — only visible in complete mode */}
+          {completeMode && (
+            <Card className="border-primary/30">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <PenTool className="w-5 h-5 text-primary" /> Signer Signature
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {missingFields.length > 0 && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-3 text-sm text-amber-800 dark:text-amber-300">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-medium mb-1">Fill in required fields before signing:</p>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {missingFields.map(f => <li key={f}>{f}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                <div className="relative border-2 border-primary/30 border-dashed rounded-xl bg-white overflow-hidden" style={{ minHeight: '220px' }}>
+                  <canvas
+                    ref={sigCanvasRef}
+                    className="w-full h-full cursor-crosshair touch-none"
+                    style={{ display: 'block', minHeight: '220px' }}
+                    data-testid="signature-canvas"
+                  />
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-10">
+                    <span className="text-5xl font-serif text-black font-bold tracking-widest rotate-[-10deg]">SIGN HERE</span>
+                  </div>
+                  <div className="absolute bottom-3 right-3 z-10">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="shadow-md gap-2"
+                      onClick={() => signaturePadRef.current?.clear()}
+                    >
+                      <Eraser className="w-3.5 h-3.5" /> Clear
+                    </Button>
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Have the signer draw their signature inside the box above using a finger, stylus, or mouse.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="flex gap-3 justify-end">
             <Button type="button" variant="outline" onClick={() => setLocation(`/entry/${id}`)} disabled={isSaving} data-testid="button-cancel-edit">
               Cancel
@@ -536,6 +692,18 @@ export function EditEntry() {
               <Save className="w-4 h-4" />
               {isSaving ? 'Saving...' : 'Save Changes'}
             </Button>
+            {completeMode && (
+              <Button
+                type="button"
+                disabled={!canComplete}
+                className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={form.handleSubmit(handleComplete)}
+                data-testid="button-sign-complete"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {isSaving ? 'Completing...' : 'Sign & Complete Entry'}
+              </Button>
+            )}
           </div>
         </form>
       </Form>

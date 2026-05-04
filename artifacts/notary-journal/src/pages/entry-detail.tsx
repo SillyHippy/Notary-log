@@ -4,7 +4,8 @@ import { format } from 'date-fns';
 import { type LucideIcon } from 'lucide-react';
 import {
   ArrowLeft, Download, FileText, User, CreditCard, CheckCircle,
-  Clock, ShieldAlert, ShieldCheck, PenTool, Edit3, Image as ImageIcon, Trash2, ScanLine
+  Clock, ShieldAlert, ShieldCheck, PenTool, Edit3, Image as ImageIcon, Trash2, ScanLine,
+  CheckCircle2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -173,12 +174,23 @@ export function EntryDetail() {
         <div className="flex flex-wrap items-center gap-2">
           {entry.status === 'draft' && (
             <>
+              {/* Primary CTA: resume the draft and capture the signer's
+                  signature so the entry can be marked completed. */}
+              <Button
+                variant="default"
+                className="gap-2"
+                onClick={() => setLocation(`/entry/${entry.id}/edit?complete=1`)}
+                data-testid="button-continue-sign"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Continue &amp; Sign
+              </Button>
               {/* Distinct CTA for the "draft now, scan later" workflow.
                   Always visible on a draft so the notary can re-scan or
                   replace the ID images at any time. Routes into the same
                   edit page but auto-opens the scan card via ?scan=1. */}
               <Button
-                variant="default"
+                variant="outline"
                 className="gap-2"
                 onClick={() => setLocation(`/entry/${entry.id}/edit?scan=1`)}
                 data-testid="button-scan-id-now"

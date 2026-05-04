@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'wouter';
 import { format } from 'date-fns';
-import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check } from 'lucide-react';
+import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -294,15 +294,29 @@ export function JournalList() {
                           </Button>
                         </div>
                       ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 w-9 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-foreground/40 hover:text-destructive hover:bg-destructive/10"
-                          onClick={e => { e.stopPropagation(); setConfirmDeleteId(entry.id!); }}
-                          data-testid={`btn-delete-${entry.id}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          {entry.status === 'draft' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-9 w-9 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-primary/70 hover:text-primary hover:bg-primary/10"
+                              onClick={e => { e.stopPropagation(); setLocation(`/entry/${entry.id}/edit?complete=1`); }}
+                              data-testid={`btn-continue-${entry.id}`}
+                              title="Continue &amp; Sign"
+                            >
+                              <PenLine className="w-4 h-4" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-9 w-9 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-foreground/40 hover:text-destructive hover:bg-destructive/10"
+                            onClick={e => { e.stopPropagation(); setConfirmDeleteId(entry.id!); }}
+                            data-testid={`btn-delete-${entry.id}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       )}
                     </td>
                   </tr>
