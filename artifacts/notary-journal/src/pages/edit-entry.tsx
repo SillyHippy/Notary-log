@@ -312,8 +312,17 @@ export function EditEntry() {
   // on the freshly-rendered canvas card before we read clientWidth/Height.
   // Without this, the parent dimensions are 0 and the drawing buffer is 0×0,
   // causing touch/mouse events to silently produce nothing.
+  //
+  // NOTE: `isLoading` is included in the dependency array because
+  // `completeMode` is set to `true` (via the ?complete=1 query param)
+  // *before* the async data fetch finishes and `isLoading` becomes `false`.
+  // On that first pass the component still renders the loading spinner, so
+  // the canvas element is not in the DOM and `sigCanvasRef.current` is null.
+  // Without `isLoading` in deps, the effect never re-fires once the canvas
+  // actually mounts, leaving `signaturePadRef.current` permanently null and
+  // making the signature pad unresponsive.
   useEffect(() => {
-    if (!completeMode) return;
+    if (!completeMode || isLoading) return;
     let rafId: number;
     rafId = requestAnimationFrame(() => {
       const canvas = sigCanvasRef.current;
@@ -332,7 +341,7 @@ export function EditEntry() {
       signaturePadRef.current?.off();
       signaturePadRef.current = null;
     };
-  }, [completeMode]);
+  }, [completeMode, isLoading]);
 
   // Returns a list of human-readable labels for fields that must be non-empty
   // before the entry can be completed (taking compliance toggles into account).
