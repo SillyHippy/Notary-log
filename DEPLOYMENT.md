@@ -25,7 +25,7 @@ In the Replit workspace shell (or any machine with the project cloned and `pnpm 
 ```bash
 # 1. Set the Google OAuth client ID FIRST — this gets baked into the build.
 #    Skip this line only if you don't need Google Drive backup on the deployed site.
-export VITE_GOOGLE_CLIENT_ID="your-client-id-here.apps.googleusercontent.com"
+export VITE_GOOGLE_CLIENT_ID="your-client-id-here.apps.googleusercontent.com" 
 
 # 2. Build the app.
 pnpm --filter @workspace/notary-journal run build
