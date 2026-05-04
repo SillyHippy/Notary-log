@@ -307,22 +307,28 @@ export function EditEntry() {
     }
   };
 
-  // Initialise the signature pad whenever complete mode becomes active and the
-  // canvas element is in the DOM.  We do this in a separate effect so the
-  // canvas has had a chance to render.
+  // Initialise the signature pad whenever complete mode becomes active.
+  // We defer inside requestAnimationFrame so the browser has completed layout
+  // on the freshly-rendered canvas card before we read clientWidth/Height.
+  // Without this, the parent dimensions are 0 and the drawing buffer is 0×0,
+  // causing touch/mouse events to silently produce nothing.
   useEffect(() => {
-    if (!completeMode || !sigCanvasRef.current) return;
-    const canvas = sigCanvasRef.current;
-    const parent = canvas.parentElement;
-    if (parent) {
-      canvas.width = parent.clientWidth;
-      canvas.height = parent.clientHeight;
-    }
-    signaturePadRef.current = new SignaturePad(canvas, {
-      backgroundColor: 'rgba(255, 255, 255, 0)',
-      penColor: 'rgb(0, 0, 0)',
+    if (!completeMode) return;
+    let rafId: number;
+    rafId = requestAnimationFrame(() => {
+      const canvas = sigCanvasRef.current;
+      if (!canvas) return;
+      const parent = canvas.parentElement;
+      canvas.width = parent ? (parent.clientWidth || 400) : 400;
+      canvas.height = parent ? (parent.clientHeight || 220) : 220;
+      signaturePadRef.current?.off();
+      signaturePadRef.current = new SignaturePad(canvas, {
+        backgroundColor: 'rgba(255, 255, 255, 0)',
+        penColor: 'rgb(0, 0, 0)',
+      });
     });
     return () => {
+      cancelAnimationFrame(rafId);
       signaturePadRef.current?.off();
       signaturePadRef.current = null;
     };
