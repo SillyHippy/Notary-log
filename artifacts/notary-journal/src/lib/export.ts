@@ -365,6 +365,174 @@ export function exportAllPDF(entries: JournalEntry[], settings: NotarySettings):
   doc.save(`notary-journal-export-${Date.now()}.pdf`);
 }
 
+// ── Print-ready journal table ──────────────────────────────────────────────
+
+/**
+ * Generate a print-ready journal PDF with a proper columnar table layout
+ * matching the traditional NNA-style paper notary journal. Landscape
+ * orientation for room across all columns.
+ *
+ * Columns: Entry# | Date | Signer Name | Address | ID Type | Document | Act Type | Fee | Signature
+ *
+ * Rows are tall enough (16mm) to fit a small signature thumbnail when
+ * available. Entries without a captured signature show "—".
+ */
+export function exportJournalTablePDF(
+  entries: JournalEntry[],
+  settings: NotarySettings,
+): void {
+  const doc = new jsPDF({ orientation: 'landscape' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+
+  // Column definitions: [label, x-position, width, align]
+  const cols: Array<[string, number, number, 'left' | 'right' | 'center']> = [
+    ['#',         10,  12, 'center'],
+    ['Date',      22,  24, 'left'],
+    ['Signer',    46,  38, 'left'],
+    ['Address',   84,  44, 'left'],
+    ['ID Type',   128, 22, 'left'],
+    ['Document',  150, 32, 'left'],
+    ['Act Type',  182, 28, 'left'],
+    ['Fee',       210, 18, 'right'],
+    ['Signature', 228, 52, 'center'],
+  ];
+
+  const rowH = 16; // tall enough for a signature thumbnail
+  const headerY = 52;
+  const startY = headerY + 10; // header row is 9mm
+  const maxY = pageH - 20; // leave room for footer
+
+  // Signature thumbnail size (fits inside the 16mm row)
+  const sigW = 40;
+  const sigH = 12;
+
+  // ── Page header ──────────────────────────────────────────────────────
+  const drawHeader = (pageNum: number, totalPages: number) => {
+    doc.setFontSize(16);
+    doc.text('Official Notary Journal', pageW / 2, 16, { align: 'center' });
+    doc.setFontSize(9);
+    doc.text(`Notary: ${settings.notaryName}`, 10, 26);
+    doc.text(`Commission #: ${settings.commissionNumber}`, 10, 32);
+    if (settings.commissionExpiration) {
+      doc.text(`Expires: ${settings.commissionExpiration}`, 10, 38);
+    }
+    doc.text(`Printed: ${new Date().toLocaleString()}`, pageW - 10, 26, { align: 'right' });
+    doc.text(
+      `Entries: ${entries.length} | Page ${pageNum} of ${totalPages}`,
+      pageW - 10, 32, { align: 'right' },
+    );
+
+    // Column headers
+    doc.setFillColor(30, 58, 95); // dark navy
+    doc.rect(10, headerY - 1, pageW - 20, 9, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(7);
+    for (const [label, x, w, align] of cols) {
+      const tx = align === 'right' ? x + w - 1 : align === 'center' ? x + w / 2 : x + 1;
+      doc.text(label, tx, headerY + 5, { align: align === 'left' ? 'left' : align });
+    }
+    doc.setTextColor(0, 0, 0);
+  };
+
+  // ── Pre-calculate pages ──────────────────────────────────────────────
+  const rowsPerPage = Math.floor((maxY - startY) / rowH);
+  const totalPages = Math.max(1, Math.ceil(entries.length / rowsPerPage));
+
+  // ── Draw each entry ──────────────────────────────────────────────────
+  let page = 1;
+  drawHeader(page, totalPages);
+  let y = startY;
+
+  entries.forEach((entry, idx) => {
+    if (y + rowH > maxY) {
+      doc.addPage();
+      page++;
+      drawHeader(page, totalPages);
+      y = startY;
+    }
+
+    // Alternating row shading
+    if (idx % 2 === 0) {
+      doc.setFillColor(245, 247, 250);
+      doc.rect(10, y, pageW - 20, rowH, 'F');
+    }
+
+    // Light horizontal rule between rows
+    doc.setDrawColor(220, 220, 220);
+    doc.line(10, y + rowH, pageW - 10, y + rowH);
+
+    doc.setFontSize(7);
+    const fee = entry.feeWaived
+      ? 'Waived'
+      : `$${(entry.feeCharged / 100).toFixed(2)}`;
+    const date = new Date(entry.createdAt).toLocaleDateString();
+    const idType = entry.idType.replace('_', ' ');
+    const act = entry.notarialActType.replace('_', ' ');
+
+    // Truncate long text to fit columns
+    const truncate = (s: string, maxChars: number) =>
+      s.length > maxChars ? s.slice(0, maxChars - 1) + '…' : s;
+
+    // Text data for all columns except signature (handled separately)
+    const textData: Array<[string, number, number, 'left' | 'right' | 'center']> = [
+      [String(entry.entryNumber), cols[0][1], cols[0][2], cols[0][3]],
+      [date, cols[1][1], cols[1][2], cols[1][3]],
+      [truncate(entry.signerFullName || '', 24), cols[2][1], cols[2][2], cols[2][3]],
+      [truncate(`${entry.signerCity || ''}, ${entry.signerState || ''}`, 28), cols[3][1], cols[3][2], cols[3][3]],
+      [idType, cols[4][1], cols[4][2], cols[4][3]],
+      [truncate(entry.documentType || '', 20), cols[5][1], cols[5][2], cols[5][3]],
+      [act, cols[6][1], cols[6][2], cols[6][3]],
+      [fee, cols[7][1], cols[7][2], cols[7][3]],
+    ];
+
+    // Center text vertically in the taller row
+    const textY = y + rowH / 2 + 1.5;
+
+    for (const [text, x, w, align] of textData) {
+      const tx = align === 'right' ? x + w - 1 : align === 'center' ? x + w / 2 : x + 1;
+      doc.text(text, tx, textY, { align: align === 'left' ? 'left' : align });
+    }
+
+    // Signature thumbnail or placeholder
+    const sigCol = cols[8];
+    const sigX = sigCol[1] + (sigCol[2] - sigW) / 2; // center in column
+    const sigY = y + (rowH - sigH) / 2; // center vertically
+    if (entry.signatureImage) {
+      try {
+        doc.addImage(entry.signatureImage, 'PNG', sigX, sigY, sigW, sigH);
+      } catch {
+        // If the image data is corrupt, fall back to text
+        doc.text('(sig)', sigCol[1] + sigCol[2] / 2, textY, { align: 'center' });
+      }
+    } else {
+      doc.setTextColor(160, 160, 160);
+      doc.text('—', sigCol[1] + sigCol[2] / 2, textY, { align: 'center' });
+      doc.setTextColor(0, 0, 0);
+    }
+
+    y += rowH;
+  });
+
+  // ── Footer line on every page ────────────────────────────────────────
+  const totalPagesActual = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPagesActual; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(200, 200, 200);
+    doc.line(10, pageH - 14, pageW - 10, pageH - 14);
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    doc.text(
+      `${settings.notaryName} — Commission #${settings.commissionNumber} — Printed ${new Date().toLocaleDateString()}`,
+      pageW / 2, pageH - 10, { align: 'center' },
+    );
+    doc.setTextColor(0, 0, 0);
+  }
+
+  stampSealOnAllPages(doc, settings.sealImage);
+  doc.save(`notary-journal-printable-${Date.now()}.pdf`);
+}
+
 // ── Annual report exports ──────────────────────────────────────────────────
 
 function fmtUSD(cents: number): string {

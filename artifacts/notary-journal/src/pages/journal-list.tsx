@@ -1,19 +1,22 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'wouter';
 import { format } from 'date-fns';
-import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine, ScanLine } from 'lucide-react';
+import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine, ScanLine, Printer } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getAllEntries, searchEntries, deleteEntry, getSettings, shouldRecordSignerIdNumber, type JournalEntry, type NotarySettings } from '@/lib/db';
+import { exportJournalTablePDF } from '@/lib/export';
+import { useToast } from '@/hooks/use-toast';
 
 type SortField = 'date' | 'name' | 'entry';
 type SortDir = 'asc' | 'desc';
 
 export function JournalList() {
   const [location, setLocation] = useLocation();
+  const { toast } = useToast();
   const searchParams = new URLSearchParams(window.location.search);
   const initialQuery = searchParams.get('q') || '';
   
@@ -151,6 +154,28 @@ export function JournalList() {
             data-testid="input-journal-search"
           />
         </form>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2 shrink-0"
+          data-testid="button-print-journal"
+          onClick={async () => {
+            try {
+              const [all, s] = await Promise.all([getAllEntries(), getSettings()]);
+              const completed = all.filter(e => e.status === 'completed' || e.status === 'amended');
+              if (completed.length === 0) {
+                toast({ title: 'No entries', description: 'There are no completed entries to print.', variant: 'destructive' });
+                return;
+              }
+              exportJournalTablePDF(completed, s);
+              toast({ title: 'Journal PDF generated', description: `${completed.length} entries exported.` });
+            } catch (err) {
+              toast({ title: 'Export failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+            }
+          }}
+        >
+          <Printer className="w-4 h-4" /> Print Journal
+        </Button>
       </div>
 
       <div className="flex flex-col gap-3 mb-6">

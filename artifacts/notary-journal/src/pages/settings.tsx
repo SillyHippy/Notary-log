@@ -23,7 +23,7 @@ import {
 } from '@/lib/biometric';
 import { THRESHOLD_OPTIONS, DEFAULT_THRESHOLD_DAYS, clearSnooze } from '@/lib/backup-nudge';
 import { FEE_TYPES, type FeeType } from '@/lib/fees';
-import { exportAllCSV, exportAllJSON, exportAllPDF, parseBackupFile } from '@/lib/export';
+import { exportAllCSV, exportAllJSON, exportAllPDF, exportJournalTablePDF, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
   isGdriveReady,
@@ -1344,7 +1344,7 @@ export function Settings() {
             </AlertDescription>
           </Alert>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <Button variant="outline" className="gap-2 w-full" onClick={handleExportPDF} data-testid="button-export-pdf">
               <Download className="w-4 h-4" /> Export PDF
             </Button>
@@ -1353,6 +1353,18 @@ export function Settings() {
             </Button>
             <Button variant="outline" className="gap-2 w-full" onClick={handleExportJSON} data-testid="button-export-json">
               <Download className="w-4 h-4" /> Export JSON
+            </Button>
+            <Button variant="outline" className="gap-2 w-full" onClick={async () => {
+              const entries = await getAllEntries();
+              const settings = await getSettings();
+              const completed = entries.filter(e => e.status === 'completed' || e.status === 'amended');
+              if (completed.length === 0) {
+                toast({ title: 'No entries', description: 'No completed entries to print.', variant: 'destructive' });
+                return;
+              }
+              exportJournalTablePDF(completed, settings);
+            }} data-testid="button-print-journal">
+              <Download className="w-4 h-4" /> Print Journal
             </Button>
           </div>
 
