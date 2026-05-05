@@ -76,6 +76,12 @@ type EntryFormValues = z.infer<typeof entrySchema>;
 // the snapshot stays small and no biometric data persists.
 const DRAFT_KEY = 'notary-journal:newEntryDraft';
 
+// sessionStorage key for multi-signer prefill. When a notary completes an
+// entry and clicks "Add Another Signer", the document/location fields from
+// the just-saved entry are stashed here so the next new-entry page can
+// pre-populate them. Consumed once on mount, then removed.
+const MULTI_SIGNER_KEY = 'notary-journal:multiSignerPrefill';
+
 const STEPS = ['Scan ID', 'Signer', 'Notarial Act', 'Signature', 'Review'];
 
 type ScanResult =
@@ -224,6 +230,40 @@ export function NewEntry() {
             title: 'Draft restored',
             description: 'Your in-progress entry was recovered.',
           });
+        } else {
+          // No draft to restore — check for multi-signer prefill.
+          // When the user completed an entry and clicked "Add Another Signer",
+          // the document/location/fee fields were stashed here. We apply them
+          // so only the signer-specific fields need to be filled in.
+          try {
+            const prefillRaw = sessionStorage.getItem(MULTI_SIGNER_KEY);
+            if (prefillRaw) {
+              sessionStorage.removeItem(MULTI_SIGNER_KEY);
+              const prefill = JSON.parse(prefillRaw);
+              // Document fields
+              if (prefill.documentType) form.setValue('documentType', prefill.documentType);
+              if (prefill.documentDate) form.setValue('documentDate', prefill.documentDate);
+              if (prefill.documentDescription) form.setValue('documentDescription', prefill.documentDescription);
+              // Act / fee fields
+              if (prefill.notarialActType) form.setValue('notarialActType', prefill.notarialActType);
+              if (prefill.feeType) form.setValue('feeType', prefill.feeType);
+              if (prefill.feeCharged !== undefined) {
+                form.setValue('feeCharged', prefill.feeCharged / 100); // cents → dollars
+                isFeeAppDerivedRef.current = false;
+              }
+              if (prefill.feeWaived !== undefined) form.setValue('feeWaived', prefill.feeWaived);
+              // Location fields (override settings defaults)
+              if (prefill.locationCity) form.setValue('locationCity', prefill.locationCity);
+              if (prefill.locationState) form.setValue('locationState', prefill.locationState);
+              if (prefill.locationAddress) form.setValue('locationAddress', prefill.locationAddress);
+              toast({
+                title: 'Multi-signer mode',
+                description: 'Document and location fields carried over. Fill in the new signer\'s details.',
+              });
+            }
+          } catch {
+            // Corrupt prefill — ignore and start fresh.
+          }
         }
       } catch {
         // Corrupt JSON or unavailable storage — ignore and start fresh.
@@ -788,6 +828,27 @@ export function NewEntry() {
           // Silent failure for auto-backup
         }
       })();
+
+      // Stash document/location/fee fields so "Add Another Signer" on the
+      // entry-detail page can pre-fill the next entry. Tiny payload; consumed
+      // only if the user clicks the button.
+      if (status === 'completed') {
+        try {
+          const d = form.getValues();
+          sessionStorage.setItem(MULTI_SIGNER_KEY, JSON.stringify({
+            documentType: d.documentType,
+            documentDate: d.documentDate,
+            documentDescription: d.documentDescription,
+            notarialActType: d.notarialActType,
+            feeType: d.feeType,
+            feeCharged: feeCents, // store in cents (matches DB)
+            feeWaived: d.feeWaived,
+            locationCity: d.locationCity,
+            locationState: d.locationState,
+            locationAddress: d.locationAddress,
+          }));
+        } catch { /* ignore */ }
+      }
 
       setLocation(`/entry/${id}`);
     } catch (err) {

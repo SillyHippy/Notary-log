@@ -5,7 +5,7 @@ import { type LucideIcon } from 'lucide-react';
 import {
   ArrowLeft, Download, FileText, User, CreditCard, CheckCircle,
   Clock, ShieldAlert, ShieldCheck, PenTool, Edit3, Image as ImageIcon, Trash2, ScanLine,
-  CheckCircle2
+  CheckCircle2, Users
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -224,6 +224,34 @@ export function EntryDetail() {
               <Download className="w-3.5 h-3.5" /> JSON
             </Button>
           </div>
+
+          {(entry.status === 'completed' || entry.status === 'amended') && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => {
+                try {
+                  sessionStorage.setItem('notary-journal:multiSignerPrefill', JSON.stringify({
+                    documentType: entry.documentType,
+                    documentDate: entry.documentDate,
+                    documentDescription: entry.documentDescription,
+                    notarialActType: entry.notarialActType,
+                    feeType: entry.feeType,
+                    feeCharged: entry.feeCharged,
+                    feeWaived: entry.feeWaived,
+                    locationCity: entry.locationCity,
+                    locationState: entry.locationState,
+                    locationAddress: entry.locationAddress,
+                  }));
+                } catch { /* ignore */ }
+                setLocation('/entry/new');
+              }}
+              data-testid="button-add-another-signer"
+            >
+              <Users className="w-4 h-4" /> Add Another Signer
+            </Button>
+          )}
         </div>
       </div>
 
