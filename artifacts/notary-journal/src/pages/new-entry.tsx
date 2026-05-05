@@ -24,6 +24,7 @@ import { extractLicenseFields } from '@/lib/ocr-license';
 import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
 import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, feeDollarsToCents, getDefaultFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
+import { hapticSuccess, hapticWarning } from '@/lib/haptic';
 
 const entrySchema = z
   .object({
@@ -367,6 +368,7 @@ export function NewEntry() {
               applyExtractedFields(fields as Record<string, string>);
               setScanResult({ method: 'barcode', success: true });
               setLiveScanSuccess(true);
+              hapticSuccess();
               toast({ title: 'Barcode Scanned!', description: 'License data extracted. Review the fields and continue.' });
             } else {
               toast({ title: 'Barcode Read but Empty', description: 'Could not parse license data. Try photo mode.', variant: 'destructive' });
@@ -538,6 +540,7 @@ export function NewEntry() {
             }
             setMrzWarning(`${parts.join(' and ')} — please verify before saving.`);
             setNeedsReview(true);
+            hapticWarning();
             toast({
               title: 'MRZ Read with Warnings',
               description: parts.join(' / ') + '. Verify the extracted fields.',
@@ -545,6 +548,7 @@ export function NewEntry() {
             });
           } else {
             toast({ title: 'Passport MRZ Read', description: 'Passport data extracted. Review the fields.' });
+            hapticSuccess();
           }
         } else {
           toast({
@@ -561,6 +565,7 @@ export function NewEntry() {
         }
         if (confidence < 70) {
           setNeedsReview(true);
+          hapticWarning();
           toast({
             title: 'Low Confidence Scan',
             description: 'OCR confidence is low. Please verify the extracted fields.',
@@ -568,6 +573,7 @@ export function NewEntry() {
           });
         } else {
           toast({ title: 'Text Extracted', description: 'OCR complete. Review the extracted fields.' });
+          hapticSuccess();
         }
         setScanResult({ method: 'ocr', text, confidence });
       }
@@ -768,6 +774,7 @@ export function NewEntry() {
       }
 
       toast({ title: 'Success', description: `Entry saved as ${status}.` });
+      hapticSuccess();
 
       // Silent auto-backup — runs in background, never blocks redirect
       (async () => {

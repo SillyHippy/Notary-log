@@ -26,6 +26,7 @@ import {
 // Note: updateEntry is imported above and reused for both the scan-time
 // auto-save (handleScanResult) and the user-clicks-Save path (onSubmit).
 import { FEE_TYPES, feeDollarsToCents, resolveFeeType } from '@/lib/fees';
+import { hapticSuccess } from '@/lib/haptic';
 import { getMissingCompletionFields } from '@/lib/completion';
 import { IdScanCard } from '@/components/id-scan-card';
 
@@ -291,6 +292,7 @@ export function EditEntry() {
         ],
       });
       toast({ title: 'Saved', description: 'Draft entry updated.' });
+      hapticSuccess();
       setLocation(`/entry/${id}`);
     } catch (err) {
       console.error('Edit entry save failed', err);
@@ -388,6 +390,7 @@ export function EditEntry() {
       });
       await completeEntry(id);
       toast({ title: 'Entry completed', description: `Entry #${entry.entryNumber} has been signed and completed.` });
+      hapticSuccess();
       setLocation(`/entry/${id}`);
     } catch (err) {
       console.error('Complete entry failed', err);

@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/layout";
 import { PinLock } from "@/components/pin-lock";
 import { PinSetup } from "@/components/pin-setup";
+import { useGlobalShortcuts } from "@/hooks/use-shortcuts";
 
 // Lazy-load pages so the initial bundle stays small
 const Dashboard = lazy(() => import("@/pages/dashboard").then(m => ({ default: m.Dashboard })));
@@ -31,6 +32,7 @@ function PageLoader() {
 }
 
 function Router() {
+  useGlobalShortcuts();
   return (
     <Layout>
       <Suspense fallback={<PageLoader />}>
