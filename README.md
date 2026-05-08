@@ -75,5 +75,31 @@ Cloudflare Pages is also completely free and leverages Cloudflare's massive glob
 
 ---
 
+## Option C: Deploy to Hostinger (or standard Shared Hosting)
+
+If you are using Hostinger, cPanel, or another standard shared hosting provider (which typically use Apache or LiteSpeed servers), you can easily host this PWA.
+
+1. **Build locally:** You will need to build the app on your own computer first.
+   ```bash
+   export VITE_GOOGLE_CLIENT_ID="[paste the Client ID you got from Step 1]" 
+   pnpm --filter @workspace/notary-journal run build
+   ```
+2. **Add an `.htaccess` file:** Inside the newly built `artifacts/notary-journal/dist/public` folder, create a file named `.htaccess` with these contents to handle SPA routing:
+   ```apache
+   <IfModule mod_rewrite.c>
+     RewriteEngine On
+     RewriteBase /
+     RewriteRule ^index\.html$ - [L]
+     RewriteCond %{REQUEST_FILENAME} !-f
+     RewriteCond %{REQUEST_FILENAME} !-d
+     RewriteRule . /index.html [L]
+   </IfModule>
+   ```
+3. **Upload & Extract:** Zip up the contents of the `dist/public` folder (including the new `.htaccess` file). Log into your Hostinger File Manager (or connect via FTP), upload the zip to your `public_html` directory, and extract the files directly there.
+
+*(For more advanced deployment details and cache troubleshooting, see the `DEPLOYMENT.md` file included in this repository).*
+
+---
+
 ### Troubleshooting a Blank Screen?
 If your app deploys successfully on either platform but shows a completely blank white screen, it means the hosting provider is serving the wrong folder. Ensure your **Publish/Output directory** was set exactly to `dist/public` and not just `dist`.

@@ -137,6 +137,40 @@ Vite copies anything in `public/` straight into `dist/public/`, so the file land
 
 ---
 
+## Option 4 — Hostinger (or standard Shared Hosting)
+
+Hostinger typically uses Apache or LiteSpeed web servers. The build process is identical to Netlify drag-and-drop, but instead of a `_redirects` file, you need an `.htaccess` file to handle the SPA (Single Page Application) routing.
+
+### Build and Package
+
+1. Run the build locally exactly as you would for Netlify:
+   ```bash
+   export VITE_GOOGLE_CLIENT_ID="your-client-id-here.apps.googleusercontent.com" 
+   pnpm --filter @workspace/notary-journal run build
+   ```
+2. Create an `.htaccess` file inside the build output folder (`artifacts/notary-journal/dist/public/.htaccess`) with these contents:
+   ```apache
+   <IfModule mod_rewrite.c>
+     RewriteEngine On
+     RewriteBase /
+     RewriteRule ^index\.html$ - [L]
+     RewriteCond %{REQUEST_FILENAME} !-f
+     RewriteCond %{REQUEST_FILENAME} !-d
+     RewriteRule . /index.html [L]
+   </IfModule>
+   ```
+   *This ensures deep links like `/journal` don't return a 404 error.*
+3. Zip the **contents** of `artifacts/notary-journal/dist/public` (make sure `.htaccess` is included in the zip).
+
+### Upload to Hostinger
+
+1. Log into Hostinger and open your site's **File Manager** (or connect via FTP).
+2. Navigate to your public web directory (usually `public_html`).
+3. Upload the zip file you created and extract it directly into `public_html` (so that `index.html` and `.htaccess` are sitting directly inside `public_html`).
+4. Follow the steps in [Shared setup](#shared-setup) below to authorize your new Hostinger domain in Google Cloud Console.
+
+---
+
 ## Shared setup
 
 These two steps are required regardless of which host you pick.
