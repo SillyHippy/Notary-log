@@ -1,6 +1,6 @@
 # Deploying the Notary Journal
 
-This guide covers deploying the Notary Journal PWA to **Netlify** or **Cloudflare Pages**. For Replit's own `.replit.app` deployment, just use the Publish button in the Replit workspace — none of the steps below are needed for that.
+This guide covers deploying the Notary Journal PWA to **Netlify**, **Cloudflare Pages**, or **Hostinger**.
 
 ## Quick reference
 
