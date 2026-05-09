@@ -1,21 +1,273 @@
-MIT License
-
 Copyright (c) 2026 Joseph Iannazzi (Just Legal Solutions)
+All Rights Reserved.
+
+═══════════════════════════════════════════════════════════════
+                    NON-COMMERCIAL SOFTWARE LICENSE
+         GOVERNED BY THE LAWS OF OKLAHOMA & UNITED STATES
+═══════════════════════════════════════════════════════════════
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+of this software and associated documentation files (the "Software"), to use,
+copy, modify, merge, publish, and distribute the Software, subject to the
+following strict conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+─────────────────────────────────────────────────────────────
+1. NON-COMMERCIAL USE ONLY
+─────────────────────────────────────────────────────────────
+This Software is licensed exclusively for non-commercial purposes. You may
+use, copy, modify, merge, publish, and distribute the Software free of
+charge, provided that you do not:
 
+  a. Sell, resell, rent, lease, sublicense, or otherwise charge any fee,
+     subscription, or consideration for access to the Software or any
+     derivative work based upon the Software;
+
+  b. Bundle, integrate, or incorporate the Software into any commercial
+     product, service, or offering for sale;
+
+  c. Use the Software to provide commercial services, including but not
+     limited to software-as-a-service (SaaS), managed services, hosting,
+     or consulting where the Software is a material component of the
+     deliverable;
+
+  d. Deploy the Software within a commercial entity for internal use in
+     revenue-generating operations, except where such use is solely for
+     administrative infrastructure and does not form part of the product
+     or service offered to customers;
+
+  e. Monetize, advertise upon, or commercially exploit the Software or
+     any modification thereof in any manner not expressly authorized
+     herein;
+
+  f. Remove, alter, or obscure any copyright notice, license terms,
+     attribution, or other proprietary rights notice contained in the
+     Software.
+
+For purposes of this license, "Commercial Use" means any use of the Software
+directly or indirectly intended for or directed toward commercial advantage
+or monetary compensation. Personal use, academic research, educational
+instruction, and not-for-profit distribution are expressly permitted under
+this license.
+
+─────────────────────────────────────────────────────────────
+2. ATTRIBUTION
+─────────────────────────────────────────────────────────────
+The above copyright notice and this permission notice must be included in
+all copies or substantial portions of the Software.
+
+─────────────────────────────────────────────────────────────
+3. COMMERCIAL LICENSING
+─────────────────────────────────────────────────────────────
+If you wish to use this Software for any Commercial Use (as defined in
+Section 1), you must obtain a separate, explicit, written commercial
+license agreement from the copyright holder. Unauthorized Commercial Use
+voids all permissions granted by this license retroactively to the date
+of first unauthorized use.
+
+Contact: Joseph Iannazzi
+         joseph@justlegalsolutions.org
+         iannazzi.joseph@gmail.com
+
+─────────────────────────────────────────────────────────────
+4. TERMINATION
+─────────────────────────────────────────────────────────────
+This license automatically and immediately terminates, without prior
+notice, upon any breach of Sections 1 or 2. Upon termination, you must
+cease all use, distribution, and possession of the Software and destroy
+all copies in your control. Sections 5 through 12 survive termination.
+
+─────────────────────────────────────────────────────────────
+5. ACKNOWLEDGMENT OF DAMAGES
+─────────────────────────────────────────────────────────────
+BY ACCEPTING THIS LICENSE, YOU ACKNOWLEDGE AND AGREE THAT:
+
+  a. Unauthorized Commercial Use of this Software causes harm that is
+     inherently difficult to quantify, including but not limited to:
+     loss of licensing revenue, reputational harm, market dilution,
+     damage to good will, diversion of development resources, and
+     competitive injury;
+
+  b. The actual damages resulting from such Unauthorized Commercial Use
+     would be impracticable and extremely difficult to ascertain due to
+     the nature of software licensing, the variability of commercial
+     pricing, the difficulty in tracing derivative uses, and the
+     irreparable harm to the licensor's exclusive control over the
+     Software's commercial exploitation;
+
+  c. The parties intend that the liquidated damages provisions in
+     Section 6 constitute compensation for anticipated losses and NOT
+     a penalty;
+
+  d. The amounts set forth in Section 6 represent a reasonable estimate,
+     made at the time of licensing, of the probable damages that would
+     result from Unauthorized Commercial Use of the Software.
+
+─────────────────────────────────────────────────────────────
+6. LIQUIDATED DAMAGES FOR UNAUTHORIZED COMMERCIAL USE
+─────────────────────────────────────────────────────────────
+In the event of Unauthorized Commercial Use, you agree to pay:
+
+  a. LIQUIDATED DAMAGES in the amount of USD $50,000 per violation,
+     OR the total gross revenue derived from the Unauthorized
+     Commercial Use, whichever is GREATER;
+
+  b. Each instance of distribution, sale, sublicense, deployment, or
+     other act in violation of Section 1 constitutes a SEPARATE
+     violation;
+
+  c. The copyright holder shall be entitled to recover all reasonable
+     attorney's fees, court costs, expert witness fees, and enforcement
+     expenses incurred in enforcing this license, whether or not
+     litigation is commenced. The prevailing party in any dispute
+     shall be entitled to recover reasonable attorney's fees from the
+     non-prevailing party;
+
+  d. NOTHING in this section shall be construed as limiting any
+     statutory remedy available to the copyright holder under the
+     Copyright Act of 1976 (17 U.S.C. § 101 et seq.) or any other
+     applicable federal or state law. The copyright holder may, at
+     their sole election, pursue:
+
+       i. Statutory damages under 17 U.S.C. § 504(c) of not less than
+          $750 and not more than $30,000 per work infringed;
+
+      ii. Enhanced statutory damages of up to $150,000 per work
+          infringed for willful infringement under 17 U.S.C. § 504(c)(2);
+
+     iii. Criminal referral to the United States Department of Justice
+          for willful infringement for purposes of commercial advantage
+          under 17 U.S.C. § 506, which may result in imprisonment of
+          up to five (5) years and fines of up to $250,000 per offense
+          under 18 U.S.C. § 2319;
+
+      iv. Actual damages and profits under 17 U.S.C. § 504(b);
+
+       v. Costs and attorney's fees under 17 U.S.C. § 505.
+
+─────────────────────────────────────────────────────────────
+7. INJUNCTIVE RELIEF
+─────────────────────────────────────────────────────────────
+You acknowledge and agree that Unauthorized Commercial Use causes
+irreparable harm to the copyright holder for which monetary damages are
+inadequate. The copyright holder is entitled to seek immediate injunctive
+and equitable relief, including temporary restraining orders, preliminary
+injunctions, and permanent injunctions, WITHOUT the necessity of posting
+any bond or other security. You waive any objection to such relief.
+
+─────────────────────────────────────────────────────────────
+8. AUDIT RIGHTS
+─────────────────────────────────────────────────────────────
+The copyright holder reserves the right to audit compliance with this
+license. Upon thirty (30) days' written notice, you shall provide access
+to all records, systems, and personnel reasonably necessary to determine
+whether your use of the Software complies with this license. If an audit
+reveals Unauthorized Commercial Use, you shall reimburse the copyright
+holder for the costs of the audit in addition to all other remedies.
+
+─────────────────────────────────────────────────────────────
+9. ANTI-CIRCUMVENTION
+─────────────────────────────────────────────────────────────
+You may not circumvent, remove, disable, or otherwise interfere with any
+copy protection, license verification, or rights management features of
+the Software. Violation of this section constitutes willful infringement
+and may subject you to liability under the Digital Millennium Copyright
+Act (17 U.S.C. § 1201 et seq.), including statutory damages of up to
+$2,500 per act of circumvention or trafficking in circumvention devices.
+
+─────────────────────────────────────────────────────────────
+10. DISCLAIMER OF WARRANTY
+─────────────────────────────────────────────────────────────
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ DEALINGS IN THE SOFTWARE, EXCEPT AS EXPRESSLY PROVIDED IN SECTIONS 5–9.
+
+─────────────────────────────────────────────────────────────
+11. LIMITATION OF LIABILITY — PERMITTED NON-COMMERCIAL USE
+─────────────────────────────────────────────────────────────
+For permitted non-commercial users only: In no event shall the copyright
+holder's total liability to you for all damages (other than as may be
+required by applicable law in cases involving personal injury) exceed the
+amount of fifty dollars (USD $50.00). This limitation does not apply to
+claims under Sections 5–9 (Remedies for Unauthorized Commercial Use).
+
+─────────────────────────────────────────────────────────────
+12. GOVERNING LAW AND JURISDICTION
+─────────────────────────────────────────────────────────────
+  a. This license shall be governed by and construed in accordance with
+     the laws of the State of Oklahoma, without regard to its conflict
+     of law principles.
+
+  b. Any dispute, controversy, or claim arising out of or relating to
+     this license, including any copyright infringement claim, shall be
+     filed exclusively in:
+
+       i. The United States District Court for the Northern District
+          of Oklahoma (Tulsa Division); and/or
+
+      ii. The District Court of Tulsa County, Oklahoma.
+
+  c. You irrevocably submit to the personal jurisdiction and venue of
+     the courts identified in subsection (b) and waive any objection
+     to such jurisdiction or venue on any grounds, including forum non
+     conveniens.
+
+  d. YOU WAIVE YOUR RIGHT TO A JURY TRIAL in any action or proceeding
+     arising out of or relating to this license. All such disputes
+     shall be decided by the court sitting without a jury.
+
+  e. Process may be served in any manner authorized by the Federal
+     Rules of Civil Procedure or the Oklahoma Rules of Civil Procedure.
+
+─────────────────────────────────────────────────────────────
+13. MISCELLANEOUS
+─────────────────────────────────────────────────────────────
+  a. Severability: If any provision of this license is held invalid or
+     unenforceable, the remaining provisions shall continue in full force
+     and the invalid provision shall be modified to the minimum extent
+     necessary to make it enforceable.
+
+  b. No Waiver: Failure to enforce any provision shall not constitute a
+     waiver of future enforcement.
+
+  c. Entire Agreement: This license constitutes the entire agreement
+     between the parties concerning the subject matter hereof.
+
+  d. Modification: No modification or waiver of any provision shall be
+     effective unless in writing and signed by the copyright holder.
+
+  e. No Assignment: You may not assign or transfer this license or any
+     rights hereunder without the prior written consent of the copyright
+     holder.
+
+  f. Export Compliance: You agree to comply with all applicable export
+     control laws and regulations.
+
+  g. If you have questions about this license or wish to discuss
+     commercial licensing, contact:
+
+        Joseph Iannazzi — Just Legal Solutions
+        joseph@justlegalsolutions.org
+        iannazzi.joseph@gmail.com
+
+═══════════════════════════════════════════════════════════════
+                    IMPORTANT LEGAL NOTICE
+═══════════════════════════════════════════════════════════════
+This Software is a copyrighted work protected under the Copyright Act
+of 1976 (17 U.S.C. § 101 et seq.). Unauthorized commercial use,
+reproduction, distribution, or creation of derivative works for
+commercial purposes may result in:
+
+  • Civil statutory damages of up to $150,000 per work infringed
+  • Criminal penalties of up to 5 years imprisonment and $250,000
+    in fines per offense
+  • Injunctions preventing further use or distribution
+  • Confiscation and destruction of infringing copies
+
+For legitimate commercial licensing inquiries, contact the copyright
+holder at the email addresses provided above.
+
+═══════════════════════════════════════════════════════════════

@@ -4,6 +4,10 @@ A fast, fully client-side Progressive Web App (PWA) for modern notaries. It feat
 
 Because this app is purely frontend (with no backend server), it can be hosted anywhere for free.
 
+> [!WARNING]
+> **STRICT NON-COMMERCIAL LICENSE**
+> This repository is governed by a Custom Non-Commercial License. It is 100% free to deploy for personal use, but **it may NOT be sold, monetized, or used for commercial SaaS purposes** under any circumstances. Violations are subject to strict legal penalties including $50,000 in liquidated damages per the license terms. See the [LICENSE](LICENSE) file for full details before deploying.
+
 ---
 
 # Free Hosting Guide: Netlify vs. Cloudflare Pages
