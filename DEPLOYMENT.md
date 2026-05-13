@@ -20,6 +20,15 @@ This guide covers deploying the Notary Journal PWA to **Zo Computer**, **Cloudfl
 
 Use this when you want Zo to handle the deploy steps for you. Zo gives every free-plan user 100GB of storage and one hosted service, but the free computer can sleep when idle and has limited CPU/memory. That is fine for a personal notary journal, but not ideal for always-on background automation.
 
+After deployment, Zo MUST output:
+
+1. **Public App URL**: `https://notary-journal-{your-handle}.zocomputer.io`
+2. **Backup API URL**: `https://{your-handle}.zo.space/api/backup`
+3. **Backup Key**: Generated secret token
+4. **Backup Storage**: `Documents/Notary Journal/backups/`
+
+Without these outputs, Backup & Restore won't work.
+
 ### Step 1 - Sign up
 
 Sign up with the project referral link: [https://zo-computer.cello.so/XvrzHZZ53TV](https://zo-computer.cello.so/XvrzHZZ53TV)

@@ -19,151 +19,32 @@ If you've cloned this repository and want to host your own instance of the Notar
 
 ---
 
-## Option A: Deploy with Zo Computer (Recommended for Beginners)
+### Option A: Deploy with Zo Computer (5-Minute Setup)
 
-Zo Computer gives you a personal cloud computer with hosting and cloud storage. The free plan is a good fit for personal self-hosting because it includes 100GB of storage and one hosted service, but the free computer can sleep when idle and has limited CPU/memory.
+Zo Computer gives you a personal cloud computer with hosting and cloud storage. The free plan includes 100GB storage and one hosted service.
 
-### Step 1: Sign Up
+After deployment, Zo MUST output:
 
-Sign up for Zo Computer: [https://zo-computer.cello.so/XvrzHZZ53TV](https://zo-computer.cello.so/XvrzHZZ53TV)
+1. **Public App URL**: `https://notary-journal-{your-handle}.zocomputer.io`
+2. **Backup API URL**: `https://{your-handle}.zo.space/api/backup`
+3. **Backup Key**: Generated secret token
+4. **Backup Storage**: `Documents/Notary Journal/backups/`
 
-### Step 2: Clone It
+Without these outputs, Backup & Restore won't work.
 
-Open your Zo terminal and clone the repo:
+**Fast Deploy Steps:**
 
 ```bash
+# 1. Clone the repository
 git clone https://github.com/SillyHippy/Notary-log
-```
 
-### Step 3: Install and Build
-
-Go into the folder and build the app:
-
-```bash
+# 2. Build the app
 cd Notary-log
 bun install
 bun run build
-```
 
-### Step 4: Publish It
-
-The repo includes `server.ts` and `zosite.json` for Zo. Ask Zo to publish the configured HTTP service, or run `bun run prod` after `bun run build`. The server serves `artifacts/notary-journal/dist/public` and falls back to `index.html` for app routes like `/journal`.
-
-Zo should run the service from this repository root, not from a copy in `Trash` or a duplicated `notary-log` folder. The server listens on Zo's `PORT` environment variable automatically.
-
-Or copy and paste this prompt into Zo:
-
-```text
-Deploy the Notary Journal app for me on Zo using the free plan.
-
-Use this repository:
-https://github.com/SillyHippy/Notary-log
-
-Please do all of this:
-
-1. Clone the repo.
-2. Use Bun.
-3. From the repo root, run:
-   bun install
-   bun run build
-4. Use the repository's zosite.json publish block, or publish the root HTTP service with:
-   bun run prod
-5. The production server is server.ts. It serves artifacts/notary-journal/dist/public and falls back to index.html for single-page app routes.
-6. Make the site public.
-7. Create a Zo Space API route at /api/backup.
-8. Store backup files in Documents/Notary Journal/backups/.
-9. Protect /api/backup with a secret backup key, because Zo Space API routes are public. Generate a strong backup key and show it to me when finished.
-10. Add CORS support so the public app can call the Zo Space API from the browser:
-    - allow methods: GET, POST, OPTIONS
-    - allow headers: Authorization, Content-Type
-    - return Access-Control-Allow-Origin for the app URL, or use * if Zo requires a simpler setup
-11. Make OPTIONS /api/backup return the CORS headers for preflight requests.
-12. Make GET /api/backup list files and return JSON like:
-    { "files": [{ "name": "notary-journal-backup-2026-05-13.json", "modifiedTime": "2026-05-13T18:00:00.000Z", "size": 12345 }] }
-13. Make POST /api/backup save a new backup. The app will send JSON like:
-    { "filename": "notary-journal-backup-2026-05-13.json", "backup": { "...": "backup payload" } }
-    Return JSON like:
-    { "name": "notary-journal-backup-2026-05-13.json" }
-14. Make GET /api/backup?file=filename.json download that backup for restore by returning the raw backup JSON.
-15. Reject requests without Authorization: Bearer <backup-key>.
-16. Do not publish the backup folder with zo.pub.
-17. I will open Settings -> Backup & Restore, turn on Show Zo backup, then paste the backup API URL and backup key into Zo Backup.
-18. When finished, tell me:
-    - the public app URL, which should look like [site-name]-[my-zo-handle].zocomputer.io
-    - the backup API URL, which should look like [my-zo-handle].zo.space/api/backup
-    - where the backup files are stored
-
-Keep this free-tier friendly: one app site/service, simple file storage, no always-on paid automation required.
-```
-
-Make the site public when Zo asks.
-
-Important for AI deployers: do not replace the app's encrypted browser storage with a plaintext server file such as `/home/workspace/notary-data.json`. The Zo integration is for hosting the app and storing explicit JSON backups made from inside the app.
-
-### Step 5: Complete App Setup
-
-Open the Zo site URL and complete the in-app PIN setup.
-
-### Step 6: Back Up and Restore with Zo
-
-Open **Settings -> Backup & Restore**, turn on **Show Zo backup**, paste the Zo backup API URL and backup key, then click **Test Connection**. Use **Backup to Zo** to save a new backup and **Restore from Zo** to list and restore backup files.
-
-Manual backup still works: use **Settings -> Data & Export -> Export JSON** to create a backup file, then store that file in a Zo folder such as `Notary Journal Backups`. To restore manually, download the JSON backup from Zo and use **Settings -> Import from JSON file**.
-
-If you connect Google Drive inside Zo, you can ask Zo to copy or sync your `Notary Journal Backups` folder to Google Drive. This avoids Google Cloud Console for basic backup-file storage, but it is not the same as direct in-app Google Drive backup.
-
-### Optional Step 7: Set Up a Zo Backup API
-
-For a simple Zo-side backup connector, go to **Zo Space -> API Routes** and create `/api/backup`.
-
-Recommended behavior:
-
-- Save backup files to `Documents/Notary Journal/backups/`.
-- `GET /api/backup` = list files.
-- `POST /api/backup` = save new backup.
-- `GET /api/backup?file=filename.json` downloads a backup for restore.
-- Require a secret backup key, such as an `Authorization: Bearer ...` header, because Zo Space APIs are public endpoints.
-
-The app's **Settings -> Backup & Restore -> Show Zo backup** section uses this API URL and backup key for one-click backup and restore. Manual JSON export/import still works if you do not create the API route.
-
-Do not store live journal data in a plaintext server file. Backup files are created only when the user clicks **Backup to Zo** or manually exports JSON.
-
-### Step 8: Done
-
-Your app is live at `[site-name]-[your-zo-handle].zocomputer.io`.
-
-Backup is at `[your-zo-handle].zo.space/api/backup`.
-
-That's it. No Google, no OAuth, no third-party accounts needed.
-
-Open your Zo site URL, unlock the app with your PIN, and make a test JSON backup so you know restore is ready before you start using the journal.
-
-### Optional: Create a Zo Helper
-
-After Zo deploys the app, you can paste this prompt into Zo so it remembers how to maintain the deployment and backup route:
-
-```text
-Create a Notary Journal helper for this Zo computer.
-
-Your job is to help me deploy, update, repair, and verify the Notary Journal app and its Zo backup API.
-
-You may:
-- clone or update https://github.com/SillyHippy/Notary-log
-- run the build commands from the README
-- publish the built app as a public Zo Site or HTTP service
-- create or repair /api/backup
-- verify GET /api/backup lists files
-- verify POST /api/backup saves a backup
-- verify backups are stored in Documents/Notary Journal/backups/
-- help copy backup files to connected storage only if I ask
-
-Safety rules:
-- keep /api/backup protected with the backup key
-- do not publish backup files with zo.pub
-- do not read, summarize, modify, expose, or delete backup contents unless I explicitly ask and confirm
-- before changing the app or backup route, tell me what you are about to change and why
-
-When something breaks, check the build output, public app URL, /api/backup route, CORS headers, backup key, and backup folder path.
+# 3. Deploy as HTTP service
+zo service create --mode http --port 3000 --public true --entrypoint "bun run prod" --label notary-journal
 ```
 
 ---
