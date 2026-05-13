@@ -23,7 +23,7 @@ Use this when you want Zo to handle the deploy steps for you. Zo gives every fre
 After deployment, Zo MUST output:
 
 1. **Public App URL**: `https://notary-journal-{your-handle}.zocomputer.io`
-2. **Backup API URL**: `https://{your-handle}.zo.space/api/backup`
+2. **Backup API URL**: `https://notary-journal-{your-handle}.zocomputer.io/api/backup`
 3. **Backup Key**: Generated secret token
 4. **Backup Storage**: `Documents/Notary Journal/backups/`
 
@@ -53,9 +53,11 @@ bun run build
 
 ### Step 4 - Publish it
 
-The repo includes `server.ts` and `zosite.json` for Zo. Ask Zo to publish the configured HTTP service, or run `bun run prod` after `bun run build`. The server serves `artifacts/notary-journal/dist/public` and falls back to `index.html` for deep links.
+The repo includes `server.ts` and `zosite.json` for Zo. Ask Zo to publish the configured HTTP service, or run `bun run prod` after `bun run build`. The server serves `artifacts/notary-journal/dist/public`, handles `/api/backup`, and falls back to `index.html` for deep links.
 
 Zo should run the service from this repository root, not from a copy in `Trash` or a duplicated `notary-log` folder. `server.ts` listens on Zo's `PORT` environment variable automatically.
+
+The app and backup API run together in this one service. Do not create a second service or separate Zo Space API route.
 
 If you want Zo to do the setup for you, paste a prompt like this:
 
@@ -76,9 +78,9 @@ Please do all of this:
    bun run prod
 5. The production server is server.ts. It serves artifacts/notary-journal/dist/public and falls back to index.html for single-page app routes.
 6. Make the site public.
-7. Create a Zo Space API route at /api/backup.
+7. Use the built-in /api/backup route from server.ts. Do not create a second service or Zo Space API route.
 8. Store backup files in Documents/Notary Journal/backups/.
-9. Protect /api/backup with a secret backup key, because Zo Space API routes are public. Generate a strong backup key and show it to me when finished.
+9. Protect /api/backup with the generated backup key printed by bun run prod.
 10. Add CORS support so the public app can call the Zo Space API from the browser:
     - allow methods: GET, POST, OPTIONS
     - allow headers: Authorization, Content-Type
@@ -93,10 +95,10 @@ Please do all of this:
 14. Make GET /api/backup?file=filename.json download that backup for restore by returning the raw backup JSON.
 15. Reject requests without Authorization: Bearer <backup-key>.
 16. Do not publish the backup folder with zo.pub.
-17. I will open Settings -> Backup & Restore, turn on Show Zo backup, then paste the backup API URL and backup key into Zo Backup.
+17. I will open Settings -> Backup & Restore, turn on Show Zo backup, then paste the same-service backup API URL and backup key into Zo Backup.
 18. When finished, tell me:
     - the public app URL, which should look like [site-name]-[my-zo-handle].zocomputer.io
-    - the backup API URL, which should look like [my-zo-handle].zo.space/api/backup
+    - the backup API URL, which should look like [public-app-url]/api/backup
     - where the backup files are stored
 
 Keep this free-tier friendly: one app site/service, simple file storage, no always-on paid automation required.
@@ -148,9 +150,9 @@ Whenever I upload a file named notary-journal*.json to my Notary Journal Backups
 
 This is a Zo-side file automation. It does not replace the app's export/import flow, and it does not give the app one-click Google Drive OAuth.
 
-### Optional Step 7 - Set up the backup API
+### Step 7 - Backup API is built into the same service
 
-For a simple Zo-side backup connector, go to **Zo Space -> API Routes** and create `/api/backup`.
+The Zo backup connector runs inside the same public HTTP service at `/api/backup`. Do not create a second service or separate Zo Space API route.
 
 Use this route contract:
 
@@ -166,7 +168,7 @@ Store files in:
 Documents/Notary Journal/backups/
 ```
 
-Because Zo Space APIs are public, protect the route with a secret backup key. A simple pattern is to require an `Authorization: Bearer <backup-key>` header before listing, saving, or downloading backups.
+Because the app service is public, `/api/backup` requires `Authorization: Bearer <backup-key>` before listing, saving, or downloading backups. `server.ts` prints the generated backup key when `bun run prod` starts.
 
 The app's **Settings -> Backup & Restore -> Show Zo backup** section uses this API URL and backup key for one-click backup and restore. This API is not required for manual JSON export/import.
 
@@ -176,7 +178,7 @@ Do not store live journal data in a plaintext server file. Backup files are crea
 
 Your app is live at `[site-name]-[your-zo-handle].zocomputer.io`.
 
-Backup is at `[your-zo-handle].zo.space/api/backup`.
+Backup is at `[public-app-url]/api/backup`.
 
 Open your Zo site URL, unlock the app with your PIN, and make a test JSON backup so you know restore is ready before you start using the journal.
 

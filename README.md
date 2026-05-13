@@ -26,25 +26,40 @@ Zo Computer gives you a personal cloud computer with hosting and cloud storage. 
 After deployment, Zo MUST output:
 
 1. **Public App URL**: `https://notary-journal-{your-handle}.zocomputer.io`
-2. **Backup API URL**: `https://{your-handle}.zo.space/api/backup`
+2. **Backup API URL**: `https://notary-journal-{your-handle}.zocomputer.io/api/backup`
 3. **Backup Key**: Generated secret token
 4. **Backup Storage**: `Documents/Notary Journal/backups/`
 
 Without these outputs, Backup & Restore won't work.
 
-**Fast Deploy Steps:**
+**Copy/paste this exact prompt into Zo or any deployment AI:**
 
-```bash
-# 1. Clone the repository
+```text
+Deploy https://github.com/SillyHippy/Notary-log on Zo Computer as ONE public HTTP service.
+
+Hard rules:
+- Create exactly ONE service named notary-journal.
+- Do not create a second service.
+- Do not create a Zo Space API route.
+- Do not clone into Trash.
+- Do not duplicate the repo folder.
+- Do not replace the app's storage with /home/workspace/notary-data.json.
+- The app and backup API must run together from the same service.
+
+Commands to run from /home/workspace:
 git clone https://github.com/SillyHippy/Notary-log
-
-# 2. Build the app
 cd Notary-log
 bun install
 bun run build
-
-# 3. Deploy as HTTP service
 zo service create --mode http --port 3000 --public true --entrypoint "bun run prod" --label notary-journal
+
+After deployment, stop and output only:
+1. Public App URL
+2. Backup API URL, which must be the Public App URL plus /api/backup
+3. Backup Key printed by bun run prod
+4. Backup Storage: Documents/Notary Journal/backups/
+
+If a notary-journal service already exists, update that one service instead of creating another.
 ```
 
 ---
