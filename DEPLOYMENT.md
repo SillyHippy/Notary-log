@@ -1,15 +1,16 @@
 # Deploying the Notary Journal
 
-This guide covers deploying the Notary Journal PWA to **Zo Computer**, **Netlify**, **Cloudflare Pages**, or **Hostinger**.
+This guide covers deploying the Notary Journal PWA to **Zo Computer**, **Cloudflare Workers**, **Netlify**, **Cloudflare Pages**, or **Hostinger**.
 
 ## Quick reference
 
 | Host | Build command | Publish folder | SPA redirects |
 |---|---|---|---|
 | Zo Computer | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | Ask Zo to route all paths to `index.html` |
+| Cloudflare Workers (`wrangler deploy`) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `wrangler.toml` uses `not_found_handling = "single-page-application"` |
 | Netlify (git-connected) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `netlify.toml` (already in repo) |
-| Netlify (drag-and-drop) | run locally: `pnpm --filter @workspace/notary-journal run build` | zip the contents of `artifacts/notary-journal/dist/public` | `_redirects` file inside the zip |
-| Cloudflare Pages | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `_redirects` file in publish folder |
+| Netlify (drag-and-drop) | run locally: `pnpm --filter @workspace/notary-journal run build` | zip the contents of `artifacts/notary-journal/dist/public` | add `_redirects` to the zip only |
+| Cloudflare Pages | `pnpm --filter @workspace/notary-journal... run build && echo '/*    /index.html   200' > artifacts/notary-journal/dist/public/_redirects` | `artifacts/notary-journal/dist/public` | generated `_redirects` file in publish folder |
 
 **Node version on every host: `22` where configurable.** On Zo, ask it to use Node 22 with Corepack/pnpm.
 
@@ -219,13 +220,16 @@ export VITE_GOOGLE_CLIENT_ID="your-client-id-here.apps.googleusercontent.com"
 # 2. Build the app.
 pnpm --filter @workspace/notary-journal run build
 
-# 3. Zip the *contents* of dist/public into a file at the repo root.
+# 3. Add the Netlify drag-and-drop SPA redirect file.
+echo '/*    /index.html   200' > artifacts/notary-journal/dist/public/_redirects
+
+# 4. Zip the *contents* of dist/public into a file at the repo root.
 ( cd artifacts/notary-journal/dist/public && zip -r ../../../../notary-journal-netlify.zip . )
 ```
 
 The output is `notary-journal-netlify.zip` at the repo root. **The zip must contain the contents of `dist/public` at its top level** (so `index.html` is at the root of the zip), not the `dist/public` folder itself. Otherwise Netlify will serve nothing and show "Page not found." If your shell doesn't have the `zip` command, install it (`apt-get install zip`, `brew install zip`) or run the build inside Replit, where the agent can package the zip for you.
 
-The `_redirects` file is mandatory. It tells Netlify to send every URL (including deep links like `/journal` and `/entry/abc-123`) to `index.html` so the React Router (wouter) can handle the route. It is committed in `artifacts/notary-journal/public/_redirects`, so Vite copies it into `dist/public` automatically. Without it, refreshing the page on any non-root URL returns a 404.
+The `_redirects` file is mandatory for Netlify drag-and-drop. It tells Netlify to send every URL (including deep links like `/journal` and `/entry/abc-123`) to `index.html` so the React Router (wouter) can handle the route. It is generated in the build output before zipping. Without it, refreshing the page on any non-root URL returns a 404.
 
 **About `VITE_GOOGLE_CLIENT_ID` for drag-and-drop:** this value is baked into the JavaScript bundle at build time. Drag-and-drop deploys upload pre-built files, so Netlify's dashboard environment variables are **ignored** for this flow — the variable must be set in your shell *before* `pnpm run build` runs (step 1 above). If you forget, the Cloud Backup section in Settings will show "not enabled" on the deployed site, and you'll need to rebuild and re-upload.
 
@@ -277,29 +281,50 @@ To re-link an existing Netlify site to a git repo (instead of replacing it), go 
 
 ---
 
-## Option 4 - Cloudflare Pages
+## Option 4 - Cloudflare Workers (`wrangler deploy`)
 
-Cloudflare Pages reads the same `_redirects` file syntax Netlify uses, so the SPA routing setup is identical — but unlike Netlify, the redirect rule has to live inside the build output (Cloudflare doesn't read `netlify.toml`). Do the one-time setup *before* the first deploy or your first deep-link refresh will 404.
+Use this when deploying with Cloudflare Workers static assets and `npx wrangler deploy`.
 
-### Step 1 — Confirm the SPA redirect file exists
+The repo includes `wrangler.toml` at the root:
 
-The repo includes `artifacts/notary-journal/public/_redirects` with this rule:
+```toml
+name = "notary-log"
+compatibility_date = "2024-04-05"
 
-```text
-/*    /index.html   200
+[assets]
+directory = "artifacts/notary-journal/dist/public"
+not_found_handling = "single-page-application"
 ```
 
-Vite copies anything in `public/` straight into `dist/public/`, so the file lands at `dist/public/_redirects` on every build automatically. The same file works on Netlify.
+Cloudflare Workers does **not** use the Netlify-style `_redirects` file for this app. `not_found_handling = "single-page-application"` is the Workers-compatible SPA fallback and avoids Wrangler's infinite-loop `_redirects` validation error.
 
-> If you skip this step, the home page will load on Cloudflare but refreshing on `/journal` or any deep link returns a 404.
+### Deploy
 
-### Step 2 — Connect to Cloudflare Pages
+1. Build the app:
+   ```bash
+   pnpm --filter @workspace/notary-journal... run build
+   ```
+2. Deploy from the repo root:
+   ```bash
+   npx wrangler deploy
+   ```
 
-1. Push the repo to GitHub or GitLab (with the `_redirects` file from Step 1 included).
+---
+
+## Option 5 - Cloudflare Pages
+
+Cloudflare Pages reads the same `_redirects` file syntax Netlify uses, so the SPA routing setup is similar — but Cloudflare Workers (`wrangler deploy`) rejects this rule for this app. Only generate `_redirects` inside the Pages build output when you are deploying to Cloudflare Pages.
+
+### Configure the Pages build
+
+1. Push the repo to GitHub or GitLab.
 2. Cloudflare Dashboard → **Workers & Pages → Create → Pages → Connect to Git**.
 3. Pick the repo. Configure the build:
    - **Framework preset**: None (or "Vite" if listed — both work).
-   - **Build command**: `pnpm --filter @workspace/notary-journal... run build`
+   - **Build command**:
+     ```bash
+     pnpm --filter @workspace/notary-journal... run build && echo '/*    /index.html   200' > artifacts/notary-journal/dist/public/_redirects
+     ```
    - **Build output directory**: `artifacts/notary-journal/dist/public`
    - **Root directory**: leave blank (the repo root is correct).
 4. Under **Environment variables (build)**, set:
@@ -307,9 +332,11 @@ Vite copies anything in `public/` straight into `dist/public/`, so the file land
    - `VITE_GOOGLE_CLIENT_ID` = your Google OAuth client ID (see [Shared setup](#shared-setup))
 5. Click **Save and Deploy**. First build takes 2–4 minutes.
 
+> If you skip the generated `_redirects` step on Cloudflare Pages, the home page will load but refreshing on `/journal` or any deep link can return a 404.
+
 ---
 
-## Option 5 - Hostinger (or standard Shared Hosting)
+## Option 6 - Hostinger (or standard Shared Hosting)
 
 Hostinger typically uses Apache or LiteSpeed web servers. The build process is identical to Netlify drag-and-drop, but instead of a `_redirects` file, you need an `.htaccess` file to handle the SPA (Single Page Application) routing.
 
@@ -414,7 +441,8 @@ CSV and PDF exports are read-only — they can't be re-imported back into anothe
 ## Reference: how this all fits together
 
 - `netlify.toml` — git-connected Netlify config. Read by Netlify, ignored by drag-and-drop and by Cloudflare.
-- `_redirects` file inside the publish folder — SPA fallback. Honored by both Netlify (when there's no `netlify.toml` redirects rule) and Cloudflare Pages.
+- `wrangler.toml` — Cloudflare Workers static-assets config. Uses `not_found_handling = "single-page-application"` for SPA fallback.
+- `_redirects` file inside the publish folder — SPA fallback for Netlify drag-and-drop and Cloudflare Pages only. Do not commit it under `artifacts/notary-journal/public/` for this repo, because `wrangler deploy` rejects the Netlify-style rule.
 - `vite.config.ts` — base path defaults to `/`. Don't override `BASE_PATH` for Netlify or Cloudflare deploys; both serve from the domain root.
 - `artifacts/notary-journal/public/sw.js` — service worker; bump `CACHE_NAME` to force-invalidate user caches. Network-first for HTML, cache-first for hashed `/assets/*`.
 - `_headers` file inside the publish folder — host-level cache rules. Honored by both Netlify and Cloudflare Pages. Tells the CDN never to cache `index.html` / `sw.js` and to cache `/assets/*` for a year. Committed in `artifacts/notary-journal/public/_headers`, then copied into the build output by Vite.
