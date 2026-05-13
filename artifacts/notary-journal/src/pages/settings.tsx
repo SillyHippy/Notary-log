@@ -23,7 +23,7 @@ import {
 } from '@/lib/biometric';
 import { THRESHOLD_OPTIONS, DEFAULT_THRESHOLD_DAYS, clearSnooze } from '@/lib/backup-nudge';
 import { FEE_TYPES, type FeeType } from '@/lib/fees';
-import { exportAllCSV, exportAllJSON, exportAllPDF, exportJournalTablePDF, parseBackupFile } from '@/lib/export';
+import { BACKUP_FORMAT_VERSION, exportAllCSV, exportAllJSON, exportAllPDF, exportJournalTablePDF, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
   isGdriveReady,
@@ -36,6 +36,12 @@ import {
   restoreFromDrive,
   type BackupFile,
 } from '@/lib/gdrive';
+import {
+  downloadZoBackupText,
+  listZoBackups,
+  uploadZoBackup,
+  type ZoBackupFile,
+} from '@/lib/zo-backup';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -49,6 +55,10 @@ const settingsSchema = z.object({
 });
 
 type SettingsFormValues = z.infer<typeof settingsSchema>;
+
+const ZO_BACKUP_URL_KEY = 'zo_backup_api_url';
+const ZO_BACKUP_KEY_KEY = 'zo_backup_key';
+const ZO_LAST_BACKUP_KEY = 'zo_last_backup';
 
 function formatRelativeTime(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime();
@@ -123,6 +133,17 @@ export function Settings() {
   const [isRestoring, setIsRestoring] = useState(false);
   const [gisReady, setGisReady] = useState(false);
   const gisCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Zo backup state (no Google/OAuth required)
+  const [zoApiUrl, setZoApiUrl] = useState('');
+  const [zoBackupKey, setZoBackupKey] = useState('');
+  const [zoLastBackup, setZoLastBackup] = useState<string | null>(null);
+  const [zoBusy, setZoBusy] = useState(false);
+  const [isZoLoadingFiles, setIsZoLoadingFiles] = useState(false);
+  const [zoBackupFiles, setZoBackupFiles] = useState<ZoBackupFile[]>([]);
+  const [showZoRestoreList, setShowZoRestoreList] = useState(false);
+  const [selectedZoFile, setSelectedZoFile] = useState<ZoBackupFile | null>(null);
+  const [isZoRestoring, setIsZoRestoring] = useState(false);
 
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsSchema),
@@ -202,6 +223,9 @@ export function Settings() {
     // Load initial Google Drive state
     setIsConnected(!!getStoredToken());
     setLastBackup(getLastBackupTime());
+      setZoApiUrl(localStorage.getItem(ZO_BACKUP_URL_KEY) ?? '');
+      setZoBackupKey(localStorage.getItem(ZO_BACKUP_KEY_KEY) ?? '');
+      setZoLastBackup(localStorage.getItem(ZO_LAST_BACKUP_KEY));
   }, [form]);
 
   const onSubmit = async (data: SettingsFormValues) => {
@@ -512,6 +536,142 @@ export function Settings() {
     const entries = await getAllEntries();
     const settings = await getSettings();
     exportAllJSON(entries, settings);
+  };
+
+  // ── Zo backup handlers ────────────────────────────────────────────────────
+
+  const saveZoConfigFromState = () => {
+    const url = zoApiUrl.trim();
+    const key = zoBackupKey.trim();
+    localStorage.setItem(ZO_BACKUP_URL_KEY, url);
+    localStorage.setItem(ZO_BACKUP_KEY_KEY, key);
+    setZoApiUrl(url);
+    setZoBackupKey(key);
+    return { apiUrl: url, backupKey: key };
+  };
+
+  const handleSaveZoConfig = () => {
+    saveZoConfigFromState();
+    toast({ title: 'Zo backup saved', description: 'This browser will use your Zo backup endpoint.' });
+  };
+
+  const handleTestZoConnection = async () => {
+    setZoBusy(true);
+    try {
+      const config = saveZoConfigFromState();
+      const files = await listZoBackups(config);
+      setZoBackupFiles(files);
+      toast({ title: 'Zo backup connected', description: `Found ${files.length} backup file${files.length === 1 ? '' : 's'}.` });
+    } catch (err) {
+      toast({ title: 'Zo backup test failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setZoBusy(false);
+  };
+
+  const handleZoBackupNow = async () => {
+    setZoBusy(true);
+    try {
+      const config = saveZoConfigFromState();
+      const entries = await getAllEntries();
+      const settings = await getSettings();
+      const name = await uploadZoBackup({
+        ...config,
+        payload: {
+          version: BACKUP_FORMAT_VERSION,
+          exportedAt: new Date().toISOString(),
+          entries,
+          settings,
+        },
+      });
+      const now = new Date().toISOString();
+      localStorage.setItem(ZO_LAST_BACKUP_KEY, now);
+      setZoLastBackup(now);
+      toast({ title: 'Zo backup complete', description: `Saved ${name}.` });
+    } catch (err) {
+      toast({ title: 'Zo backup failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setZoBusy(false);
+  };
+
+  const handleShowZoRestoreList = async () => {
+    if (showZoRestoreList) {
+      setShowZoRestoreList(false);
+      return;
+    }
+    setIsZoLoadingFiles(true);
+    setShowZoRestoreList(true);
+    try {
+      const config = saveZoConfigFromState();
+      const files = await listZoBackups(config);
+      setZoBackupFiles(files);
+    } catch (err) {
+      toast({ title: 'Could not list Zo backups', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+      setShowZoRestoreList(false);
+    }
+    setIsZoLoadingFiles(false);
+  };
+
+  const handleConfirmZoRestore = async () => {
+    if (!selectedZoFile) return;
+    setIsZoRestoring(true);
+    try {
+      const config = saveZoConfigFromState();
+      const text = await downloadZoBackupText({ ...config, fileName: selectedZoFile.name });
+      const parsed = parseBackupFile(text);
+
+      const startCount = (await getAllEntries()).length;
+      const isEmptyJournal = startCount === 0;
+
+      let imported = 0;
+      let skipped = 0;
+      for (const entry of parsed.entries) {
+        const { id: _id, ...rest } = entry as typeof entry & { id?: number };
+        try {
+          await importEntry(rest);
+          imported++;
+        } catch (err) {
+          if (err instanceof Error && (err as Error & { code?: string }).code === 'DUPLICATE') {
+            skipped++;
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      let restamped = false;
+      if (isEmptyJournal && imported > 0 && parsed.entries.some(e => !e.hash)) {
+        await recomputeChainFrom(1);
+        restamped = true;
+      }
+
+      let settingsRestored = false;
+      if (parsed.settings && Object.keys(parsed.settings).length > 0 && window.confirm(
+        'This Zo backup includes notary settings (name, commission, defaults). ' +
+        'Overwrite your current settings with the values from the backup?'
+      )) {
+        const current = await getSettings();
+        const sanitized: Partial<NotarySettings> = { ...parsed.settings };
+        delete (sanitized as Partial<NotarySettings> & { pinHash?: string }).pinHash;
+        await saveSettings({ ...current, ...sanitized, id: 1, pinEnabled: true });
+        settingsRestored = true;
+        hydrateFeeAndSealStateFrom(await getSettings());
+      }
+
+      toast({
+        title: 'Zo restore complete',
+        description: `Imported ${imported} entries. Skipped ${skipped} duplicates`
+          + (restamped ? ', chain restamped' : '')
+          + (settingsRestored ? ', settings restored' : '')
+          + '.',
+      });
+      setSelectedZoFile(null);
+      setShowZoRestoreList(false);
+      const newEntries = await getAllEntries();
+      setEntryCount(newEntries.length);
+    } catch (err) {
+      toast({ title: 'Zo restore failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setIsZoRestoring(false);
   };
 
   // ── Google Drive handlers ───────────────────────────────────────────────────
@@ -1127,6 +1287,150 @@ export function Settings() {
           <p className="text-xs text-muted-foreground">
             Image is resized to about 600px and stored locally. PNG with transparency works best.
           </p>
+        </CardContent>
+      </Card>
+
+      {/* ── Zo Backup Card ─────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CloudUpload className="w-5 h-5 text-primary" />
+            Zo Backup
+          </CardTitle>
+          <CardDescription>
+            Back up to your own Zo Space API. No Google Cloud, OAuth, or third-party connector required.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <Alert variant="default" className="bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900">
+            <Cloud className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
+            <AlertTitle>Easy self-host backup</AlertTitle>
+            <AlertDescription>
+              Create `/api/backup` in Zo Space, then paste the endpoint and backup key here. Google Drive backup is still available below if you prefer direct Drive OAuth.
+            </AlertDescription>
+          </Alert>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="zoBackupUrl">Zo backup API URL</Label>
+              <Input
+                id="zoBackupUrl"
+                placeholder="https://your-handle.zo.space/api/backup"
+                value={zoApiUrl}
+                onChange={e => setZoApiUrl(e.target.value)}
+                data-testid="input-zo-backup-url"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="zoBackupKey">Backup key</Label>
+              <Input
+                id="zoBackupKey"
+                type="password"
+                placeholder="Paste the key Zo generated"
+                value={zoBackupKey}
+                onChange={e => setZoBackupKey(e.target.value)}
+                data-testid="input-zo-backup-key"
+              />
+            </div>
+          </div>
+
+          {zoLastBackup && (
+            <p className="text-sm text-muted-foreground">
+              Last Zo backup: {formatRelativeTime(zoLastBackup)}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleSaveZoConfig}
+              disabled={zoBusy}
+              data-testid="button-save-zo-backup"
+            >
+              <Save className="w-4 h-4" />
+              Save Zo Settings
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleTestZoConnection}
+              disabled={zoBusy}
+              data-testid="button-test-zo-backup"
+            >
+              <RefreshCw className={`w-4 h-4 ${zoBusy ? 'animate-spin' : ''}`} />
+              Test Connection
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleZoBackupNow}
+              disabled={zoBusy}
+              data-testid="button-backup-zo-now"
+            >
+              <CloudUpload className="w-4 h-4" />
+              Backup to Zo
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleShowZoRestoreList}
+              disabled={isZoLoadingFiles || zoBusy}
+              data-testid="button-restore-zo"
+            >
+              <RotateCcw className={`w-4 h-4 ${isZoLoadingFiles ? 'animate-spin' : ''}`} />
+              {isZoLoadingFiles ? 'Loading...' : showZoRestoreList ? 'Hide Zo Backups' : 'Restore from Zo'}
+            </Button>
+          </div>
+
+          {showZoRestoreList && !isZoLoadingFiles && (
+            <div className="border rounded-lg divide-y animate-in slide-in-from-top-2">
+              {zoBackupFiles.length === 0 ? (
+                <p className="p-4 text-sm text-muted-foreground">No Zo backup files found.</p>
+              ) : (
+                zoBackupFiles.map(file => (
+                  <div key={file.name} className="p-3 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{file.name}</p>
+                      {file.modifiedTime && (
+                        <p className="text-xs text-muted-foreground">{formatRelativeTime(file.modifiedTime)}</p>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setSelectedZoFile(file)}
+                      data-testid={`button-restore-zo-file-${file.name}`}
+                    >
+                      Restore
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {selectedZoFile && (
+            <div className="p-4 border border-amber-300 rounded-lg bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 space-y-3 animate-in slide-in-from-top-2">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                Restore from "{selectedZoFile.name}"?
+              </p>
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                Entries in the backup will be merged with your existing journal. Duplicate entry numbers will be skipped. Your current entries will not be deleted.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={handleConfirmZoRestore}
+                  disabled={isZoRestoring}
+                  data-testid="button-confirm-zo-restore"
+                >
+                  {isZoRestoring ? 'Restoring...' : 'Confirm Restore'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelectedZoFile(null)}>Cancel</Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

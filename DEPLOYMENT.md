@@ -1,20 +1,209 @@
 # Deploying the Notary Journal
 
-This guide covers deploying the Notary Journal PWA to **Netlify**, **Cloudflare Pages**, or **Hostinger**.
+This guide covers deploying the Notary Journal PWA to **Zo Computer**, **Netlify**, **Cloudflare Pages**, or **Hostinger**.
 
 ## Quick reference
 
 | Host | Build command | Publish folder | SPA redirects |
 |---|---|---|---|
+| Zo Computer | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | Ask Zo to route all paths to `index.html` |
 | Netlify (git-connected) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `netlify.toml` (already in repo) |
 | Netlify (drag-and-drop) | run locally: `pnpm --filter @workspace/notary-journal run build` | zip the contents of `artifacts/notary-journal/dist/public` | `_redirects` file inside the zip |
 | Cloudflare Pages | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `_redirects` file in publish folder |
 
-**Node version on every host: `22`.**
+**Node version on every host: `22` where configurable.** On Zo, ask it to use Node 22 with Corepack/pnpm.
 
 ---
 
-## Option 1 — Netlify drag-and-drop (no GitHub needed)
+## Option 1 - Zo Computer (easiest self-host path)
+
+Use this when you want Zo to handle the deploy steps for you. Zo gives every free-plan user 100GB of storage and one hosted service, but the free computer can sleep when idle and has limited CPU/memory. That is fine for a personal notary journal, but not ideal for always-on background automation.
+
+### Step 1 - Sign up
+
+Sign up with the project referral link: [https://zo-computer.cello.so/XvrzHZZ53TV](https://zo-computer.cello.so/XvrzHZZ53TV)
+
+### Step 2 - Clone it
+
+Open your Zo terminal and run:
+
+```bash
+git clone https://github.com/SillyHippy/Notary-log
+```
+
+### Step 3 - Install and build
+
+Go into the folder, install dependencies, and build the app:
+
+```bash
+cd Notary-log
+corepack enable
+pnpm install
+pnpm --filter @workspace/notary-journal... run build
+```
+
+### Step 4 - Publish it
+
+Ask Zo to publish `artifacts/notary-journal/dist/public` as a Zo Site or public HTTP service. Make it public, and configure it as a single-page app so every route falls back to `index.html`.
+
+If you want Zo to do the setup for you, paste a prompt like this:
+
+```text
+Deploy the Notary Journal app for me on Zo using the free plan.
+
+Use this repository:
+https://github.com/SillyHippy/Notary-log
+
+Please do all of this:
+
+1. Clone the repo.
+2. Use Node 22 with Corepack and pnpm.
+3. From the repo root, run:
+   corepack enable
+   pnpm install
+   pnpm --filter @workspace/notary-journal... run build
+4. Publish artifacts/notary-journal/dist/public as a public Zo Site or public HTTP service.
+5. Configure it as a single-page app so every route falls back to index.html.
+6. Make the site public.
+7. Create a Zo Space API route at /api/backup.
+8. Store backup files in Documents/Notary Journal/backups/.
+9. Protect /api/backup with a secret backup key, because Zo Space API routes are public. Generate a strong backup key and show it to me when finished.
+10. Add CORS support so the public app can call the Zo Space API from the browser:
+    - allow methods: GET, POST, OPTIONS
+    - allow headers: Authorization, Content-Type
+    - return Access-Control-Allow-Origin for the app URL, or use * if Zo requires a simpler setup
+11. Make OPTIONS /api/backup return the CORS headers for preflight requests.
+12. Make GET /api/backup list files and return JSON like:
+    { "files": [{ "name": "notary-journal-backup-2026-05-13.json", "modifiedTime": "2026-05-13T18:00:00.000Z", "size": 12345 }] }
+13. Make POST /api/backup save a new backup. The app will send JSON like:
+    { "filename": "notary-journal-backup-2026-05-13.json", "backup": { "...": "backup payload" } }
+    Return JSON like:
+    { "name": "notary-journal-backup-2026-05-13.json" }
+14. Make GET /api/backup?file=filename.json download that backup for restore by returning the raw backup JSON.
+15. Reject requests without Authorization: Bearer <backup-key>.
+16. Do not publish the backup folder with zo.pub.
+17. I will paste the backup API URL and backup key into Settings -> Zo Backup in the app.
+18. When finished, tell me:
+    - the public app URL, which should look like [site-name]-[my-zo-handle].zocomputer.io
+    - the backup API URL, which should look like [my-zo-handle].zo.space/api/backup
+    - where the backup files are stored
+
+Keep this free-tier friendly: one app site/service, simple file storage, no always-on paid automation required.
+```
+
+If Zo asks for a hosting type, use a **Site** for the simplest deployment. If Zo needs more control over the runtime, use a public **HTTP service** that serves the built `dist/public` folder and routes unknown paths to `index.html`.
+
+### Step 5 - Complete app setup
+
+Open the Zo site URL and complete the in-app PIN setup.
+
+### Optional direct Google Drive backup
+
+Direct in-app Google Drive backup still requires a Google OAuth client ID. If you want it on the Zo-hosted app, set `VITE_GOOGLE_CLIENT_ID` before the build and add the final Zo site URL to **Authorized JavaScript origins** in Google Cloud Console.
+
+If you do not want to touch Google Cloud Console, skip `VITE_GOOGLE_CLIENT_ID`. The app still works, and you can use the Zo backup workflow below.
+
+### Step 6 - Back up and restore with Zo
+
+The journal data lives in the browser's IndexedDB, not automatically inside Zo storage. Zo cannot back up that browser database by itself. You must create a backup from inside the app first.
+
+To use the in-app Zo backup:
+
+1. Open the deployed app.
+2. Go to **Settings -> Zo Backup**.
+3. Paste the backup API URL and backup key from Zo.
+4. Click **Test Connection**.
+5. Click **Backup to Zo**.
+6. Optional: ask Zo to copy `Documents/Notary Journal/backups/` to your connected Google Drive.
+
+To restore with the in-app Zo backup:
+
+1. Open the deployed app on the target device or domain.
+2. Go to **Settings -> Zo Backup**.
+3. Click **Restore from Zo**.
+4. Pick a backup file and confirm the restore.
+
+Manual backup still works: use **Settings -> Data & Export -> Export JSON**, store the file in Zo, then use **Import from JSON file** to restore.
+
+### Optional Zo automation idea
+
+After each manual export, you can ask Zo to organize and mirror backups:
+
+```text
+Whenever I upload a file named notary-journal*.json to my Notary Journal Backups folder, keep the newest copy there and copy it to my connected Google Drive backup folder.
+```
+
+This is a Zo-side file automation. It does not replace the app's export/import flow, and it does not give the app one-click Google Drive OAuth.
+
+### Optional Step 7 - Set up the backup API
+
+For a simple Zo-side backup connector, go to **Zo Space -> API Routes** and create `/api/backup`.
+
+Use this route contract:
+
+| Method | Behavior |
+|---|---|
+| `GET /api/backup` | List files. |
+| `POST /api/backup` | Save new backup. |
+| `GET /api/backup?file=filename.json` | Download one backup file for restore. |
+
+Store files in:
+
+```text
+Documents/Notary Journal/backups/
+```
+
+Because Zo Space APIs are public, protect the route with a secret backup key. A simple pattern is to require an `Authorization: Bearer <backup-key>` header before listing, saving, or downloading backups.
+
+The app's **Settings -> Zo Backup** section uses this API URL and backup key for one-click backup and restore. This API is not required for manual JSON export/import.
+
+### Step 8 - Done
+
+Your app is live at `[site-name]-[your-zo-handle].zocomputer.io`.
+
+Backup is at `[your-zo-handle].zo.space/api/backup`.
+
+Open your Zo site URL, unlock the app with your PIN, and make a test JSON backup so you know restore is ready before you start using the journal.
+
+### Optional - Create a Zo helper
+
+After Zo deploys the app, you can paste this prompt into Zo so it remembers how to maintain the deployment and backup route:
+
+```text
+Create a Notary Journal helper for this Zo computer.
+
+Your job is to help me deploy, update, repair, and verify the Notary Journal app and its Zo backup API.
+
+You may:
+- clone or update https://github.com/SillyHippy/Notary-log
+- run the build commands from the README
+- publish the built app as a public Zo Site or HTTP service
+- create or repair /api/backup
+- verify GET /api/backup lists files
+- verify POST /api/backup saves a backup
+- verify backups are stored in Documents/Notary Journal/backups/
+- help copy backup files to connected storage only if I ask
+
+Safety rules:
+- keep /api/backup protected with the backup key
+- do not publish backup files with zo.pub
+- do not read, summarize, modify, expose, or delete backup contents unless I explicitly ask and confirm
+- before changing the app or backup route, tell me what you are about to change and why
+
+When something breaks, check the build output, public app URL, /api/backup route, CORS headers, backup key, and backup folder path.
+```
+
+### Zo limitations to tell users
+
+- Free Zo computers can sleep when idle, so scheduled automations may not behave like an always-on server.
+- Free Zo accounts include one hosted service. Use one Site/service for the app unless you upgrade.
+- Public HTTP services are reachable by anyone with the URL. The app still protects journal access with the in-app PIN, but do not put backup JSON files in a public site folder or `zo.pub`.
+- Zo snapshots protect the Zo computer state, not the browser's local IndexedDB on every device. Keep JSON backups.
+- Direct browser-to-Google-Drive backup still uses `VITE_GOOGLE_CLIENT_ID` and Google Cloud Console.
+
+---
+
+## Option 2 - Netlify drag-and-drop (no GitHub needed)
 
 Use this when you just want to upload a finished build by hand. No git connection, no CI.
 
@@ -30,26 +219,13 @@ export VITE_GOOGLE_CLIENT_ID="your-client-id-here.apps.googleusercontent.com"
 # 2. Build the app.
 pnpm --filter @workspace/notary-journal run build
 
-# 3. Add the SPA redirect rule + cache-control headers into the build output.
-echo '/*    /index.html   200' > artifacts/notary-journal/dist/public/_redirects
-cat > artifacts/notary-journal/dist/public/_headers <<'EOF'
-/index.html
-  Cache-Control: no-cache, no-store, must-revalidate
-
-/sw.js
-  Cache-Control: no-cache, no-store, must-revalidate
-
-/assets/*
-  Cache-Control: public, max-age=31536000, immutable
-EOF
-
-# 4. Zip the *contents* of dist/public into a file at the repo root.
+# 3. Zip the *contents* of dist/public into a file at the repo root.
 ( cd artifacts/notary-journal/dist/public && zip -r ../../../../notary-journal-netlify.zip . )
 ```
 
 The output is `notary-journal-netlify.zip` at the repo root. **The zip must contain the contents of `dist/public` at its top level** (so `index.html` is at the root of the zip), not the `dist/public` folder itself. Otherwise Netlify will serve nothing and show "Page not found." If your shell doesn't have the `zip` command, install it (`apt-get install zip`, `brew install zip`) or run the build inside Replit, where the agent can package the zip for you.
 
-The `_redirects` file is mandatory. It tells Netlify to send every URL (including deep links like `/journal` and `/entry/abc-123`) to `index.html` so the React Router (wouter) can handle the route. Without it, refreshing the page on any non-root URL returns a 404.
+The `_redirects` file is mandatory. It tells Netlify to send every URL (including deep links like `/journal` and `/entry/abc-123`) to `index.html` so the React Router (wouter) can handle the route. It is committed in `artifacts/notary-journal/public/_redirects`, so Vite copies it into `dist/public` automatically. Without it, refreshing the page on any non-root URL returns a 404.
 
 **About `VITE_GOOGLE_CLIENT_ID` for drag-and-drop:** this value is baked into the JavaScript bundle at build time. Drag-and-drop deploys upload pre-built files, so Netlify's dashboard environment variables are **ignored** for this flow — the variable must be set in your shell *before* `pnpm run build` runs (step 1 above). If you forget, the Cloud Backup section in Settings will show "not enabled" on the deployed site, and you'll need to rebuild and re-upload.
 
@@ -67,7 +243,7 @@ Then add your deployed URL to Google Cloud Console as described in [Authorize th
 
 ---
 
-## Option 2 — Netlify git-connected (auto-build on push)
+## Option 3 - Netlify git-connected (auto-build on push)
 
 Use this when you want every commit to GitHub (or other git provider) to redeploy automatically.
 
@@ -101,23 +277,19 @@ To re-link an existing Netlify site to a git repo (instead of replacing it), go 
 
 ---
 
-## Option 3 — Cloudflare Pages
+## Option 4 - Cloudflare Pages
 
 Cloudflare Pages reads the same `_redirects` file syntax Netlify uses, so the SPA routing setup is identical — but unlike Netlify, the redirect rule has to live inside the build output (Cloudflare doesn't read `netlify.toml`). Do the one-time setup *before* the first deploy or your first deep-link refresh will 404.
 
-### Step 1 — Add the SPA redirect file (one-time, before first deploy)
+### Step 1 — Confirm the SPA redirect file exists
 
-Run this once from the repo root, then commit:
+The repo includes `artifacts/notary-journal/public/_redirects` with this rule:
 
-```bash
-mkdir -p artifacts/notary-journal/public
-echo '/*    /index.html   200' > artifacts/notary-journal/public/_redirects
-git add artifacts/notary-journal/public/_redirects
-git commit -m "Add SPA redirects for Netlify and Cloudflare Pages builds"
-git push
+```text
+/*    /index.html   200
 ```
 
-Vite copies anything in `public/` straight into `dist/public/`, so the file lands at `dist/public/_redirects` on every build automatically. The same file works on Netlify, so this is also helpful for Netlify drag-and-drop deploys (you can skip the manual `echo` step in Option 1 once this is committed).
+Vite copies anything in `public/` straight into `dist/public/`, so the file lands at `dist/public/_redirects` on every build automatically. The same file works on Netlify.
 
 > If you skip this step, the home page will load on Cloudflare but refreshing on `/journal` or any deep link returns a 404.
 
@@ -137,7 +309,7 @@ Vite copies anything in `public/` straight into `dist/public/`, so the file land
 
 ---
 
-## Option 4 — Hostinger (or standard Shared Hosting)
+## Option 5 - Hostinger (or standard Shared Hosting)
 
 Hostinger typically uses Apache or LiteSpeed web servers. The build process is identical to Netlify drag-and-drop, but instead of a `_redirects` file, you need an `.htaccess` file to handle the SPA (Single Page Application) routing.
 
@@ -173,7 +345,7 @@ Hostinger typically uses Apache or LiteSpeed web servers. The build process is i
 
 ## Shared setup
 
-These two steps are required regardless of which host you pick.
+These two steps are required only if you want direct in-app Google Drive backup. If you are using the Zo backup workflow with JSON files only, you can skip this entire section.
 
 ### 1. Set the `VITE_GOOGLE_CLIENT_ID` environment variable
 
@@ -181,6 +353,7 @@ This is the Google OAuth client ID that powers the **Cloud Backup** feature (Dri
 
 | Host | Where to set it |
 |---|---|
+| Zo Computer | Ask Zo to set `VITE_GOOGLE_CLIENT_ID` before running the production build |
 | Netlify | Site settings → Build & deploy → Environment → Add a variable |
 | Cloudflare Pages | Settings → Environment variables → **Production** (and Preview if you want) |
 
@@ -244,5 +417,5 @@ CSV and PDF exports are read-only — they can't be re-imported back into anothe
 - `_redirects` file inside the publish folder — SPA fallback. Honored by both Netlify (when there's no `netlify.toml` redirects rule) and Cloudflare Pages.
 - `vite.config.ts` — base path defaults to `/`. Don't override `BASE_PATH` for Netlify or Cloudflare deploys; both serve from the domain root.
 - `artifacts/notary-journal/public/sw.js` — service worker; bump `CACHE_NAME` to force-invalidate user caches. Network-first for HTML, cache-first for hashed `/assets/*`.
-- `_headers` file inside the publish folder — host-level cache rules. Honored by both Netlify and Cloudflare Pages. Tells the CDN never to cache `index.html` / `sw.js` and to cache `/assets/*` for a year. Generated by the agent's "rebuild the Netlify zip" flow.
+- `_headers` file inside the publish folder — host-level cache rules. Honored by both Netlify and Cloudflare Pages. Tells the CDN never to cache `index.html` / `sw.js` and to cache `/assets/*` for a year. Committed in `artifacts/notary-journal/public/_headers`, then copied into the build output by Vite.
 - `replit.md` — workspace overview; lists `VITE_GOOGLE_CLIENT_ID` and other notary-journal config.
