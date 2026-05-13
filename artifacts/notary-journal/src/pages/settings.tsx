@@ -42,6 +42,11 @@ import {
   uploadZoBackup,
   type ZoBackupFile,
 } from '@/lib/zo-backup';
+import {
+  loadBackupPanelVisibility,
+  resolveBackupPanelVisibility,
+  saveBackupPanelVisibility,
+} from '@/lib/backup-visibility';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -119,6 +124,8 @@ export function Settings() {
   // Backup-nudge preferences
   const [backupReminderDays, setBackupReminderDays] = useState<number>(DEFAULT_THRESHOLD_DAYS);
   const [manualBackupOnly, setManualBackupOnly] = useState(false);
+  const [showGoogleBackup, setShowGoogleBackup] = useState(true);
+  const [showZoBackup, setShowZoBackup] = useState(false);
 
   // Google Drive state
   const [isConnected, setIsConnected] = useState(false);
@@ -193,6 +200,19 @@ export function Settings() {
       setGoogleEmail(settings.googleEmail ?? '');
       setBackupReminderDays(settings.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS);
       setManualBackupOnly(!!settings.manualBackupOnly);
+      const hasZoConfig = !!(
+        localStorage.getItem(ZO_BACKUP_URL_KEY) ||
+        localStorage.getItem(ZO_BACKUP_KEY_KEY) ||
+        localStorage.getItem(ZO_LAST_BACKUP_KEY)
+      );
+      const localVisibility = loadBackupPanelVisibility(localStorage, hasZoConfig);
+      const settingsVisibility = resolveBackupPanelVisibility({
+        googlePreference: settings.showGoogleBackup ?? localVisibility.google,
+        zoPreference: settings.showZoBackup ?? localVisibility.zo,
+        hasZoConfig,
+      });
+      setShowGoogleBackup(settingsVisibility.google);
+      setShowZoBackup(settingsVisibility.zo);
 
       hydrateFeeAndSealStateFrom(settings);
 
@@ -223,9 +243,20 @@ export function Settings() {
     // Load initial Google Drive state
     setIsConnected(!!getStoredToken());
     setLastBackup(getLastBackupTime());
-      setZoApiUrl(localStorage.getItem(ZO_BACKUP_URL_KEY) ?? '');
-      setZoBackupKey(localStorage.getItem(ZO_BACKUP_KEY_KEY) ?? '');
-      setZoLastBackup(localStorage.getItem(ZO_LAST_BACKUP_KEY));
+
+    const storedZoApiUrl = localStorage.getItem(ZO_BACKUP_URL_KEY) ?? '';
+    const storedZoBackupKey = localStorage.getItem(ZO_BACKUP_KEY_KEY) ?? '';
+    const storedZoLastBackup = localStorage.getItem(ZO_LAST_BACKUP_KEY);
+    setZoApiUrl(storedZoApiUrl);
+    setZoBackupKey(storedZoBackupKey);
+    setZoLastBackup(storedZoLastBackup);
+
+    const visibility = loadBackupPanelVisibility(
+      localStorage,
+      !!(storedZoApiUrl || storedZoBackupKey || storedZoLastBackup),
+    );
+    setShowGoogleBackup(visibility.google);
+    setShowZoBackup(visibility.zo);
   }, [form]);
 
   const onSubmit = async (data: SettingsFormValues) => {
@@ -330,6 +361,39 @@ export function Settings() {
     const current = await getSettings();
     await saveSettings({ ...current, manualBackupOnly: checked } as NotarySettings);
     if (checked) await clearSnooze();
+  };
+
+  const syncBackupPanelVisibilityFromSettings = (settings: Partial<NotarySettings>) => {
+    if (typeof settings.showGoogleBackup === 'boolean') {
+      setShowGoogleBackup(settings.showGoogleBackup);
+      saveBackupPanelVisibility(localStorage, 'google', settings.showGoogleBackup);
+    }
+    if (typeof settings.showZoBackup === 'boolean') {
+      setShowZoBackup(settings.showZoBackup);
+      saveBackupPanelVisibility(localStorage, 'zo', settings.showZoBackup);
+    }
+  };
+
+  const handleGoogleBackupPanelToggle = async (checked: boolean) => {
+    setShowGoogleBackup(checked);
+    saveBackupPanelVisibility(localStorage, 'google', checked);
+    const current = await getSettings();
+    await saveSettings({ ...current, showGoogleBackup: checked } as NotarySettings);
+    if (!checked) {
+      setShowRestoreList(false);
+      setSelectedFile(null);
+    }
+  };
+
+  const handleZoBackupPanelToggle = async (checked: boolean) => {
+    setShowZoBackup(checked);
+    saveBackupPanelVisibility(localStorage, 'zo', checked);
+    const current = await getSettings();
+    await saveSettings({ ...current, showZoBackup: checked } as NotarySettings);
+    if (!checked) {
+      setShowZoRestoreList(false);
+      setSelectedZoFile(null);
+    }
   };
 
   const handleSaveDefaultFees = async () => {
@@ -500,6 +564,7 @@ export function Settings() {
         delete (sanitized as Partial<NotarySettings> & { pinHash?: string }).pinHash;
         await saveSettings({ ...current, ...sanitized, id: 1, pinEnabled: true });
         settingsRestored = true;
+        syncBackupPanelVisibilityFromSettings(sanitized);
         // Refresh local form state so restored fees/seal show up immediately.
         hydrateFeeAndSealStateFrom(await getSettings());
       }
@@ -654,6 +719,7 @@ export function Settings() {
         delete (sanitized as Partial<NotarySettings> & { pinHash?: string }).pinHash;
         await saveSettings({ ...current, ...sanitized, id: 1, pinEnabled: true });
         settingsRestored = true;
+        syncBackupPanelVisibilityFromSettings(sanitized);
         hydrateFeeAndSealStateFrom(await getSettings());
       }
 
@@ -803,6 +869,7 @@ export function Settings() {
         delete (sanitized as Partial<NotarySettings> & { pinHash?: string }).pinHash;
         await saveSettings({ ...current, ...sanitized, id: 1, pinEnabled: true });
         settingsRestored = true;
+        syncBackupPanelVisibilityFromSettings(sanitized);
         hydrateFeeAndSealStateFrom(await getSettings());
       }
 
@@ -1290,7 +1357,50 @@ export function Settings() {
         </CardContent>
       </Card>
 
+      {/* ── Backup Visibility Card ──────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cloud className="w-5 h-5 text-primary" />
+            Backup & Restore
+          </CardTitle>
+          <CardDescription>
+            Choose which backup setup panels to show. JSON export/import is always available below.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
+            <div className="space-y-0.5 pr-4">
+              <p className="text-sm font-medium">Show Google Drive backup</p>
+              <p className="text-xs text-muted-foreground">
+                Main cloud backup option for users who set up Google Drive OAuth.
+              </p>
+            </div>
+            <Switch
+              checked={showGoogleBackup}
+              onCheckedChange={handleGoogleBackupPanelToggle}
+              data-testid="switch-show-google-backup"
+            />
+          </div>
+
+          <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
+            <div className="space-y-0.5 pr-4">
+              <p className="text-sm font-medium">Show Zo backup</p>
+              <p className="text-xs text-muted-foreground">
+                Self-host backup for Zo Space API deployments.
+              </p>
+            </div>
+            <Switch
+              checked={showZoBackup}
+              onCheckedChange={handleZoBackupPanelToggle}
+              data-testid="switch-show-zo-backup"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       {/* ── Zo Backup Card ─────────────────────────────────────────────── */}
+      {showZoBackup && (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -1433,8 +1543,10 @@ export function Settings() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* ── Cloud Backup Card ─────────────────────────────────────────── */}
+      {showGoogleBackup && (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -1624,6 +1736,7 @@ export function Settings() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* ── Data & Export Card ────────────────────────────────────────── */}
       <Card>

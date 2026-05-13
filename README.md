@@ -41,14 +41,13 @@ Go into the folder and build the app:
 
 ```bash
 cd Notary-log
-corepack enable
-pnpm install
-pnpm --filter @workspace/notary-journal... run build
+bun install
+bun run build
 ```
 
 ### Step 4: Publish It
 
-Ask Zo to publish `artifacts/notary-journal/dist/public` as a public site or HTTP service with SPA fallback to `index.html`.
+The repo includes `server.ts` and `zosite.json` for Zo. Ask Zo to publish the configured HTTP service, or run `bun run prod` after `bun run build`. The server serves `artifacts/notary-journal/dist/public` and falls back to `index.html` for app routes like `/journal`.
 
 Or copy and paste this prompt into Zo:
 
@@ -61,13 +60,13 @@ https://github.com/SillyHippy/Notary-log
 Please do all of this:
 
 1. Clone the repo.
-2. Use Node 22 with Corepack and pnpm.
+2. Use Bun.
 3. From the repo root, run:
-   corepack enable
-   pnpm install
-   pnpm --filter @workspace/notary-journal... run build
-4. Publish artifacts/notary-journal/dist/public as a public Zo Site or public HTTP service.
-5. Configure it as a single-page app so every route falls back to index.html.
+   bun install
+   bun run build
+4. Use the repository's zosite.json publish block, or publish the root HTTP service with:
+   bun run prod
+5. The production server is server.ts. It serves artifacts/notary-journal/dist/public and falls back to index.html for single-page app routes.
 6. Make the site public.
 7. Create a Zo Space API route at /api/backup.
 8. Store backup files in Documents/Notary Journal/backups/.
@@ -86,7 +85,7 @@ Please do all of this:
 14. Make GET /api/backup?file=filename.json download that backup for restore by returning the raw backup JSON.
 15. Reject requests without Authorization: Bearer <backup-key>.
 16. Do not publish the backup folder with zo.pub.
-17. I will paste the backup API URL and backup key into Settings -> Zo Backup in the app.
+17. I will open Settings -> Backup & Restore, turn on Show Zo backup, then paste the backup API URL and backup key into Zo Backup.
 18. When finished, tell me:
     - the public app URL, which should look like [site-name]-[my-zo-handle].zocomputer.io
     - the backup API URL, which should look like [my-zo-handle].zo.space/api/backup
@@ -103,7 +102,7 @@ Open the Zo site URL and complete the in-app PIN setup.
 
 ### Step 6: Back Up and Restore with Zo
 
-Open **Settings -> Zo Backup**, paste the Zo backup API URL and backup key, then click **Test Connection**. Use **Backup to Zo** to save a new backup and **Restore from Zo** to list and restore backup files.
+Open **Settings -> Backup & Restore**, turn on **Show Zo backup**, paste the Zo backup API URL and backup key, then click **Test Connection**. Use **Backup to Zo** to save a new backup and **Restore from Zo** to list and restore backup files.
 
 Manual backup still works: use **Settings -> Data & Export -> Export JSON** to create a backup file, then store that file in a Zo folder such as `Notary Journal Backups`. To restore manually, download the JSON backup from Zo and use **Settings -> Import from JSON file**.
 
@@ -121,7 +120,7 @@ Recommended behavior:
 - `GET /api/backup?file=filename.json` downloads a backup for restore.
 - Require a secret backup key, such as an `Authorization: Bearer ...` header, because Zo Space APIs are public endpoints.
 
-The app's **Settings -> Zo Backup** section uses this API URL and backup key for one-click backup and restore. Manual JSON export/import still works if you do not create the API route.
+The app's **Settings -> Backup & Restore -> Show Zo backup** section uses this API URL and backup key for one-click backup and restore. Manual JSON export/import still works if you do not create the API route.
 
 ### Step 8: Done
 

@@ -110,6 +110,10 @@ export interface NotarySettings {
   // responsibility for backing up via JSON export).
   backupReminderDays?: number;
   manualBackupOnly?: boolean;
+  // Settings-page visibility for optional backup connectors. These are safe to
+  // include in backups; connector secrets and tokens stay in browser storage.
+  showGoogleBackup?: boolean;
+  showZoBackup?: boolean;
   // State-compliance toggles. Default to `true` (record everything) when
   // unset so existing installs see no behavior change. When set to `false`,
   // the corresponding fields are hidden in the new-entry / edit-entry forms,

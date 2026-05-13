@@ -6,13 +6,13 @@ This guide covers deploying the Notary Journal PWA to **Zo Computer**, **Cloudfl
 
 | Host | Build command | Publish folder | SPA redirects |
 |---|---|---|---|
-| Zo Computer | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | Ask Zo to route all paths to `index.html` |
+| Zo Computer | `bun run build` | served by root `server.ts` | Hono/Bun server falls back to `index.html` |
 | Cloudflare Workers (`wrangler deploy`) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `wrangler.toml` uses `not_found_handling = "single-page-application"` |
 | Netlify (git-connected) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `netlify.toml` (already in repo) |
 | Netlify (drag-and-drop) | run locally: `pnpm --filter @workspace/notary-journal run build` | zip the contents of `artifacts/notary-journal/dist/public` | add `_redirects` to the zip only |
 | Cloudflare Pages | `pnpm --filter @workspace/notary-journal... run build && echo '/*    /index.html   200' > artifacts/notary-journal/dist/public/_redirects` | `artifacts/notary-journal/dist/public` | generated `_redirects` file in publish folder |
 
-**Node version on every host: `22` where configurable.** On Zo, ask it to use Node 22 with Corepack/pnpm.
+**Node version on every host: `22` where configurable.** On Zo, use Bun with the committed `server.ts` and `zosite.json`.
 
 ---
 
@@ -38,14 +38,13 @@ Go into the folder, install dependencies, and build the app:
 
 ```bash
 cd Notary-log
-corepack enable
-pnpm install
-pnpm --filter @workspace/notary-journal... run build
+bun install
+bun run build
 ```
 
 ### Step 4 - Publish it
 
-Ask Zo to publish `artifacts/notary-journal/dist/public` as a Zo Site or public HTTP service. Make it public, and configure it as a single-page app so every route falls back to `index.html`.
+The repo includes `server.ts` and `zosite.json` for Zo. Ask Zo to publish the configured HTTP service, or run `bun run prod` after `bun run build`. The server serves `artifacts/notary-journal/dist/public` and falls back to `index.html` for deep links.
 
 If you want Zo to do the setup for you, paste a prompt like this:
 
@@ -58,13 +57,13 @@ https://github.com/SillyHippy/Notary-log
 Please do all of this:
 
 1. Clone the repo.
-2. Use Node 22 with Corepack and pnpm.
+2. Use Bun.
 3. From the repo root, run:
-   corepack enable
-   pnpm install
-   pnpm --filter @workspace/notary-journal... run build
-4. Publish artifacts/notary-journal/dist/public as a public Zo Site or public HTTP service.
-5. Configure it as a single-page app so every route falls back to index.html.
+   bun install
+   bun run build
+4. Use the repository's zosite.json publish block, or publish the root HTTP service with:
+   bun run prod
+5. The production server is server.ts. It serves artifacts/notary-journal/dist/public and falls back to index.html for single-page app routes.
 6. Make the site public.
 7. Create a Zo Space API route at /api/backup.
 8. Store backup files in Documents/Notary Journal/backups/.
@@ -83,7 +82,7 @@ Please do all of this:
 14. Make GET /api/backup?file=filename.json download that backup for restore by returning the raw backup JSON.
 15. Reject requests without Authorization: Bearer <backup-key>.
 16. Do not publish the backup folder with zo.pub.
-17. I will paste the backup API URL and backup key into Settings -> Zo Backup in the app.
+17. I will open Settings -> Backup & Restore, turn on Show Zo backup, then paste the backup API URL and backup key into Zo Backup.
 18. When finished, tell me:
     - the public app URL, which should look like [site-name]-[my-zo-handle].zocomputer.io
     - the backup API URL, which should look like [my-zo-handle].zo.space/api/backup
@@ -92,7 +91,7 @@ Please do all of this:
 Keep this free-tier friendly: one app site/service, simple file storage, no always-on paid automation required.
 ```
 
-If Zo asks for a hosting type, use a **Site** for the simplest deployment. If Zo needs more control over the runtime, use a public **HTTP service** that serves the built `dist/public` folder and routes unknown paths to `index.html`.
+If Zo asks for a hosting type, use a public **HTTP service**. The committed `zosite.json` publish block uses `bun run prod`, which starts `server.ts`.
 
 ### Step 5 - Complete app setup
 
@@ -111,7 +110,7 @@ The journal data lives in the browser's IndexedDB, not automatically inside Zo s
 To use the in-app Zo backup:
 
 1. Open the deployed app.
-2. Go to **Settings -> Zo Backup**.
+2. Go to **Settings -> Backup & Restore** and turn on **Show Zo backup**.
 3. Paste the backup API URL and backup key from Zo.
 4. Click **Test Connection**.
 5. Click **Backup to Zo**.
@@ -120,7 +119,7 @@ To use the in-app Zo backup:
 To restore with the in-app Zo backup:
 
 1. Open the deployed app on the target device or domain.
-2. Go to **Settings -> Zo Backup**.
+2. Go to **Settings -> Backup & Restore** and turn on **Show Zo backup**.
 3. Click **Restore from Zo**.
 4. Pick a backup file and confirm the restore.
 
@@ -156,7 +155,7 @@ Documents/Notary Journal/backups/
 
 Because Zo Space APIs are public, protect the route with a secret backup key. A simple pattern is to require an `Authorization: Bearer <backup-key>` header before listing, saving, or downloading backups.
 
-The app's **Settings -> Zo Backup** section uses this API URL and backup key for one-click backup and restore. This API is not required for manual JSON export/import.
+The app's **Settings -> Backup & Restore -> Show Zo backup** section uses this API URL and backup key for one-click backup and restore. This API is not required for manual JSON export/import.
 
 ### Step 8 - Done
 

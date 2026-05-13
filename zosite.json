@@ -1,0 +1,14 @@
+{
+  "name": "notary-log",
+  "local_port": 58317,
+  "entrypoint": "bun run dev",
+  "publish": {
+    "label": "notary-log",
+    "type": "http",
+    "entrypoint": "bun run prod",
+    "published_port": 56296,
+    "env": {
+      "NODE_ENV": "production"
+    }
+  }
+}

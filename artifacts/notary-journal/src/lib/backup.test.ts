@@ -124,6 +124,30 @@ describe('parseBackupFile (import format support)', () => {
     expect(r.settings?.sealImage).toBe('data:image/png;base64,AAAA');
   });
 
+  it('round-trips backup connector visibility settings without requiring secrets', () => {
+    const envelope = {
+      version: BACKUP_FORMAT_VERSION,
+      exportedAt: '2026-05-13T18:00:00Z',
+      entries: [baseEntry(1)],
+      settings: {
+        id: 1,
+        notaryName: 'Jane',
+        commissionNumber: 'C1',
+        commissionExpiration: '',
+        defaultCity: '',
+        defaultState: '',
+        showGoogleBackup: false,
+        showZoBackup: true,
+      },
+    };
+
+    const r = parseBackupFile(JSON.stringify(envelope));
+
+    expect(r.settings?.showGoogleBackup).toBe(false);
+    expect(r.settings?.showZoBackup).toBe(true);
+    expect(r.settings).not.toHaveProperty('zoBackupKey');
+  });
+
   it('accepts a v2 backup that omits the new defaultFees/sealImage fields (forward-compatible)', () => {
     const envelope = {
       version: 2,
