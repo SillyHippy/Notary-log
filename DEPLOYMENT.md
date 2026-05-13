@@ -46,6 +46,8 @@ bun run build
 
 The repo includes `server.ts` and `zosite.json` for Zo. Ask Zo to publish the configured HTTP service, or run `bun run prod` after `bun run build`. The server serves `artifacts/notary-journal/dist/public` and falls back to `index.html` for deep links.
 
+Zo should run the service from this repository root, not from a copy in `Trash` or a duplicated `notary-log` folder. `server.ts` listens on Zo's `PORT` environment variable automatically.
+
 If you want Zo to do the setup for you, paste a prompt like this:
 
 ```text
@@ -92,6 +94,8 @@ Keep this free-tier friendly: one app site/service, simple file storage, no alwa
 ```
 
 If Zo asks for a hosting type, use a public **HTTP service**. The committed `zosite.json` publish block uses `bun run prod`, which starts `server.ts`.
+
+Important for AI deployers: do not replace the app's encrypted browser storage with a plaintext server file such as `/home/workspace/notary-data.json`. The Zo integration is for hosting the app and storing explicit JSON backups made from inside the app.
 
 ### Step 5 - Complete app setup
 
@@ -156,6 +160,8 @@ Documents/Notary Journal/backups/
 Because Zo Space APIs are public, protect the route with a secret backup key. A simple pattern is to require an `Authorization: Bearer <backup-key>` header before listing, saving, or downloading backups.
 
 The app's **Settings -> Backup & Restore -> Show Zo backup** section uses this API URL and backup key for one-click backup and restore. This API is not required for manual JSON export/import.
+
+Do not store live journal data in a plaintext server file. Backup files are created only when the user clicks **Backup to Zo** or manually exports JSON.
 
 ### Step 8 - Done
 
