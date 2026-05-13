@@ -1,25 +1,31 @@
-import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
+const PUBLIC_DIR = "./artifacts/notary-journal/dist/public";
 
-const app = new Hono();
-const staticRoot = "./artifacts/notary-journal/dist/public";
-const fallbackPort = 3000;
-const parsedPort = Number.parseInt(process.env.PORT ?? "", 10);
-const port =
-  Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : fallbackPort;
+const server = Bun.serve({
+  port: process.env.PORT || 3000,
+  async fetch(request) {
+    const url = new URL(request.url);
+    let path = url.pathname;
 
-app.use("/*", serveStatic({ root: staticRoot }));
+    if (path === "/") {
+      path = "/index.html";
+    }
 
-app.get("/*", async (c) => {
-  const index = await Bun.file(`${staticRoot}/index.html`).text();
-  return c.html(index);
+    try {
+      const filePath = `${PUBLIC_DIR}${path}`;
+      const file = Bun.file(filePath);
+
+      if (await file.exists()) {
+        return new Response(file);
+      }
+    } catch (error) {
+      console.error("File error:", error);
+    }
+
+    const indexFile = Bun.file(`${PUBLIC_DIR}/index.html`);
+    return new Response(indexFile, {
+      headers: { "Content-Type": "text/html" },
+    });
+  },
 });
 
-Bun.serve({
-  port,
-  fetch: app.fetch,
-});
-
-console.log(`Notary Journal server listening on port ${port}`);
-
-export default app;
+console.log(`Notary Journal server listening on port ${server.port}`);
