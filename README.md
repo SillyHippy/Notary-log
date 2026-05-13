@@ -25,8 +25,8 @@ Zo Computer gives you a personal cloud computer with hosting and cloud storage. 
 
 After deployment, Zo MUST output:
 
-1. **Public App URL**: `https://notary-journal-{your-handle}.zocomputer.io`
-2. **Backup API URL**: `https://notary-journal-{your-handle}.zocomputer.io/api/backup`
+1. **Public App URL**: `https://notary-log-{your-handle}.zocomputer.io`
+2. **Backup API URL**: `https://notary-log-{your-handle}.zocomputer.io/api/backup`
 3. **Backup Key**: Generated secret token
 4. **Backup Storage**: `Documents/Notary Journal/backups/`
 
@@ -35,11 +35,13 @@ Without these outputs, Backup & Restore won't work.
 **Copy/paste this exact prompt into Zo or any deployment AI:**
 
 ```text
-Deploy https://github.com/SillyHippy/Notary-log on Zo Computer as ONE public HTTP service.
+Deploy https://github.com/SillyHippy/Notary-log on Zo Computer as ONE public HTTP service named notary-log.
 
 Hard rules:
-- Create exactly ONE service named notary-journal.
+- Use one name everywhere: notary-log.
+- Create exactly ONE service named notary-log.
 - Do not create a second service.
+- Do not create a service named notary-journal.
 - Do not create a Zo Space API route.
 - Do not clone into Trash.
 - Do not duplicate the repo folder.
@@ -47,11 +49,19 @@ Hard rules:
 - The app and backup API must run together from the same service.
 
 Commands to run from /home/workspace:
-git clone https://github.com/SillyHippy/Notary-log
-cd Notary-log
+if [ -d notary-log ]; then
+  cd notary-log
+  git pull
+else
+  git clone https://github.com/SillyHippy/Notary-log notary-log
+  cd notary-log
+fi
 bun install
 bun run build
-zo service create --mode http --port 3000 --public true --entrypoint "bun run prod" --label notary-journal
+
+If a service named notary-log already exists, update/restart that exact service.
+If no service named notary-log exists, create it:
+zo service create --mode http --port 3000 --public true --entrypoint "bun run prod" --label notary-log
 
 After deployment, stop and output only:
 1. Public App URL
@@ -59,7 +69,9 @@ After deployment, stop and output only:
 3. Backup Key printed by bun run prod
 4. Backup Storage: Documents/Notary Journal/backups/
 
-If a notary-journal service already exists, update that one service instead of creating another.
+Before reporting success, test the one service:
+curl -I [Public App URL]
+curl -H "Authorization: Bearer [Backup Key]" [Public App URL]/api/backup
 ```
 
 ---
