@@ -25,6 +25,7 @@ import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
 import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, feeDollarsToCents, getDefaultFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
 import { hapticSuccess, hapticWarning } from '@/lib/haptic';
+import { getMissingCompletionFields, getSignerStepFieldsToCheck } from '@/lib/completion';
 
 const entrySchema = z
   .object({
@@ -708,41 +709,10 @@ export function NewEntry() {
   const nextStep = async () => {
     // Validate step before advancing
     if (currentStep === 1) {
-      const fieldsToCheck: Array<keyof EntryFormValues> = [
-        'signerFullName', 'signerAddress', 'signerCity', 'signerState',
-      ];
-      // Conditionally enforce DOB / ID# / expiration based on the notary's
-      // compliance toggles. A blank in a disabled field is fine — the row
-      // is hidden anyway and we treat it as "not collected".
-      if (shouldRecordSignerDOB(appSettings ?? undefined)) {
-        fieldsToCheck.push('signerDOB');
-      }
-      // Expiration is always required (every state allows it); ID# only when
-      // the compliance toggle is on.
-      fieldsToCheck.push('idExpirationDate');
-      if (shouldRecordSignerIdNumber(appSettings ?? undefined)) {
-        fieldsToCheck.push('idNumber');
-      }
+      const fieldsToCheck = getSignerStepFieldsToCheck({ idType: form.getValues('idType') });
+      form.clearErrors(['signerDOB', 'idNumber', 'idExpirationDate']);
       const isValid = await form.trigger(fieldsToCheck);
       if (!isValid) return;
-      // Manual safety net: form.trigger only checks the schema rules. Since
-      // these fields are now schema-optional, we re-check non-empty here so
-      // the toggle-on case still blocks an advance with empty inputs.
-      if (shouldRecordSignerDOB(appSettings ?? undefined) && !form.getValues('signerDOB')) {
-        form.setError('signerDOB', { type: 'manual', message: 'Date of birth is required' });
-        return;
-      }
-      // Expiration is always required regardless of the ID# toggle.
-      if (!form.getValues('idExpirationDate')) {
-        form.setError('idExpirationDate', { type: 'manual', message: 'Expiration date is required' });
-        return;
-      }
-      if (shouldRecordSignerIdNumber(appSettings ?? undefined)) {
-        if (!form.getValues('idNumber')) {
-          form.setError('idNumber', { type: 'manual', message: 'ID number is required' });
-          return;
-        }
-      }
     }
     if (currentStep === 2) {
       const isValid = await form.trigger(['documentType', 'notarialActType', 'locationCity', 'locationState', 'feeCharged']);
@@ -755,6 +725,29 @@ export function NewEntry() {
     setIsSaving(true);
     try {
       const data = form.getValues();
+      if (status === 'completed') {
+        const missingFields = getMissingCompletionFields(data, appSettings);
+        if (missingFields.length > 0) {
+          const signerStepFields = new Set([
+            'Signer full name',
+            'Address',
+            'City',
+            'State',
+            'Date of birth',
+            'ID expiration date',
+            'ID number',
+          ]);
+          setCurrentStep(missingFields.some(field => signerStepFields.has(field)) ? 1 : 2);
+          toast({
+            title: 'Required fields missing',
+            description: `Fill in ${missingFields.join(', ')} before completing the entry.`,
+            variant: 'destructive',
+          });
+          hapticWarning();
+          setIsSaving(false);
+          return;
+        }
+      }
 
       // Coerce fee to a finite cents integer. An empty/NaN field becomes 0.
       const feeCents = feeDollarsToCents(data.feeCharged);

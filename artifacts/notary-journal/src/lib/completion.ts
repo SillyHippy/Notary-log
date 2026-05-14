@@ -10,12 +10,28 @@ export interface CompletionFields {
   signerAddress?: string;
   signerCity?: string;
   signerState?: string;
+  idType?: 'driver_license' | 'passport' | 'state_id' | 'military_id' | 'other';
   signerDOB?: string;
   idNumber?: string;
   idExpirationDate?: string;
   documentType?: string;
   locationCity?: string;
   locationState?: string;
+}
+
+export type SignerStepFieldName = 'signerFullName' | 'signerAddress' | 'signerCity' | 'signerState';
+
+/**
+ * Fields that should block moving from the Signer step to the Notarial Act
+ * step in the new-entry wizard. ID details can be collected later in the
+ * flow, but the core signer identity fields still need to be present.
+ */
+export function getSignerStepFieldsToCheck(data: Pick<CompletionFields, 'idType'>): SignerStepFieldName[] {
+  const fields: SignerStepFieldName[] = ['signerFullName'];
+  if (data.idType !== 'passport') {
+    fields.push('signerAddress', 'signerCity', 'signerState');
+  }
+  return fields;
 }
 
 /**
