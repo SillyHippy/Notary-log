@@ -7,7 +7,7 @@ import {
   type JournalEntry,
   type NotarySettings,
 } from './db';
-import { getMissingCompletionFields, type CompletionFields } from './completion';
+import { getMissingCompletionFields, getSignerStepFieldsToCheck, type CompletionFields } from './completion';
 
 const baseEntry = (overrides: Partial<JournalEntry> = {}): JournalEntry => ({
   entryNumber: 1,
@@ -280,5 +280,22 @@ describe('getMissingCompletionFields', () => {
     const missing = getMissingCompletionFields(data, undefined);
     expect(missing).toContain('Date of birth');
     expect(missing).toContain('ID number');
+  });
+});
+
+describe('getSignerStepFieldsToCheck', () => {
+  it('does not include ID collection fields when advancing from signer to notarial act', () => {
+    const fields = getSignerStepFieldsToCheck({ idType: 'driver_license' });
+
+    expect(fields).toEqual(['signerFullName', 'signerAddress', 'signerCity', 'signerState']);
+    expect(fields).not.toContain('signerDOB');
+    expect(fields).not.toContain('idNumber');
+    expect(fields).not.toContain('idExpirationDate');
+  });
+
+  it('does not require address fields for passports', () => {
+    const fields = getSignerStepFieldsToCheck({ idType: 'passport' });
+
+    expect(fields).toEqual(['signerFullName']);
   });
 });
