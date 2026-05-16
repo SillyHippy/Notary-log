@@ -37,6 +37,24 @@ function parseNamespaceList(raw) {
   );
 }
 
+function listKvNamespaces() {
+  return parseNamespaceList(wrangler("kv namespace list"));
+}
+
+function findIntakeNamespace(list) {
+  return list.find(
+    (n) =>
+      n.title === TITLE ||
+      n.title?.toLowerCase() === TITLE.toLowerCase() ||
+      n.title?.endsWith(`-${TITLE}`),
+  );
+}
+
+function parseIdFromWranglerOutput(output) {
+  const m = output.match(/id\s*=\s*"([^"]+)"/);
+  return m?.[1];
+}
+
 function readKvIdFromToml(toml) {
   const m = toml.match(new RegExp(`binding = "${BINDING}"\\s*\\r?\\nid = "([^"]+)"`));
   return m?.[1];
@@ -57,29 +75,44 @@ function resolveKvNamespaceId() {
   }
 
   console.log("Looking up Cloudflare KV namespace…");
-  const list = parseNamespaceList(wrangler("kv namespace list"));
-  const existing = list.find((n) => n.title === TITLE);
+  let existing = findIntakeNamespace(listKvNamespaces());
   if (existing?.id) {
-    console.log(`Found KV namespace "${TITLE}": ${existing.id}`);
+    console.log(`Found KV namespace "${existing.title}": ${existing.id}`);
     return existing.id;
   }
 
   console.log(`Creating KV namespace "${TITLE}"…`);
-  wrangler(
-    `kv namespace create ${TITLE} --binding ${BINDING} --update-config`,
-  );
-  const updated = readFileSync(join(ROOT, "wrangler.toml"), "utf8");
-  const created = readKvIdFromToml(updated);
-  if (!created || created === PLACEHOLDER) {
-    throw new Error(
-      "Could not create KV namespace. In Cloudflare Dashboard → Workers KV → Create, then set build env INTAKE_KV_NAMESPACE_ID to that namespace id.",
+  let createOutput = "";
+  try {
+    createOutput = wrangler(`kv namespace create ${TITLE} --binding ${BINDING}`);
+  } catch (err) {
+    console.warn(
+      "kv namespace create failed (namespace may already exist); re-listing…",
     );
+    console.warn(err instanceof Error ? err.message : String(err));
   }
-  console.log(`Created KV namespace: ${created}`);
-  console.log(
-    "Optional: set INTAKE_KV_NAMESPACE_ID in your Cloudflare build environment to speed up future deploys.",
+
+  const fromCreate = parseIdFromWranglerOutput(createOutput);
+  if (fromCreate) {
+    console.log(`Created KV namespace: ${fromCreate}`);
+    return fromCreate;
+  }
+
+  existing = findIntakeNamespace(listKvNamespaces());
+  if (existing?.id) {
+    console.log(`Found KV namespace after create: ${existing.id}`);
+    return existing.id;
+  }
+
+  const titles = listKvNamespaces()
+    .map((n) => n.title)
+    .join(", ");
+  throw new Error(
+    `Could not resolve KV namespace id for "${TITLE}". ` +
+      `In Cloudflare Dashboard → Workers KV, open the namespace and copy its id, ` +
+      `then set build env INTAKE_KV_NAMESPACE_ID. ` +
+      (titles ? `Namespaces on account: ${titles}` : "No KV namespaces found."),
   );
-  return created;
 }
 
 function main() {

@@ -2,12 +2,14 @@
 
 This guide covers deploying the Notary Journal PWA to **Zo Computer**, **Cloudflare Workers**, **Netlify**, **Cloudflare Pages**, or **Hostinger**.
 
+> Kept in sync with [README.md](README.md). After editing this file, run `node scripts/sync-readme-deploy.mjs` to update the README.
+
 ## Quick reference
 
 | Host | Build command | Publish folder | Client intake API |
 |---|---|---|---|
 | Zo Computer | `bun run build` | `server.ts` serves `dist/public` | Yes — filesystem under `Documents/Notary Journal/intake/` |
-| Cloudflare Workers (`wrangler deploy`) | `pnpm run build` then `wrangler deploy` | static assets + `cloudflare/worker.ts` | Yes — Workers KV (free tier) |
+| Cloudflare Workers (git build) | `pnpm --filter @workspace/notary-journal... run build` | `node scripts/cloudflare-deploy.mjs --skip-build` | Yes — Workers KV (free tier) |
 | Netlify (git-connected) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | Yes — Netlify Function + Blobs (free tier) |
 | Netlify (drag-and-drop) | local build + zip `dist/public` | zip only | **No** — static files only; use git-connected Netlify for intake |
 | Cloudflare Pages (static) | build + `_redirects` in output | `dist/public` | **No** — use Workers deploy above for intake |
@@ -319,14 +321,18 @@ Cloudflare Workers does **not** use the Netlify-style `_redirects` file for this
 
 Use the deploy script instead. On Cloudflare’s git-connected build (where Wrangler is already logged in), it will **find or create** a namespace named `INTAKE_KV` automatically.
 
-**Cloudflare Workers build settings:**
+**Cloudflare Workers build settings** (Workers & Pages → your worker → Settings → Build):
 
-| Step | Command |
-|------|---------|
-| Build | `pnpm --filter @workspace/notary-journal... run build` |
-| Deploy | `node scripts/cloudflare-deploy.mjs --skip-build` |
+| Field | Value |
+|-------|--------|
+| **Path** | *(leave empty — repo root)* |
+| **Build command** | `pnpm --filter @workspace/notary-journal... run build` |
+| **Deploy command** | `node scripts/cloudflare-deploy.mjs --skip-build` |
+| **Non-production deploy** | Same as deploy, or leave blank |
 
-Or a single step: `node scripts/cloudflare-deploy.mjs` (build + deploy).
+Do **not** set Path to `artifacts/notary-journal/dist/public` (that causes “root directory not found”). Assets path is in `wrangler.toml`.
+
+Or a single local/CI step: `node scripts/cloudflare-deploy.mjs` (build + deploy).
 
 **Local deploy** (after `npx wrangler login`):
 
