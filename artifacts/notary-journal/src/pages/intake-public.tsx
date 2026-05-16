@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ExpandableImage } from '@/components/expandable-image';
 import {
   compressImageDataUrl,
   fetchIntakeConfig,
@@ -63,7 +64,12 @@ function UploadRow({
         </Button>
       </div>
       {image && (
-        <img src={image} alt={label} className="w-16 h-12 object-cover rounded border" />
+        <ExpandableImage
+          src={image}
+          alt={label}
+          label={label}
+          className="relative w-16 h-12 rounded overflow-hidden border border-border hover:ring-2 ring-primary transition-all shrink-0"
+        />
       )}
     </div>
   );
@@ -97,7 +103,9 @@ export function IntakePublic() {
     fetchIntakeConfig(secret)
       .then((c) => {
         if (!c) {
-          setError('This intake form is not available. The notary may need to sync intake settings on their server.');
+          setError(
+            'This intake link is not active on this website. The notary must open Settings → Client intake form on this same site, click Save form options, then send you the new link. (A Cloudflare link will not work on Netlify, and vice versa.)',
+          );
         } else {
           setConfig(c);
         }

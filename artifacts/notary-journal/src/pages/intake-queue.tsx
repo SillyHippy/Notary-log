@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
 import { format } from 'date-fns';
-import { ArrowLeft, Download, FileSignature, Loader2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, FileSignature, ImageIcon, Loader2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { ExpandableImage } from '@/components/expandable-image';
 import { useToast } from '@/hooks/use-toast';
 import { getSettings, type NotarySettings } from '@/lib/db';
 import {
@@ -164,7 +165,48 @@ export function IntakeQueue() {
                 <p className="text-sm text-muted-foreground">
                   {format(new Date(item.createdAt), 'MMM d, yyyy h:mm a')}
                   {item.fields.phone ? ` · ${item.fields.phone}` : ''}
+                  {item.fields.email ? ` · ${item.fields.email}` : ''}
                 </p>
+                {(item.fields.signerAddress || item.fields.notes) && (
+                  <div className="text-sm space-y-1">
+                    {item.fields.signerAddress && (
+                      <p>
+                        {[item.fields.signerAddress, item.fields.signerCity, item.fields.signerState]
+                          .filter(Boolean)
+                          .join(', ')}
+                      </p>
+                    )}
+                    {item.fields.notes && (
+                      <p className="text-muted-foreground">{item.fields.notes}</p>
+                    )}
+                  </div>
+                )}
+                {(item.fields.idFrontImage || item.fields.idBackImage) && (
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      ID photos — tap to enlarge
+                    </p>
+                    <div className="flex flex-wrap gap-3">
+                      {item.fields.idFrontImage && (
+                        <ExpandableImage
+                          src={item.fields.idFrontImage}
+                          alt="ID front"
+                          label="ID front"
+                          className="relative w-28 h-20 rounded overflow-hidden border border-border hover:ring-2 ring-primary transition-all"
+                        />
+                      )}
+                      {item.fields.idBackImage && (
+                        <ExpandableImage
+                          src={item.fields.idBackImage}
+                          alt="ID back"
+                          label="ID back"
+                          className="relative w-28 h-20 rounded overflow-hidden border border-border hover:ring-2 ring-primary transition-all"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" className="gap-1" onClick={() => void startEntry(item)}>
                     <FileSignature className="w-4 h-4" /> Start journal entry

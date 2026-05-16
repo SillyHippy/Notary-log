@@ -61,6 +61,11 @@ export async function fetchIntakeConfig(secret: string): Promise<IntakeFormConfi
   }
 }
 
+/** True when this deployment's server has intake settings for the given secret. */
+export async function isIntakeFormLiveOnServer(secret: string): Promise<boolean> {
+  return (await fetchIntakeConfig(secret)) !== null;
+}
+
 export async function submitIntake(
   secret: string,
   fields: IntakeSubmissionFields,
