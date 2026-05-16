@@ -1102,9 +1102,9 @@ export function Settings() {
               <div className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
                 <div className="space-y-0.5">
                   <p className="text-base font-medium">Require ID front photo</p>
-                  <FormDescription>
+                  <p className="text-sm text-muted-foreground">
                     When on, you must capture the front of the signer&apos;s ID before completing an entry (including after a barcode scan).
-                  </FormDescription>
+                  </p>
                 </div>
                 <Switch
                   checked={requireIdPhoto}

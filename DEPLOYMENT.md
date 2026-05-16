@@ -4,13 +4,13 @@ This guide covers deploying the Notary Journal PWA to **Zo Computer**, **Cloudfl
 
 ## Quick reference
 
-| Host | Build command | Publish folder | SPA redirects |
+| Host | Build command | Publish folder | Client intake API |
 |---|---|---|---|
-| Zo Computer | `bun run build` | served by root `server.ts` | Hono/Bun server falls back to `index.html` |
-| Cloudflare Workers (`wrangler deploy`) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `wrangler.toml` uses `not_found_handling = "single-page-application"` |
-| Netlify (git-connected) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | `netlify.toml` (already in repo) |
-| Netlify (drag-and-drop) | run locally: `pnpm --filter @workspace/notary-journal run build` | zip the contents of `artifacts/notary-journal/dist/public` | add `_redirects` to the zip only |
-| Cloudflare Pages | `pnpm --filter @workspace/notary-journal... run build && echo '/*    /index.html   200' > artifacts/notary-journal/dist/public/_redirects` | `artifacts/notary-journal/dist/public` | generated `_redirects` file in publish folder |
+| Zo Computer | `bun run build` | `server.ts` serves `dist/public` | Yes — filesystem under `Documents/Notary Journal/intake/` |
+| Cloudflare Workers (`wrangler deploy`) | `pnpm run build` then `wrangler deploy` | static assets + `cloudflare/worker.ts` | Yes — Workers KV (free tier) |
+| Netlify (git-connected) | `pnpm --filter @workspace/notary-journal... run build` | `artifacts/notary-journal/dist/public` | Yes — Netlify Function + Blobs (free tier) |
+| Netlify (drag-and-drop) | local build + zip `dist/public` | zip only | **No** — static files only; use git-connected Netlify for intake |
+| Cloudflare Pages (static) | build + `_redirects` in output | `dist/public` | **No** — use Workers deploy above for intake |
 
 **Node version on every host: `22` where configurable.** On Zo, use Bun with the committed `server.ts` and `zosite.json`.
 
@@ -31,7 +31,7 @@ Without these outputs, Backup & Restore won't work.
 
 ### Client intake form (optional, Zo / server deploy)
 
-The public client form (`/intake?k=...`) and request queue need **`server.ts`** (or Netlify Functions / Cloudflare Worker in a future release). Static-only hosting cannot receive submissions.
+The public client form (`/intake?k=...`) and request queue need a host with `/api/intake` — **`server.ts` on Zo**, **Netlify Functions** (git-connected), or **Cloudflare Workers + KV**. Static-only hosting (drag-and-drop zip, Cloudflare Pages without the worker) cannot receive submissions.
 
 **Setup (in the app, after deploy):**
 
@@ -287,20 +287,7 @@ Use this when you want every commit to GitHub (or other git provider) to redeplo
 
 The repo already includes `netlify.toml` at the root, which is the source of truth for git-connected builds. You don't need to configure build commands or publish directories in the Netlify UI — Netlify reads them from `netlify.toml`:
 
-```toml
-[build]
-  base = "."
-  command = "pnpm --filter @workspace/notary-journal... run build"
-  publish = "artifacts/notary-journal/dist/public"
-
-[build.environment]
-  NODE_VERSION = "22"
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-```
+The repo `netlify.toml` also deploys `netlify/functions/notary-api.ts`, which handles `/api/intake/*` and stores submissions in **Netlify Blobs** (included on the free plan for personal sites).
 
 ### Connect
 
@@ -308,8 +295,11 @@ The repo already includes `netlify.toml` at the root, which is the source of tru
 2. Netlify → **Add new site → Import an existing project** → pick the provider → pick the repo.
 3. Accept the defaults Netlify suggests (it reads them from `netlify.toml`).
 4. Click **Deploy site**. First build takes 2–4 minutes.
+5. After deploy, open the site → **Settings → Client intake form** → confirm **Intake API available** is green, then **Generate link** and **Save form options**.
 
 Then set environment variables and Google OAuth origins as in [Shared setup](#shared-setup).
+
+> **Drag-and-drop deploys** upload only static files. They do **not** run Netlify Functions, so the intake form will not work. Use git-connected Netlify (this section) or Zo / Cloudflare Workers instead.
 
 To re-link an existing Netlify site to a git repo (instead of replacing it), go to **Site settings → Build & deploy → Continuous deployment → Link site to Git**. Same URL, no broken bookmarks.
 
@@ -317,20 +307,27 @@ To re-link an existing Netlify site to a git repo (instead of replacing it), go 
 
 ## Option 4 - Cloudflare Workers (`wrangler deploy`)
 
-Use this when deploying with Cloudflare Workers static assets and `npx wrangler deploy`.
+Use this when deploying with Cloudflare Workers static assets **and** the client intake API on the **free tier** (Workers + KV free allowances).
 
-The repo includes `wrangler.toml` at the root:
+The repo includes `wrangler.toml` and `cloudflare/worker.ts`. The worker serves the built PWA and routes `/api/intake/*` to **Workers KV**.
 
-```toml
-name = "notary-log"
-compatibility_date = "2024-04-05"
+Cloudflare Workers does **not** use the Netlify-style `_redirects` file for this app. `not_found_handling = "single-page-application"` is the Workers-compatible SPA fallback.
 
-[assets]
-directory = "artifacts/notary-journal/dist/public"
-not_found_handling = "single-page-application"
+### One-time: create KV namespace
+
+From the repo root (after `pnpm install`):
+
+```bash
+npx wrangler kv namespace create INTAKE_KV
 ```
 
-Cloudflare Workers does **not** use the Netlify-style `_redirects` file for this app. `not_found_handling = "single-page-application"` is the Workers-compatible SPA fallback and avoids Wrangler's infinite-loop `_redirects` validation error.
+Copy the `id` from the output into `wrangler.toml`, replacing `REPLACE_WITH_KV_NAMESPACE_ID`:
+
+```toml
+[[kv_namespaces]]
+binding = "INTAKE_KV"
+id = "your-namespace-id-here"
+```
 
 ### Deploy
 
@@ -340,8 +337,12 @@ Cloudflare Workers does **not** use the Netlify-style `_redirects` file for this
    ```
 2. Deploy from the repo root:
    ```bash
-   npx wrangler deploy
+   pnpm run deploy:cloudflare
    ```
+   Or: `npx wrangler deploy`
+3. Open your `*.workers.dev` URL → **Settings → Client intake form** → confirm **Intake API available**, then generate and save the intake link.
+
+**Limits (free tier):** KV has daily read/write quotas; a solo notary's intake volume is well within them. Zo backup (`/api/backup`) is **not** on Cloudflare — use JSON export/import or deploy on Zo for server backups.
 
 ---
 
@@ -474,8 +475,10 @@ CSV and PDF exports are read-only — they can't be re-imported back into anothe
 
 ## Reference: how this all fits together
 
-- `netlify.toml` — git-connected Netlify config. Read by Netlify, ignored by drag-and-drop and by Cloudflare.
-- `wrangler.toml` — Cloudflare Workers static-assets config. Uses `not_found_handling = "single-page-application"` for SPA fallback.
+- `netlify.toml` — git-connected Netlify config (build, SPA redirects, `/api/intake` → function). Ignored by drag-and-drop.
+- `netlify/functions/notary-api.ts` — intake API on Netlify Blobs.
+- `wrangler.toml` + `cloudflare/worker.ts` — Cloudflare Workers + KV intake API and static assets.
+- `lib/serverless/` — shared intake handlers used by Zo, Netlify, and Cloudflare.
 - `_redirects` file inside the publish folder — SPA fallback for Netlify drag-and-drop and Cloudflare Pages only. Do not commit it under `artifacts/notary-journal/public/` for this repo, because `wrangler deploy` rejects the Netlify-style rule.
 - `vite.config.ts` — base path defaults to `/`. Don't override `BASE_PATH` for Netlify or Cloudflare deploys; both serve from the domain root.
 - `artifacts/notary-journal/public/sw.js` — service worker; bump `CACHE_NAME` to force-invalidate user caches. Network-first for HTML, cache-first for hashed `/assets/*`.
