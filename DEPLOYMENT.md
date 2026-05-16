@@ -29,6 +29,24 @@ After deployment, Zo MUST output:
 
 Without these outputs, Backup & Restore won't work.
 
+### Client intake form (optional, Zo / server deploy)
+
+The public client form (`/intake?k=...`) and request queue need **`server.ts`** (or Netlify Functions / Cloudflare Worker in a future release). Static-only hosting cannot receive submissions.
+
+**Setup (in the app, after deploy):**
+
+1. Open **Settings → Client intake form**.
+2. Confirm **Intake API available** (green). If amber, you are on static-only hosting.
+3. Tap **Generate link**, then **Save form options** (syncs config to the server).
+4. Copy the shareable link and send it to clients.
+5. New requests appear on the **Dashboard** and under **View requests** (`/intake/requests`).
+
+**Optional:** Enable **Archive to Google Drive (Jobs folder)** to copy accepted requests into `Notary Journal Backups/Jobs/JOB-### - Signer Name/` (connect Google Drive first).
+
+**Stamp fee:** Settings → **Stamp fee (per notarial act)** sets the per-stamp rate used on new entries (`# of stamps × rate`).
+
+**Require ID photo:** Settings → **Journal Compliance → Require ID front photo** forces a front-of-ID capture before completing an entry (including after barcode scan).
+
 ### Step 1 - Sign up
 
 Sign up with the project referral link: [https://zo-computer.cello.so/XvrzHZZ53TV](https://zo-computer.cello.so/XvrzHZZ53TV)

@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   ACT_TYPE_TO_FEE_TYPE,
   availableReportYears,
+  computeStampFeeCents,
+  DEFAULT_STAMP_FEE_CENTS,
   feeDollarsToCents,
   getDefaultFeeCents,
+  getStampFeeCents,
   resolveFeeType,
   rollupYear,
   shouldApplyAutoFee,
@@ -33,6 +36,16 @@ function makeEntry(overrides: Partial<JournalEntry>): JournalEntry {
     ...overrides,
   };
 }
+
+describe('stamp fee helpers', () => {
+  it('uses configured stamp fee and count', () => {
+    expect(getStampFeeCents({ stampFeeCents: 750 })).toBe(750);
+    expect(computeStampFeeCents(2, { stampFeeCents: 500 })).toBe(1000);
+  });
+  it('falls back to default when unset', () => {
+    expect(getStampFeeCents(null)).toBe(DEFAULT_STAMP_FEE_CENTS);
+  });
+});
 
 describe('resolveFeeType', () => {
   it('returns the explicit feeType when valid', () => {

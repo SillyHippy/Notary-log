@@ -22,7 +22,8 @@ import {
   clearBiometric,
 } from '@/lib/biometric';
 import { THRESHOLD_OPTIONS, DEFAULT_THRESHOLD_DAYS, clearSnooze } from '@/lib/backup-nudge';
-import { FEE_TYPES, type FeeType } from '@/lib/fees';
+import { DEFAULT_STAMP_FEE_CENTS, FEE_TYPES, type FeeType } from '@/lib/fees';
+import { IntakeSetupCard } from '@/components/intake-setup-card';
 import { BACKUP_FORMAT_VERSION, exportAllCSV, exportAllJSON, exportAllPDF, exportJournalTablePDF, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
@@ -105,6 +106,9 @@ export function Settings() {
   // Default fees + seal image state
   const [defaultFees, setDefaultFees] = useState<Record<string, string>>({});
   const [savingFees, setSavingFees] = useState(false);
+  const [stampFeeDollars, setStampFeeDollars] = useState('');
+  const [savingStampFee, setSavingStampFee] = useState(false);
+  const [requireIdPhoto, setRequireIdPhoto] = useState(false);
   const [sealImage, setSealImage] = useState<string | undefined>(undefined);
   const [sealBusy, setSealBusy] = useState(false);
   const sealInputRef = useRef<HTMLInputElement>(null);
@@ -396,6 +400,21 @@ export function Settings() {
     }
   };
 
+  const handleSaveStampFee = async () => {
+    setSavingStampFee(true);
+    try {
+      const raw = stampFeeDollars.trim();
+      const dollars = raw === '' ? DEFAULT_STAMP_FEE_CENTS / 100 : Number(raw);
+      const cents = Number.isFinite(dollars) && dollars >= 0 ? Math.round(dollars * 100) : DEFAULT_STAMP_FEE_CENTS;
+      const current = await getSettings();
+      await saveSettings({ ...current, stampFeeCents: cents } as NotarySettings);
+      toast({ title: 'Stamp fee saved', description: 'New entries will use this amount per notarial act (stamp).' });
+    } catch (err) {
+      toast({ title: 'Failed to save stamp fee', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    }
+    setSavingStampFee(false);
+  };
+
   const handleSaveDefaultFees = async () => {
     setSavingFees(true);
     try {
@@ -515,6 +534,9 @@ export function Settings() {
       fees[ft] = cents > 0 ? (cents / 100).toFixed(2) : '';
     }
     setDefaultFees(fees);
+    const stampCents = settings.stampFeeCents ?? DEFAULT_STAMP_FEE_CENTS;
+    setStampFeeDollars(stampCents > 0 ? (stampCents / 100).toFixed(2) : '');
+    setRequireIdPhoto(!!settings.requireIdFrontPhoto);
     setSealImage(settings.sealImage);
   }
 
@@ -1077,6 +1099,24 @@ export function Settings() {
                   </FormItem>
                 )}
               />
+              <div className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
+                <div className="space-y-0.5">
+                  <p className="text-base font-medium">Require ID front photo</p>
+                  <FormDescription>
+                    When on, you must capture the front of the signer&apos;s ID before completing an entry (including after a barcode scan).
+                  </FormDescription>
+                </div>
+                <Switch
+                  checked={requireIdPhoto}
+                  onCheckedChange={async (checked) => {
+                    setRequireIdPhoto(checked);
+                    const current = await getSettings();
+                    await saveSettings({ ...current, requireIdFrontPhoto: checked } as NotarySettings);
+                    toast({ title: checked ? 'ID photo required' : 'ID photo optional', description: 'Preference saved.' });
+                  }}
+                  data-testid="switch-require-id-photo"
+                />
+              </div>
             </CardContent>
           </Card>
 
@@ -1297,6 +1337,43 @@ export function Settings() {
           </Button>
         </CardFooter>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="w-5 h-5 text-primary" />
+            Stamp fee (per notarial act)
+          </CardTitle>
+          <CardDescription>
+            Statutory fee per stamp. On new entries, # of stamps × this rate fills the notarial fee. Mobile/travel stays in Default Fees above.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-3 max-w-sm">
+            <Label htmlFor="stamp-fee">Fee per stamp</Label>
+            <div className="relative w-32">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+              <Input
+                id="stamp-fee"
+                type="number"
+                step="0.01"
+                min="0"
+                className="pl-6"
+                value={stampFeeDollars}
+                onChange={(e) => setStampFeeDollars(e.target.value)}
+                data-testid="input-stamp-fee"
+              />
+            </div>
+          </div>
+        </CardContent>
+        <CardFooter className="bg-muted/30 border-t px-6 py-4">
+          <Button onClick={handleSaveStampFee} disabled={savingStampFee} className="gap-2" data-testid="button-save-stamp-fee">
+            <Save className="w-4 h-4" /> {savingStampFee ? 'Saving...' : 'Save stamp fee'}
+          </Button>
+        </CardFooter>
+      </Card>
+
+      <IntakeSetupCard />
 
       {/* ── Notary Seal or Logo Card ───────────────────────────────── */}
       <Card>

@@ -17,6 +17,7 @@ export interface CompletionFields {
   documentType?: string;
   locationCity?: string;
   locationState?: string;
+  idFrontImage?: string;
 }
 
 export type SignerStepFieldName = 'signerFullName' | 'signerAddress' | 'signerCity' | 'signerState';
@@ -56,5 +57,8 @@ export function getMissingCompletionFields(
   if (!data.documentType) missing.push('Document type');
   if (!data.locationCity) missing.push('Location city');
   if (!data.locationState) missing.push('Location state');
+  if (settings?.requireIdFrontPhoto && !data.idFrontImage) {
+    missing.push('ID front photo');
+  }
   return missing;
 }

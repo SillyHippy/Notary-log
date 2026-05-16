@@ -18,6 +18,8 @@ const EditEntry = lazy(() => import("@/pages/edit-entry").then(m => ({ default: 
 const Settings = lazy(() => import("@/pages/settings").then(m => ({ default: m.Settings })));
 const Reports = lazy(() => import("@/pages/reports").then(m => ({ default: m.Reports })));
 const NotFound = lazy(() => import("@/pages/not-found"));
+const IntakePublic = lazy(() => import("@/pages/intake-public").then(m => ({ default: m.IntakePublic })));
+const IntakeQueue = lazy(() => import("@/pages/intake-queue").then(m => ({ default: m.IntakeQueue })));
 
 import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked } from "@/lib/db";
 
@@ -44,6 +46,7 @@ function Router() {
           <Route path="/entry/:id" component={EntryDetail} />
           <Route path="/reports" component={Reports} />
           <Route path="/settings" component={Settings} />
+          <Route path="/intake/requests" component={IntakeQueue} />
           <Route component={NotFound} />
         </Switch>
       </Suspense>
@@ -52,6 +55,14 @@ function Router() {
 }
 
 type AppMode = 'loading' | 'setup' | 'locked' | 'unlocked';
+
+function isPublicIntakePath(): boolean {
+  if (typeof window === 'undefined') return false;
+  const base = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '');
+  let path = window.location.pathname;
+  if (base && path.startsWith(base)) path = path.slice(base.length) || '/';
+  return path === '/intake' || path.startsWith('/intake?');
+}
 
 function App() {
   const [mode, setMode] = useState<AppMode>('loading');
@@ -132,6 +143,19 @@ function App() {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [mode]);
+
+  if (isPublicIntakePath()) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Suspense fallback={<PageLoader />}>
+            <IntakePublic />
+          </Suspense>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+  }
 
   if (mode === 'loading') {
     return (

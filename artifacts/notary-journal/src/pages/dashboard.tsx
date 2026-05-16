@@ -45,6 +45,7 @@ import {
   DEFAULT_THRESHOLD_DAYS,
   type BackupNudgeState,
 } from '@/lib/backup-nudge';
+import { listIntakeSubmissions } from '@/lib/intake';
 
 export function Dashboard() {
   const [, setLocation] = useLocation();
@@ -56,6 +57,7 @@ export function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [nudge, setNudge] = useState<BackupNudgeState>({ kind: 'none', daysSince: null, message: '' });
   const [nudgeBusy, setNudgeBusy] = useState(false);
+  const [intakeUnread, setIntakeUnread] = useState(0);
 
   const refreshNudge = async (settingsData: NotarySettings | null) => {
     const snoozeUntilMs = await getSnoozeUntilMs();
@@ -86,6 +88,16 @@ export function Dashboard() {
       setRecentEntries(recentData);
       setSettings(settingsData);
       refreshNudge(settingsData);
+      if (settingsData.intakeSecret) {
+        try {
+          const unread = await listIntakeSubmissions(settingsData.intakeSecret, true);
+          setIntakeUnread(unread.length);
+        } catch {
+          setIntakeUnread(0);
+        }
+      } else {
+        setIntakeUnread(0);
+      }
       setIsLoading(false);
     };
     
@@ -177,6 +189,17 @@ export function Dashboard() {
           </form>
         </div>
       </div>
+
+      {intakeUnread > 0 && (
+        <div className="mb-6 rounded-lg border border-primary/30 bg-primary/5 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <p className="flex-1 text-sm">
+            <strong>{intakeUnread}</strong> new client request{intakeUnread === 1 ? '' : 's'} waiting.
+          </p>
+          <Link href="/intake/requests">
+            <Button size="sm" data-testid="button-view-intake">View requests</Button>
+          </Link>
+        </div>
+      )}
 
       {/* Backup-staleness nudge */}
       {nudge.kind !== 'none' && (

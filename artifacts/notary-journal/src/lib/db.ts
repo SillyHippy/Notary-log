@@ -53,6 +53,8 @@ export interface JournalEntry {
   // rather than back-filling on disk (which would invalidate the entry's
   // signed hash).
   feeType?: string;
+  /** Number of notarial acts (stamps) charged on this entry. Optional for legacy rows. */
+  stampCount?: number;
   locationCity: string;
   locationState: string;
   locationAddress?: string;
@@ -120,6 +122,23 @@ export interface NotarySettings {
   // omitted from validation, and skipped in PDF/CSV exports.
   recordSignerDOB?: boolean;
   recordSignerIdNumber?: boolean;
+  /** Per-stamp notarial fee in cents (e.g. 500 = $5.00). Used when auto-filling fees. */
+  stampFeeCents?: number;
+  /** Optional per-state stamp fee overrides (2-letter state → cents). */
+  stampFeeByState?: Record<string, number>;
+  /** When true, require a front-of-ID photo before completing an entry (after barcode scan too). */
+  requireIdFrontPhoto?: boolean;
+  // ── Client intake (requires server deploy with /api/intake) ─────────────
+  intakeSecret?: string;
+  intakeFormTitle?: string;
+  intakeAllowIdUpload?: boolean;
+  intakeShowEmail?: boolean;
+  intakeShowPhone?: boolean;
+  intakeShowAddress?: boolean;
+  intakeShowNotes?: boolean;
+  intakeShowPreferredDate?: boolean;
+  /** When true, copy accepted intake folders to Google Drive under Jobs/. */
+  archiveIntakeToDrive?: boolean;
 }
 
 // ── Storage shapes (encrypted records actually written to IDB) ─────────────

@@ -23,7 +23,8 @@ import { parseAAMVA } from '@/lib/aamva';
 import { extractLicenseFields } from '@/lib/ocr-license';
 import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
-import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, feeDollarsToCents, getDefaultFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
+import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, computeStampFeeCents, feeDollarsToCents, getStampFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
+import { consumeIntakePrefill } from '@/lib/intake';
 import { hapticSuccess, hapticWarning } from '@/lib/haptic';
 import { getMissingCompletionFields, getSignerStepFieldsToCheck } from '@/lib/completion';
 
@@ -51,6 +52,7 @@ const entrySchema = z
     documentDescription: z.string().optional(),
     notarialActType: z.enum(['acknowledgment', 'jurat', 'copy_certification', 'signature_witnessing', 'other']),
     feeType: z.enum(FEE_TYPES),
+    stampCount: z.coerce.number().min(1).default(1),
     feeCharged: z.coerce.number().min(0),
     feeWaived: z.boolean().default(false),
     locationCity: z.string().min(1, 'Location city is required'),
@@ -184,6 +186,7 @@ export function NewEntry() {
       documentDate: new Date().toISOString().split('T')[0],
       notarialActType: 'acknowledgment',
       feeType: 'Acknowledgment',
+      stampCount: 1,
       feeCharged: 0,
       feeWaived: false,
       locationCity: '',
@@ -206,8 +209,8 @@ export function NewEntry() {
       form.setValue('locationCity', settings.defaultCity);
       form.setValue('locationState', settings.defaultState);
       // Prefill the initial fee from the default for "Acknowledgment" if any.
-      const defaultCents = getDefaultFeeCents(settings, 'Acknowledgment');
-      form.setValue('feeCharged', defaultCents > 0 ? defaultCents / 100 : 0);
+      const stampCents = computeStampFeeCents(1, settings);
+      form.setValue('feeCharged', stampCents > 0 ? stampCents / 100 : 0);
       isFeeAppDerivedRef.current = true;
 
       // Restore a draft saved just before a lock-induced reload, if any.
@@ -265,6 +268,20 @@ export function NewEntry() {
           } catch {
             // Corrupt prefill — ignore and start fresh.
           }
+
+          const intakePrefill = consumeIntakePrefill();
+          if (intakePrefill) {
+            if (intakePrefill.signerFullName) form.setValue('signerFullName', intakePrefill.signerFullName);
+            if (intakePrefill.signerPhone) form.setValue('signerPhone', intakePrefill.signerPhone);
+            if (intakePrefill.signerAddress) form.setValue('signerAddress', intakePrefill.signerAddress);
+            if (intakePrefill.signerCity) form.setValue('signerCity', intakePrefill.signerCity);
+            if (intakePrefill.signerState) form.setValue('signerState', intakePrefill.signerState);
+            if (intakePrefill.notes) form.setValue('notes', intakePrefill.notes);
+            if (intakePrefill.preferredDate) form.setValue('documentDate', intakePrefill.preferredDate);
+            if (intakePrefill.idFrontImage) setIdFrontImage(intakePrefill.idFrontImage);
+            if (intakePrefill.idBackImage) setIdBackImage(intakePrefill.idBackImage);
+            toast({ title: 'Client request loaded', description: 'Review signer info and scan ID at appointment if needed.' });
+          }
         }
       } catch {
         // Corrupt JSON or unavailable storage — ignore and start fresh.
@@ -287,13 +304,10 @@ export function NewEntry() {
         if (!act) return;
         const mappedFeeType = ACT_TYPE_TO_FEE_TYPE[act];
         form.setValue('feeType', mappedFeeType);
-        const next = shouldApplyAutoFee({
-          feeType: mappedFeeType,
-          isWaived: !!value.feeWaived,
-          isAppDerived: isFeeAppDerivedRef.current,
-          settings: appSettings,
-        });
-        if (next !== null) form.setValue('feeCharged', next / 100);
+        if (isFeeAppDerivedRef.current && !value.feeWaived) {
+          const count = Number(value.stampCount) || 1;
+          form.setValue('feeCharged', computeStampFeeCents(count, appSettings) / 100);
+        }
       }
 
       // User picked a different fee category directly.
@@ -307,6 +321,12 @@ export function NewEntry() {
           settings: appSettings,
         });
         if (next !== null) form.setValue('feeCharged', next / 100);
+      }
+
+      if (name === 'stampCount' && isFeeAppDerivedRef.current && !value.feeWaived) {
+        const count = Number(value.stampCount) || 1;
+        const cents = computeStampFeeCents(count, appSettings);
+        form.setValue('feeCharged', cents / 100);
       }
 
       // Toggling Waive off restores app-derived behaviour for the next change.
@@ -726,7 +746,10 @@ export function NewEntry() {
     try {
       const data = form.getValues();
       if (status === 'completed') {
-        const missingFields = getMissingCompletionFields(data, appSettings);
+        const missingFields = getMissingCompletionFields(
+          { ...data, idFrontImage },
+          appSettings,
+        );
         if (missingFields.length > 0) {
           const signerStepFields = new Set([
             'Signer full name',
@@ -736,8 +759,12 @@ export function NewEntry() {
             'Date of birth',
             'ID expiration date',
             'ID number',
+            'ID front photo',
           ]);
-          setCurrentStep(missingFields.some(field => signerStepFields.has(field)) ? 1 : 2);
+          const needsScan = missingFields.includes('ID front photo');
+          setCurrentStep(
+            needsScan ? 0 : missingFields.some(field => signerStepFields.has(field)) ? 1 : 2,
+          );
           toast({
             title: 'Required fields missing',
             description: `Fill in ${missingFields.join(', ')} before completing the entry.`,
@@ -769,6 +796,7 @@ export function NewEntry() {
         status,
         ...scrubbed,
         feeCharged: feeCents,
+        stampCount: Math.max(1, Math.round(Number(data.stampCount) || 1)),
         idFrontImage,
         idBackImage,
         signatureImage,
@@ -1102,15 +1130,29 @@ export function NewEntry() {
                 <CheckCircle2 className="w-12 h-12 text-green-600 dark:text-green-400 mx-auto mb-3" />
                 <h2 className="text-xl font-bold mb-1 text-green-800 dark:text-green-300">Barcode Scanned!</h2>
                 <p className="text-green-700 dark:text-green-400 text-sm mb-4">
-                  License data was extracted. Review and correct the fields on the next step.
+                  License data was extracted.
+                  {appSettings?.requireIdFrontPhoto && !idFrontImage
+                    ? ' Capture the front of the ID before continuing.'
+                    : ' Review and correct the fields on the next step.'}
                 </p>
-                <div className="flex justify-center gap-3">
-                  <Button onClick={() => setCurrentStep(1)} className="gap-2">
-                    <Check className="w-4 h-4" /> Review Signer Info
-                  </Button>
-                  <Button variant="ghost" onClick={() => { setLiveScanSuccess(false); setScanMode('idle'); }} size="sm">
-                    Rescan
-                  </Button>
+                <div className="flex flex-col items-center gap-3">
+                  {appSettings?.requireIdFrontPhoto && !idFrontImage && (
+                    <Button onClick={startPhotoCapture} className="gap-2">
+                      <Camera className="w-4 h-4" /> Capture front of ID
+                    </Button>
+                  )}
+                  <div className="flex justify-center gap-3">
+                    <Button
+                      onClick={() => setCurrentStep(1)}
+                      className="gap-2"
+                      disabled={!!appSettings?.requireIdFrontPhoto && !idFrontImage}
+                    >
+                      <Check className="w-4 h-4" /> Review Signer Info
+                    </Button>
+                    <Button variant="ghost" onClick={() => { setLiveScanSuccess(false); setScanMode('idle'); }} size="sm">
+                      Rescan
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1399,6 +1441,30 @@ export function NewEntry() {
                             </SelectContent>
                           </Select>
                           <FormDescription className="text-xs">For year-end report breakdowns.</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+
+                      <FormField control={form.control} name="stampCount" render={({ field }) => (
+                        <FormItem>
+                          <FormLabel># of stamps (notarial acts)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={1}
+                              step={1}
+                              {...field}
+                              data-testid="input-stamp-count"
+                            />
+                          </FormControl>
+                          <FormDescription className="text-xs">
+                            {(() => {
+                              const count = Number(form.watch('stampCount')) || 1;
+                              const per = getStampFeeCents(appSettings ?? undefined);
+                              const total = computeStampFeeCents(count, appSettings ?? undefined);
+                              return `${count} × $${(per / 100).toFixed(2)} = $${(total / 100).toFixed(2)} (per stamp fee from Settings)`;
+                            })()}
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )} />

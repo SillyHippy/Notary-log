@@ -210,3 +210,35 @@ export function feeDollarsToCents(value: unknown): number {
   if (!Number.isFinite(num)) return 0;
   return Math.round(num * 100);
 }
+
+/** Default per-stamp notarial fee in cents when settings omit a value (e.g. $5.00). */
+export const DEFAULT_STAMP_FEE_CENTS = 500;
+
+/**
+ * Resolve the configured per-stamp fee. Uses `stampFeeCents`, then an optional
+ * state override, then {@link DEFAULT_STAMP_FEE_CENTS}.
+ */
+export function getStampFeeCents(
+  settings: Pick<NotarySettings, 'stampFeeCents' | 'stampFeeByState' | 'defaultState'> | null | undefined,
+  stateOverride?: string,
+): number {
+  const state = (stateOverride ?? settings?.defaultState ?? '').toUpperCase();
+  const byState = settings?.stampFeeByState?.[state];
+  if (typeof byState === 'number' && Number.isFinite(byState) && byState >= 0) {
+    return Math.round(byState);
+  }
+  const base = settings?.stampFeeCents;
+  if (typeof base === 'number' && Number.isFinite(base) && base >= 0) {
+    return Math.round(base);
+  }
+  return DEFAULT_STAMP_FEE_CENTS;
+}
+
+/** Notarial fee in cents from stamp count × per-stamp rate. */
+export function computeStampFeeCents(
+  stampCount: number,
+  settings: Pick<NotarySettings, 'stampFeeCents' | 'stampFeeByState' | 'defaultState'> | null | undefined,
+): number {
+  const count = Number.isFinite(stampCount) && stampCount > 0 ? Math.round(stampCount) : 1;
+  return count * getStampFeeCents(settings);
+}
