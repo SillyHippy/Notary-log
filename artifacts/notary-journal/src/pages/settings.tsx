@@ -23,7 +23,6 @@ import {
 } from '@/lib/biometric';
 import { THRESHOLD_OPTIONS, DEFAULT_THRESHOLD_DAYS, clearSnooze } from '@/lib/backup-nudge';
 import { DEFAULT_STAMP_FEE_CENTS, FEE_TYPES, type FeeType } from '@/lib/fees';
-import { IntakeSetupCard } from '@/components/intake-setup-card';
 import { BACKUP_FORMAT_VERSION, exportAllCSV, exportAllJSON, exportAllPDF, exportJournalTablePDF, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
@@ -1372,8 +1371,6 @@ export function Settings() {
           </Button>
         </CardFooter>
       </Card>
-
-      <IntakeSetupCard />
 
       {/* ── Notary Seal or Logo Card ───────────────────────────────── */}
       <Card>

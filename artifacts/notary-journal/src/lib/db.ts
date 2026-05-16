@@ -128,19 +128,6 @@ export interface NotarySettings {
   stampFeeByState?: Record<string, number>;
   /** When true, require a front-of-ID photo before completing an entry (after barcode scan too). */
   requireIdFrontPhoto?: boolean;
-  // ── Client intake (requires server deploy with /api/intake) ─────────────
-  intakeSecret?: string;
-  intakeFormTitle?: string;
-  intakeAllowIdUpload?: boolean;
-  intakeShowEmail?: boolean;
-  intakeShowPhone?: boolean;
-  intakeShowAddress?: boolean;
-  intakeShowNotes?: boolean;
-  intakeShowPreferredDate?: boolean;
-  /** When true, copy accepted intake folders to Google Drive under Jobs/. */
-  archiveIntakeToDrive?: boolean;
-  /** Show the client intake form block on Settings (off = collapsed header only). */
-  intakeSectionOpen?: boolean;
 }
 
 // ── Storage shapes (encrypted records actually written to IDB) ─────────────

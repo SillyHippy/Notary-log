@@ -7,7 +7,7 @@ const intro = `# Notary Journal PWA
 
 A fast Progressive Web App (PWA) for modern notaries: offline support, local encryption, ID scanning, signatures, and print-ready journal PDFs.
 
-The journal runs in the browser (IndexedDB). Optional server features — client intake form and Zo JSON backup — use \`server.ts\` (Zo), Netlify Functions, or Cloudflare Workers + KV. Static-only hosts (drag-and-drop zip, Cloudflare Pages) work for the journal only, not intake.
+The journal runs in the browser (IndexedDB). Optional Zo JSON backup uses \`server.ts\` on Zo (\`/api/backup\`). Netlify, Cloudflare Workers, and Cloudflare Pages deploy the static PWA only.
 
 > [!WARNING]
 > **STRICT NON-COMMERCIAL LICENSE**

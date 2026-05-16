@@ -1,12 +1,8 @@
 import { mkdir, readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { handleIntakeRequest } from "./lib/serverless/intake-api";
-import { createFsIntakeStore } from "./lib/serverless/intake-store-fs";
-
 const PUBLIC_DIR = "./artifacts/notary-journal/dist/public";
 const BACKUP_DIR = "./Documents/Notary Journal/backups";
 const BACKUP_KEY_FILE = join(BACKUP_DIR, ".backup-key");
-const INTAKE_DIR = "./Documents/Notary Journal/intake";
 function json(data: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
@@ -132,8 +128,6 @@ async function handleBackupRequest(request: Request, url: URL) {
   return json({ error: "Method not allowed" }, { status: 405, headers });
 }
 
-const intakeStore = createFsIntakeStore(INTAKE_DIR);
-
 const server = Bun.serve({
   port: process.env.PORT || 3000,
   async fetch(request) {
@@ -142,10 +136,6 @@ const server = Bun.serve({
 
     if (path === "/api/backup") {
       return handleBackupRequest(request, url);
-    }
-
-    if (path.startsWith("/api/intake")) {
-      return handleIntakeRequest(request, url, intakeStore);
     }
 
     if (path === "/") {

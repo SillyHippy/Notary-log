@@ -2,12 +2,6 @@ name = "notary-log"
 main = "cloudflare/worker.ts"
 compatibility_date = "2024-04-05"
 
-# Create once: npx wrangler kv namespace create INTAKE_KV
-# Then paste the id below (see DEPLOYMENT.md).
-[[kv_namespaces]]
-binding = "INTAKE_KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-
 [assets]
 directory = "artifacts/notary-journal/dist/public"
 binding = "ASSETS"

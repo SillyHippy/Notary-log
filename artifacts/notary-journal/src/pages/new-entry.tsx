@@ -24,7 +24,6 @@ import { extractLicenseFields } from '@/lib/ocr-license';
 import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
 import { backupToDrive, getStoredToken } from '@/lib/gdrive';
 import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, computeStampFeeCents, feeDollarsToCents, getStampFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
-import { consumeIntakePrefill } from '@/lib/intake';
 import { hapticSuccess, hapticWarning } from '@/lib/haptic';
 import { getMissingCompletionFields, getSignerStepFieldsToCheck } from '@/lib/completion';
 
@@ -269,19 +268,6 @@ export function NewEntry() {
             // Corrupt prefill — ignore and start fresh.
           }
 
-          const intakePrefill = consumeIntakePrefill();
-          if (intakePrefill) {
-            if (intakePrefill.signerFullName) form.setValue('signerFullName', intakePrefill.signerFullName);
-            if (intakePrefill.signerPhone) form.setValue('signerPhone', intakePrefill.signerPhone);
-            if (intakePrefill.signerAddress) form.setValue('signerAddress', intakePrefill.signerAddress);
-            if (intakePrefill.signerCity) form.setValue('signerCity', intakePrefill.signerCity);
-            if (intakePrefill.signerState) form.setValue('signerState', intakePrefill.signerState);
-            if (intakePrefill.notes) form.setValue('notes', intakePrefill.notes);
-            if (intakePrefill.preferredDate) form.setValue('documentDate', intakePrefill.preferredDate);
-            if (intakePrefill.idFrontImage) setIdFrontImage(intakePrefill.idFrontImage);
-            if (intakePrefill.idBackImage) setIdBackImage(intakePrefill.idBackImage);
-            toast({ title: 'Client request loaded', description: 'Review signer info and scan ID at appointment if needed.' });
-          }
         }
       } catch {
         // Corrupt JSON or unavailable storage — ignore and start fresh.
