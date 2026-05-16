@@ -313,34 +313,32 @@ The repo includes `wrangler.toml` and `cloudflare/worker.ts`. The worker serves 
 
 Cloudflare Workers does **not** use the Netlify-style `_redirects` file for this app. `not_found_handling = "single-page-application"` is the Workers-compatible SPA fallback.
 
-### One-time: create KV namespace
+### KV namespace (required for client intake)
 
-From the repo root (after `pnpm install`):
+`wrangler.toml` keeps a placeholder KV id in git. **Do not run plain `npx wrangler deploy`** — it will fail with `KV namespace 'REPLACE_WITH_KV_NAMESPACE_ID' is not valid`.
+
+Use the deploy script instead. On Cloudflare’s git-connected build (where Wrangler is already logged in), it will **find or create** a namespace named `INTAKE_KV` automatically.
+
+**Cloudflare Workers build settings:**
+
+| Step | Command |
+|------|---------|
+| Build | `pnpm --filter @workspace/notary-journal... run build` |
+| Deploy | `node scripts/cloudflare-deploy.mjs --skip-build` |
+
+Or a single step: `node scripts/cloudflare-deploy.mjs` (build + deploy).
+
+**Local deploy** (after `npx wrangler login`):
 
 ```bash
-npx wrangler kv namespace create INTAKE_KV
+pnpm run deploy:cloudflare
 ```
 
-Copy the `id` from the output into `wrangler.toml`, replacing `REPLACE_WITH_KV_NAMESPACE_ID`:
+**Optional:** After the first successful deploy, copy the KV namespace id from the build log and set a Cloudflare build environment variable `INTAKE_KV_NAMESPACE_ID` to that value (faster deploys). You can also paste the id into `wrangler.toml` instead of the placeholder.
 
-```toml
-[[kv_namespaces]]
-binding = "INTAKE_KV"
-id = "your-namespace-id-here"
-```
+### Verify
 
-### Deploy
-
-1. Build the app:
-   ```bash
-   pnpm --filter @workspace/notary-journal... run build
-   ```
-2. Deploy from the repo root:
-   ```bash
-   pnpm run deploy:cloudflare
-   ```
-   Or: `npx wrangler deploy`
-3. Open your `*.workers.dev` URL → **Settings → Client intake form** → confirm **Intake API available**, then generate and save the intake link.
+Open your `*.workers.dev` URL → **Settings → Client intake form** → confirm **Intake API available**, then generate and save the intake link.
 
 **Limits (free tier):** KV has daily read/write quotas; a solo notary's intake volume is well within them. Zo backup (`/api/backup`) is **not** on Cloudflare — use JSON export/import or deploy on Zo for server backups.
 

@@ -36,7 +36,8 @@
     "build": "bun run --cwd artifacts/notary-journal build",
     "build:pnpm": "pnpm run typecheck && pnpm -r --if-present run build",
     "prod": "bun run server.ts",
-    "deploy:cloudflare": "pnpm run build && wrangler deploy",
+    "deploy:cloudflare": "node scripts/cloudflare-deploy.mjs",
+    "deploy:cloudflare:ci": "node scripts/cloudflare-deploy.mjs --skip-build",
     "deploy:netlify": "pnpm run build && netlify deploy --prod",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
