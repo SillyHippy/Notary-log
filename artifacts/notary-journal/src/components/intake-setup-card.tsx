@@ -30,9 +30,11 @@ export function IntakeSetupCard() {
   const [showNotes, setShowNotes] = useState(true);
   const [showPreferredDate, setShowPreferredDate] = useState(true);
   const [archiveDrive, setArchiveDrive] = useState(false);
+  const [sectionOpen, setSectionOpen] = useState(false);
 
   const applySettingsToForm = (s: NotarySettings) => {
     setSettings(s);
+    setSectionOpen(s.intakeSectionOpen === true);
     setFormTitle(s.intakeFormTitle ?? '');
     setAllowId(s.intakeAllowIdUpload !== false);
     setShowEmail(s.intakeShowEmail !== false);
@@ -55,7 +57,7 @@ export function IntakeSetupCard() {
       intakeShowNotes: showNotes,
       intakeShowPreferredDate: showPreferredDate,
     });
-    await syncIntakeSettingsToServer(s.intakeSecret!, config);
+    await syncIntakeSettingsToServer(s.intakeSecret!, config, { reclaim: true });
     const live = await fetchIntakeConfig(s.intakeSecret!);
     setServerLive(!!live);
     return !!live;
@@ -67,7 +69,14 @@ export function IntakeSetupCard() {
       setApiOk(health);
       const s = await getSettings();
       applySettingsToForm(s);
-      if (!health || !s.intakeSecret) {
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!sectionOpen) return;
+    void (async () => {
+      const s = await getSettings();
+      if (!apiOk || !s.intakeSecret) {
         setServerLive(s.intakeSecret ? false : null);
         return;
       }
@@ -77,7 +86,13 @@ export function IntakeSetupCard() {
         setServerLive(false);
       }
     })();
-  }, [publishFormToServer]);
+  }, [sectionOpen, apiOk, publishFormToServer]);
+
+  const setSectionOpenPersisted = async (open: boolean) => {
+    setSectionOpen(open);
+    const current = await getSettings();
+    await saveSettings({ ...current, intakeSectionOpen: open } as NotarySettings);
+  };
 
   const shareUrl = settings?.intakeSecret ? getIntakeShareUrl(settings.intakeSecret) : '';
 
@@ -92,6 +107,7 @@ export function IntakeSetupCard() {
   const generateLink = async () => {
     setBusy(true);
     try {
+      const previousSecret = settings?.intakeSecret;
       const secret = generateIntakeSecret();
       const next = await persist({
         intakeSecret: secret,
@@ -104,7 +120,10 @@ export function IntakeSetupCard() {
         intakeShowPreferredDate: showPreferredDate,
         archiveIntakeToDrive: archiveDrive,
       });
-      const live = await publishFormToServer(next);
+      const config = buildIntakeFormConfig(next);
+      await syncIntakeSettingsToServer(secret, config, { previousSecret });
+      const live = await fetchIntakeConfig(secret);
+      setServerLive(!!live);
       if (!live) throw new Error('Form did not publish to server');
       toast({ title: 'Intake link ready', description: 'Copy and share with clients.' });
     } catch (err) {
@@ -155,16 +174,25 @@ export function IntakeSetupCard() {
 
   return (
     <Card data-testid="card-intake-setup">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Link2 className="w-5 h-5 text-primary" />
-          Client intake form
-        </CardTitle>
-        <CardDescription>
-          Works on Zo, Cloudflare Workers, and git-connected Netlify (not drag-and-drop zip). Each
-          deployment has its own link — share the URL from <strong>this</strong> site only.
-        </CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div className="space-y-1.5 flex-1 min-w-0">
+          <CardTitle className="flex items-center gap-2">
+            <Link2 className="w-5 h-5 text-primary shrink-0" />
+            Client intake form
+          </CardTitle>
+          <CardDescription>
+            Zo, Cloudflare Workers, or git-connected Netlify. Link works only on this site (
+            {typeof window !== 'undefined' ? window.location.host : 'this host'}).
+          </CardDescription>
+        </div>
+        <Switch
+          checked={sectionOpen}
+          onCheckedChange={(open) => void setSectionOpenPersisted(open)}
+          aria-label="Show client intake form settings"
+          data-testid="switch-intake-section"
+        />
       </CardHeader>
+      {sectionOpen && (
       <CardContent className="space-y-4">
         <div className="space-y-2 text-sm">
           <div className="flex items-center gap-2">
@@ -234,6 +262,8 @@ export function IntakeSetupCard() {
           </div>
         )}
       </CardContent>
+      )}
+      {sectionOpen && (
       <CardFooter className="flex flex-wrap gap-2 border-t bg-muted/30 px-6 py-4">
         <Button type="button" onClick={() => void generateLink()} disabled={busy || !apiOk} className="gap-2">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -243,6 +273,7 @@ export function IntakeSetupCard() {
           Save form options
         </Button>
       </CardFooter>
+      )}
     </Card>
   );
 }

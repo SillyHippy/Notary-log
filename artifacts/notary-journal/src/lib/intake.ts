@@ -201,6 +201,7 @@ export function generateIntakeSecret(): string {
 export async function syncIntakeSettingsToServer(
   secret: string,
   config: IntakeFormConfig,
+  options?: { previousSecret?: string; reclaim?: boolean },
 ): Promise<void> {
   const res = await fetch(`${getIntakeApiBase()}/api/intake/settings`, {
     method: 'POST',
@@ -208,7 +209,12 @@ export async function syncIntakeSettingsToServer(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${secret}`,
     },
-    body: JSON.stringify({ secret, config }),
+    body: JSON.stringify({
+      secret,
+      config,
+      ...(options?.previousSecret ? { previousSecret: options.previousSecret } : {}),
+      ...(options?.reclaim ? { reclaim: true } : {}),
+    }),
   });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string };

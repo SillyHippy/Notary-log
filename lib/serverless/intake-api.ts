@@ -62,19 +62,35 @@ export async function handleIntakeRequest(
     const body = (await request.json()) as {
       secret?: unknown;
       config?: IntakeSettingsFile["config"];
+      previousSecret?: unknown;
+      reclaim?: unknown;
     };
     if (typeof body.secret !== "string" || !body.config) {
       return jsonResponse({ error: "Expected secret and config" }, { status: 400 });
     }
     const existing = await store.getSettings();
-    if (
-      existing &&
-      !intakeAuthOk(request, existing) &&
-      body.secret !== existing.secret
-    ) {
+    const secret = body.secret;
+    const auth = request.headers.get("Authorization");
+    const bearerMatchesBody = auth === `Bearer ${secret}`;
+    const bearerMatchesExisting = existing ? intakeAuthOk(request, existing) : false;
+    const sameSecretAsExisting = existing?.secret === secret;
+    const rotateOk =
+      !!existing &&
+      bearerMatchesBody &&
+      typeof body.previousSecret === "string" &&
+      body.previousSecret === existing.secret &&
+      secret !== existing.secret;
+    const reclaimOk =
+      !!existing &&
+      body.reclaim === true &&
+      bearerMatchesBody &&
+      secret !== existing.secret;
+
+    // Allow: first setup, update with current secret, rotate (prove prior secret), or explicit reclaim.
+    if (existing && !bearerMatchesExisting && !sameSecretAsExisting && !rotateOk && !reclaimOk) {
       return jsonResponse({ error: "Unauthorized" }, { status: 401 });
     }
-    await store.setSettings({ secret: body.secret, config: body.config });
+    await store.setSettings({ secret, config: body.config });
     return jsonResponse({ ok: true });
   }
 

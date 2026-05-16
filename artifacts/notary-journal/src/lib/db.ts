@@ -139,6 +139,8 @@ export interface NotarySettings {
   intakeShowPreferredDate?: boolean;
   /** When true, copy accepted intake folders to Google Drive under Jobs/. */
   archiveIntakeToDrive?: boolean;
+  /** Show the client intake form block on Settings (off = collapsed header only). */
+  intakeSectionOpen?: boolean;
 }
 
 // ── Storage shapes (encrypted records actually written to IDB) ─────────────
