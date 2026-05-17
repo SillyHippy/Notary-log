@@ -959,7 +959,7 @@ export function Settings() {
   };
 
   const handleCopyIntakeLink = async () => {
-    const url = `${window.location.origin}/intake`;
+    const url = `${window.location.origin}/intake?key=${web3formsKey}`;
     try {
       await navigator.clipboard.writeText(url);
       toast({ title: 'Link copied', description: 'Share this link with your clients.' });

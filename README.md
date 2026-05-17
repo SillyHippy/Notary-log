@@ -452,7 +452,9 @@ All server-side options run on free-tier infrastructure -- **$0 cost**.
 
 In Settings, click **Copy Intake Link** and send it to clients via text, email, or QR code.
 
-> **Works everywhere:** The intake form works on **any deployment** (Zo, Cloudflare Workers, Netlify, etc.). No Zo backup or extra config needed — just paste your Web3Forms key and go.
+The copied link includes your unique key (e.g., `?key=86e34...`). This key is required for the form to work — it tells the system where to route submissions so they show up in your **Requests** tab. The key is safe to share; it's a public form identifier, not a password or secret.
+
+> **Works everywhere:** The intake form works on **any deployment** (Zo, Cloudflare Workers, Netlify, etc.). No Zo backup or extra config needed — just paste your Web3Forms key and go. Clients can open the link from any device or browser.
 
 ---
 

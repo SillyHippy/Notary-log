@@ -12,6 +12,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUploadZone } from '@/components/file-upload-zone';
 
+const WEBHOOK_URL = import.meta.env.VITE_INTAKE_WEBHOOK_URL ?? '';
+
+function getUrlKey(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('key');
+}
+
 const STEPS = [
   'Notarization',
   'Signer',
@@ -40,9 +47,6 @@ const STATES = [
 ];
 
 const ID_TYPES = ["Driver's License", 'State ID', 'Passport', 'Military ID', 'Other'];
-
-const WEB3FORMS_ACCESS_KEY = import.meta.env.VITE_WEB3FORMS_ACCESS_KEY ?? '';
-const WEBHOOK_URL = import.meta.env.VITE_INTAKE_WEBHOOK_URL ?? '';
 
 export function ClientIntake() {
   const [, setLocation] = useLocation();
@@ -225,8 +229,9 @@ export function ClientIntake() {
     setSubmitting(true);
     setSubmitError(null);
 
-    if (!WEB3FORMS_ACCESS_KEY) {
-      setSubmitError('Intake form is not configured. Contact the notary.');
+    const urlKey = getUrlKey();
+    if (!urlKey) {
+      setSubmitError('Please use the full link provided by your notary (it should include ?key=...).');
       setSubmitting(false);
       return;
     }
@@ -234,7 +239,7 @@ export function ClientIntake() {
     try {
       // Build JSON payload — Web3Forms accepts JSON or form-data
       const payload: Record<string, unknown> = {
-        access_key: WEB3FORMS_ACCESS_KEY,
+        access_key: urlKey,
         preferredDate: form.preferredDate,
         servicesPerformed: form.services.join(', '),
         serviceType: form.serviceType,
@@ -342,12 +347,12 @@ export function ClientIntake() {
   }
 
   // ── Not configured ──
-  if (!WEB3FORMS_ACCESS_KEY && step === 0) {
+  if (!getUrlKey() && step === 0) {
     return (
       <div className="min-h-[100dvh] bg-background flex items-center justify-center p-6">
         <Alert>
           <AlertDescription>
-            This intake form is not yet configured. Please contact the notary.
+            Please use the full link provided by your notary (it should include ?key=...).
           </AlertDescription>
         </Alert>
       </div>
