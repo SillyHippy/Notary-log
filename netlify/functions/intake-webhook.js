@@ -28,30 +28,20 @@ exports.handler = async (event, context) => {
     try {
       bodyObj = JSON.parse(event.body || "{}");
     } catch {
-      bodyObj = {};
-    }
-
-    const accessKey = bodyObj.access_key;
-    if (!accessKey) {
       return {
-        statusCode: 401,
+        statusCode: 400,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify({ error: "Missing 'access_key' in request body" }),
+        body: JSON.stringify({ error: "Invalid JSON body" }),
       };
     }
 
     const uuid = crypto.randomUUID();
-    const key = `user/${accessKey}/intake-${Date.now()}-${uuid}`;
+    const key = `intake-${Date.now()}-${uuid}`;
 
-    const body = event.body || "";
-    const contentType =
-      event.headers["content-type"] || "application/json";
-
-    await store.set(key, body, {
-      contentType,
+    await store.set(key, JSON.stringify(bodyObj), {
+      contentType: "application/json",
       customMetadata: {
         receivedAt: new Date().toISOString(),
-        contentType,
       },
     });
 
@@ -61,7 +51,7 @@ exports.handler = async (event, context) => {
         ...CORS_HEADERS,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ success: true, key }),
+      body: JSON.stringify({ success: true, id: key }),
     };
   } catch (error) {
     return {

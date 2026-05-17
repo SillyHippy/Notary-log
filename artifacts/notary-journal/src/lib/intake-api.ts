@@ -63,6 +63,9 @@ export interface IntakeRequest {
   // ID files (base64 data URLs)
   idFrontFiles: string[];
   idBackFiles: string[];
+  // ID images (single data URLs for display)
+  idFrontImage?: string;
+  idBackImage?: string;
   // Services
   servicesPerformed: string[];
   serviceType: string;

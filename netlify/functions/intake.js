@@ -17,29 +17,21 @@ exports.handler = async (event, context) => {
   // DELETE handler
   if (event.httpMethod === "DELETE") {
     try {
-      const { key, access_key } = event.queryStringParameters || {};
-      if (!access_key) {
-        return {
-          statusCode: 401,
-          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-          body: JSON.stringify({ error: "Missing 'access_key' query parameter" }),
-        };
-      }
-      if (!key) {
+      const { file } = event.queryStringParameters || {};
+      if (!file) {
         return {
           statusCode: 400,
           headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-          body: JSON.stringify({ error: "Missing 'key' query parameter" }),
+          body: JSON.stringify({ error: "Missing 'file' query parameter" }),
         };
       }
 
-      const fullKey = `user/${access_key}/${key}`;
-      await store.delete(fullKey);
+      await store.delete(file);
 
       return {
         statusCode: 200,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify({ success: true, deleted: fullKey }),
+        body: JSON.stringify({ success: true, deleted: file }),
       };
     } catch (error) {
       return {
@@ -57,16 +49,7 @@ exports.handler = async (event, context) => {
 
       // Fetch a single blob by key
       if (file) {
-        const { access_key } = event.queryStringParameters || {};
-        if (!access_key) {
-          return {
-            statusCode: 401,
-            headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-            body: JSON.stringify({ error: "Missing 'access_key' query parameter" }),
-          };
-        }
-        const fullKey = `user/${access_key}/${file}`;
-        const blob = await store.get(fullKey, { type: "json" });
+        const blob = await store.get(file, { type: "json" });
         if (!blob) {
           return {
             statusCode: 404,
@@ -81,22 +64,12 @@ exports.handler = async (event, context) => {
         };
       }
 
-      // List all blobs with prefix 'user/{access_key}/'
-      const { access_key } = event.queryStringParameters || {};
-      if (!access_key) {
-        return {
-          statusCode: 401,
-          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-          body: JSON.stringify({ error: "Missing 'access_key' query parameter" }),
-        };
-      }
-      const { blobs } = await store.list({ prefix: `user/${access_key}/` });
+      // List all blobs with prefix 'intake-'
+      const { blobs } = await store.list({ prefix: "intake-" });
       const files = blobs.map((blob) => ({
-        key: blob.key,
-        lastModified: blob.lastModified,
+        name: blob.key,
+        modifiedTime: blob.lastModified,
         size: blob.size,
-        contentType: blob.contentType,
-        customMetadata: blob.customMetadata,
       }));
 
       return {

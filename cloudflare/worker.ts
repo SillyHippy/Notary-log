@@ -33,18 +33,17 @@ async function handleIntakeWebhook(request: Request, env: Env): Promise<Response
     return jsonResponse(405, { error: "Method not allowed" });
   }
 
-  const body = await request.json();
-  const accessKey = body.access_key;
-
-  if (!accessKey) {
-    return jsonResponse(401, { error: "Missing 'access_key' in request body" });
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body.key !== "string" || body.key.trim() === "") {
+    return jsonResponse(401, { error: "Access key required" });
   }
 
-  const id = `${Date.now()}-${crypto.randomUUID()}`;
-  const key = `user:${accessKey}:intake-${id}`;
+  const accessKey = body.key;
+  const id = `intake-${Date.now()}-${crypto.randomUUID()}`;
+  const key = `user:${accessKey}:${id}`;
   await env.INTAKE_KV.put(key, JSON.stringify(body));
 
-  return jsonResponse(200, { success: true });
+  return jsonResponse(200, { success: true, id });
 }
 
 async function handleIntake(request: Request, env: Env): Promise<Response> {
@@ -57,52 +56,29 @@ async function handleIntake(request: Request, env: Env): Promise<Response> {
   }
 
   const url = new URL(request.url);
-  const accessKey = url.searchParams.get("access_key");
-  const fileParam = url.searchParams.get("file");
+  const accessKey = url.searchParams.get("key");
 
-  if (fileParam) {
-    if (request.method === "GET") {
-      if (!accessKey) {
-        return jsonResponse(401, { error: "Missing 'access_key' query parameter" });
-      }
-      const key = `user:${accessKey}:${fileParam}`;
-      const value = await env.INTAKE_KV.get(key);
-      if (value === null) {
-        return jsonResponse(404, { error: "Not found" });
-      }
-      return jsonResponse(200, JSON.parse(value));
+  if (request.method === "DELETE") {
+    const file = url.searchParams.get("file");
+    if (!accessKey || !file) {
+      return jsonResponse(400, { error: "Missing key or file parameter" });
     }
+    const kvKey = `user:${accessKey}:${file}`;
+    await env.INTAKE_KV.delete(kvKey);
+    return jsonResponse(200, { success: true });
+  }
 
-    if (request.method === "DELETE") {
-      if (!accessKey) {
-        return jsonResponse(401, { error: "Missing 'access_key' query parameter" });
-      }
-      const key = `user:${accessKey}:${fileParam}`;
-      await env.INTAKE_KV.delete(key);
-      return jsonResponse(200, { success: true });
-    }
-
-    return jsonResponse(405, { error: "Method not allowed" });
+  if (!accessKey) {
+    return jsonResponse(401, { error: "Access key required" });
   }
 
   if (request.method === "GET") {
-    if (!accessKey) {
-      return jsonResponse(401, { error: "Missing 'access_key' query parameter" });
-    }
     const list = await env.INTAKE_KV.list({ prefix: `user:${accessKey}:` });
-    const files = list.keys.map((k) => {
-      let size = 1024;
-      let created = new Date().toISOString();
-      if (k.metadata) {
-        created = k.metadata.created || created;
-        try {
-          size = JSON.stringify(k.metadata).length;
-        } catch {
-          // ignore
-        }
-      }
-      return { name: k.name, modifiedTime: created, size };
-    });
+    const files = list.keys.map((k) => ({
+      name: k.name.replace(`user:${accessKey}:`, ""),
+      modifiedTime: k.metadata?.modified || new Date().toISOString(),
+      size: k.metadata?.size ?? 1024,
+    }));
     return jsonResponse(200, { files });
   }
 

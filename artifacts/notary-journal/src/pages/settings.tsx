@@ -1370,7 +1370,12 @@ export function Settings() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between w-full">
-            <CardTitle>Client Intake Form</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Client Intake Form
+              <span className="inline-flex items-center rounded-full border bg-purple-500/20 px-2 py-0.5 text-xs font-medium text-purple-400 border-purple-500/30">
+                BETA
+              </span>
+            </CardTitle>
             <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('client-intake')}>
               {collapsedSections.has('client-intake') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
             </Button>
