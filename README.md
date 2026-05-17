@@ -441,7 +441,7 @@ You see it in the app -> Requests tab -> "Start Entry" -> Prefilled journal entr
 
 In Settings, click **Copy Intake Link** and send it to clients via text, email, or QR code.
 
-**Requirements:** The intake webhook requires **Zo** (or any host running `server.ts`) because the webhook endpoint lives on the server. The Zo backup must be configured first — the intake API uses the same auth key.
+> **Works everywhere:** The intake form works on **any deployment** (Zo, Cloudflare Workers, Netlify, etc.). No Zo backup or extra config needed — just paste your Web3Forms key and go.
 
 ---
 

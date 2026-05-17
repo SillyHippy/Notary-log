@@ -1531,26 +1531,6 @@ export function NewEntry() {
                           </FormItem>
                         )} />
 
-                        {/* Stamp fee breakdown — read-only, computed from settings */}
-                        <div className="rounded-lg border bg-muted/30 p-3">
-                          <p className="text-xs font-medium text-muted-foreground mb-1">Stamp Fee</p>
-                          <div className="text-sm font-mono">
-                            {(() => {
-                              const count = Number(form.watch('stampCount')) || 1;
-                              const per = getStampFeeCents(appSettings ?? undefined);
-                              const total = computeStampFeeCents(count, appSettings ?? undefined);
-                              return (
-                                <span className="text-foreground">
-                                  {count} × ${(per / 100).toFixed(2)} = ${(total / 100).toFixed(2)}
-                                </span>
-                              );
-                            })()}
-                          </div>
-                          <p className="text-[11px] text-muted-foreground mt-1">
-                            Per-stamp rate from Settings · change stamp count above
-                          </p>
-                        </div>
-
                         {/* Additional fees — travel, mobile, etc. */}
                         <FormField control={form.control} name="additionalFee" render={({ field }) => (
                           <FormItem>

@@ -10,34 +10,28 @@ import {
 import { stashIntakePrefill } from '@/lib/intake-prefill';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import {
   ClipboardPaste,
   Loader2,
-  Settings,
   User,
   FileText,
-  CheckCircle2,
-  AlertCircle,
   Check,
   X,
   Eye,
   ChevronDown,
 } from 'lucide-react';
-import { getSettings } from '@/lib/db';
 
 /**
  * Client Requests page — shows pending intake submissions received via Web3Forms webhook.
- * Each card shows signer name, date, file count. "Start Entry" auto-fills a new journal entry.
+ * Accept → creates draft entry + deletes request. Deny → deletes request. Details → expand card.
  */
 export function ClientRequests() {
   const { toast } = useToast();
   const [submissions, setSubmissions] = React.useState<IntakeSubmission[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [configured, setConfigured] = React.useState(true);
-  const [hasBackupKey, setHasBackupKey] = React.useState(false);
   const [expandedCards, setExpandedCards] = React.useState<Set<string>>(new Set());
   const [expandedData, setExpandedData] = React.useState<Record<string, IntakeRequest>>({});
 
@@ -53,27 +47,11 @@ export function ClientRequests() {
     setLoading(true);
     setError(null);
     try {
-      // Check if backup key exists (required for intake auth)
-      const key = localStorage.getItem('zo_backup_key');
-      if (!key) {
-        setConfigured(false);
-        setHasBackupKey(false);
-        setSubmissions([]);
-        setLoading(false);
-        return;
-      }
-      setHasBackupKey(true);
-
       const subs = await listSubmissions();
       setSubmissions(subs);
-      setConfigured(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load';
-      if (msg.includes('not configured') || msg.includes('Unauthorized')) {
-        setConfigured(false);
-      } else {
-        setError(msg);
-      }
+      setError(msg);
     }
     setLoading(false);
   }, []);
@@ -130,33 +108,6 @@ export function ClientRequests() {
     }
   };
 
-  // Not configured (no Zo backup key = no auth for intake API)
-  if (!configured) {
-    return (
-      <div className="min-h-[100dvh] bg-background p-4 pb-24 md:ml-64 md:p-8">
-        <h1 className="text-2xl font-bold mb-6">Client Requests</h1>
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Not Configured</AlertTitle>
-          <AlertDescription className="mt-2">
-            <p className="mb-3">
-              Client intake requires Zo backup to be set up first (the intake API uses the same auth).
-            </p>
-            <ol className="list-decimal list-inside space-y-1 text-sm">
-              <li>Deploy on Zo with server.ts</li>
-              <li>Open Settings → Backup &amp; Restore → enable Zo backup</li>
-              <li>Paste your backup API URL and key</li>
-              <li>Return here — requests will appear after clients submit</li>
-            </ol>
-            <Button asChild variant="outline" size="sm" className="mt-4 gap-2">
-              <Settings className="w-4 h-4" /> Open Settings
-            </Button>
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
   if (loading) {
     return (
       <div className="min-h-[100dvh] bg-background p-4 pb-24 md:ml-64 md:p-8 flex items-center justify-center">
@@ -173,8 +124,6 @@ export function ClientRequests() {
       <div className="min-h-[100dvh] bg-background p-4 pb-24 md:ml-64 md:p-8">
         <h1 className="text-2xl font-bold mb-6">Client Requests</h1>
         <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
           <AlertDescription className="mt-2">{error}</AlertDescription>
         </Alert>
         <Button variant="outline" size="sm" className="mt-4" onClick={loadSubmissions}>
@@ -368,9 +317,7 @@ export function ClientRequests() {
                     onClick={() => handleViewDetails(sub)}
                   >
                     {isExpanded ? (
-                      <>
-                        <ChevronDown className="w-4 h-4 rotate-180" />
-                      </>
+                      <ChevronDown className="w-4 h-4 rotate-180" />
                     ) : (
                       <>
                         <Eye className="w-4 h-4" />

@@ -74,25 +74,22 @@ async function getBackupKey(): Promise<string | null> {
   return localStorage.getItem('zo_backup_key');
 }
 
-/** Build auth headers */
+/** Build auth headers — empty since intake API is standalone (no auth required) */
 async function authHeaders(): Promise<HeadersInit> {
-  const key = await getBackupKey();
-  return key ? { Authorization: `Bearer ${key}` } : {};
+  return {};
 }
 
-/** List all intake submissions */
+/** List all intake submissions — no auth required */
 export async function listSubmissions(): Promise<IntakeSubmission[]> {
-  const res = await fetch(INTAKE_BASE, { headers: await authHeaders() });
+  const res = await fetch(INTAKE_BASE);
   if (!res.ok) throw new Error(`Intake API error: ${res.status}`);
   const json = await res.json();
   return json.files || [];
 }
 
-/** Fetch a single submission by filename */
+/** Fetch a single submission by filename — no auth required */
 export async function getSubmission(fileName: string): Promise<IntakeRequest> {
-  const res = await fetch(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}`, {
-    headers: await authHeaders(),
-  });
+  const res = await fetch(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}`);
   if (!res.ok) throw new Error(`Intake API error: ${res.status}`);
   const raw = await res.json();
   return normalizeSubmission(raw, fileName);
@@ -186,15 +183,11 @@ function normalizeSubmission(raw: Record<string, unknown>, fileName: string): In
   };
 }
 
-/** Test the intake connection (validates backup key + server reachability) */
+/** Test the intake connection (validates server reachability — no auth needed) */
 export async function testIntakeConnection(): Promise<{ ok: boolean; message: string }> {
   try {
-    const key = await getBackupKey();
-    if (!key) return { ok: false, message: 'Backup key not configured. Complete Zo backup setup first.' };
-
-    const res = await fetch(INTAKE_BASE, { headers: await authHeaders() });
+    const res = await fetch(INTAKE_BASE);
     if (res.ok) return { ok: true, message: 'Connected to intake endpoint successfully.' };
-    if (res.status === 401) return { ok: false, message: 'Unauthorized — check your Zo backup key in Settings.' };
     return { ok: false, message: `Intake API error: ${res.status}` };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Connection failed.' };

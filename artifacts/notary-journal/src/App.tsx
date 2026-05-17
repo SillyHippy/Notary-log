@@ -1,5 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from "react";
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -32,6 +32,18 @@ function PageLoader() {
   );
 }
 
+/** Public intake form — rendered outside auth, no PIN required */
+function PublicRoutes() {
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <Switch>
+        <Route path="/intake" component={ClientIntake} />
+        <Route component={NotFound} />
+      </Switch>
+    </Suspense>
+  );
+}
+
 function Router() {
   useGlobalShortcuts();
   return (
@@ -53,12 +65,22 @@ function Router() {
   );
 }
 
+/**
+ * Checks if the current path is a public route (no auth needed).
+ * This ensures clients can access the intake form without any PIN.
+ */
+function useIsPublicRoute(): boolean {
+  const [location] = useLocation();
+  return location.startsWith('/intake');
+}
+
 type AppMode = 'loading' | 'setup' | 'locked' | 'unlocked';
 
 function App() {
   const [mode, setMode] = useState<AppMode>('loading');
   const [hasLegacyData, setHasLegacyData] = useState(false);
   const [legacyPinHash, setLegacyPinHash] = useState<string | null>(null);
+  const isPublic = useIsPublicRoute();
 
   useEffect(() => {
     (async () => {
@@ -143,6 +165,18 @@ function App() {
     );
   }
 
+  // Public intake form — accessible without any PIN or setup
+  if (isPublic) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+          <PublicRoutes />
+        </WouterRouter>
+        <Toaster />
+      </QueryClientProvider>
+    );
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -158,13 +192,7 @@ function App() {
         )}
         {mode === 'unlocked' && (
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-            {/* Public intake form — no auth required */}
-            <Switch>
-              <Route path="/intake" component={ClientIntake} />
-              <Route>
-                <Router />
-              </Route>
-            </Switch>
+            <Router />
           </WouterRouter>
         )}
         <Toaster />

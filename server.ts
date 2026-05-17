@@ -130,6 +130,7 @@ async function handleBackupRequest(request: Request, url: URL) {
 }
 
 /* ── Intake webhook ─────────────────────────────────────────────── */
+/* Standalone — does NOT require Zo backup auth. Works on any host. */
 
 async function handleIntakeRequest(request: Request, url: URL) {
   const headers = corsHeaders();
@@ -138,11 +139,13 @@ async function handleIntakeRequest(request: Request, url: URL) {
     return new Response(null, { status: 204, headers });
   }
 
+  // Ensure directory exists
+  await mkdir(INTAKE_DIR, { recursive: true });
+
   // Webhook receiver — no auth required (Web3Forms calls this)
   if (request.method === "POST" && url.pathname === "/api/intake-webhook") {
     try {
       const body = await request.json();
-      await mkdir(INTAKE_DIR, { recursive: true });
       const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
       const fileName = `intake-${id}.json`;
       await Bun.write(join(INTAKE_DIR, fileName), JSON.stringify(body, null, 2));
@@ -152,14 +155,8 @@ async function handleIntakeRequest(request: Request, url: URL) {
     }
   }
 
-  // List / get submissions — requires backup auth
-  if (!(await requireBackupAuth(request))) {
-    return json({ error: "Unauthorized" }, { status: 401, headers });
-  }
-
-  await mkdir(INTAKE_DIR, { recursive: true });
-
-  if (request.method === "GET") {
+  // List submissions — no auth required
+  if (request.method === "GET" && url.pathname === "/api/intake") {
     const requestedFile = url.searchParams.get("file");
     if (requestedFile) {
       const fileName = safeBackupName(requestedFile);
@@ -183,6 +180,24 @@ async function handleIntakeRequest(request: Request, url: URL) {
     );
     files.sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime));
     return json({ files }, { headers });
+  }
+
+  // DELETE submission (called after Accept)
+  if (request.method === "DELETE" && url.pathname === "/api/intake") {
+    const fileName = url.searchParams.get("file");
+    if (!fileName) return json({ error: "Missing file parameter" }, { status: 400, headers });
+    const cleanName = safeBackupName(fileName);
+    const filePath = join(INTAKE_DIR, cleanName);
+    try {
+      await Bun.file(filePath).exists() ? await Bun.write(filePath, "") : null;
+      // Bun doesn't have a direct delete, overwrite with empty then it'll be filtered
+      // Actually use node fs unlink if available, or just overwrite
+      const { unlink } = await import("node:fs/promises");
+      await unlink(filePath);
+      return json({ success: true }, { headers });
+    } catch {
+      return json({ error: "Failed to delete" }, { status: 500, headers });
+    }
   }
 
   return json({ error: "Method not allowed" }, { status: 405, headers });
