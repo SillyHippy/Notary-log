@@ -11,7 +11,7 @@
  * Key: `notary-journal:intakePrefill`
  */
 
-import type { IntakeRequest } from './formspree-api';
+import type { IntakeRequest } from './intake-api';
 
 const STORAGE_KEY = 'notary-journal:intakePrefill';
 

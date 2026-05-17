@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(usebasin.com)"
+    ]
+  },
+  "$version": 4
+}

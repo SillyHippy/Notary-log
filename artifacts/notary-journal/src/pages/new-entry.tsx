@@ -6,7 +6,7 @@ import * as z from 'zod';
 import SignaturePad from 'signature_pad';
 import { BrowserPDF417Reader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
-import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen, Plus } from 'lucide-react';
+import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen, Plus, Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1763,6 +1763,34 @@ export function NewEntry() {
               data-testid="button-save-draft"
             >
               {isSaving ? 'Saving...' : 'Save as Draft'}
+            </Button>
+          )}
+
+          {/* "Save Draft & Continue" — bypasses validation on Step 2 (Signer
+              Info) so notaries taking phone orders can advance without a full
+              address. Saves as draft first, then moves to the next step. */}
+          {currentStep === 1 && (
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                try {
+                  await saveEntry('draft');
+                  setCurrentStep(prev => Math.min(prev + 1, STEPS.length - 1));
+                  toast({
+                    title: 'Saved as draft',
+                    description: 'You can fill in missing details later.',
+                  });
+                } catch (err) {
+                  toast({
+                    title: 'Save failed',
+                    description: err instanceof Error ? err.message : 'Could not save draft.',
+                    variant: 'destructive',
+                  });
+                }
+              }}
+              className="gap-2"
+            >
+              <Save className="w-4 h-4" /> Save Draft &amp; Continue
             </Button>
           )}
 

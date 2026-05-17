@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, AlertCircle } from 'lucide-react';
+import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -47,7 +47,7 @@ import {
   resolveBackupPanelVisibility,
   saveBackupPanelVisibility,
 } from '@/lib/backup-visibility';
-import { testFormspreeConnection } from '@/lib/formspree-api';
+import { testIntakeConnection } from '@/lib/intake-api';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -157,10 +157,25 @@ export function Settings() {
   const [isZoRestoring, setIsZoRestoring] = useState(false);
 
   // Client Intake state
-  const [intakeFormId, setIntakeFormId] = useState('');
-  const [intakeApiToken, setIntakeApiToken] = useState('');
+  const [web3formsKey, setWeb3formsKey] = useState('');
   const [intakeSaving, setIntakeSaving] = useState(false);
   const [intakeTestResult, setIntakeTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Collapsible sections state — persisted to localStorage
+  const [collapsedSections, setCollapsedSections] = React.useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('notary-settings-collapsed');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
+  const toggleSection = (id: string) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      localStorage.setItem('notary-settings-collapsed', JSON.stringify([...next]));
+      return next;
+    });
+  };
 
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsSchema),
@@ -210,8 +225,7 @@ export function Settings() {
       setGoogleEmail(settings.googleEmail ?? '');
       setBackupReminderDays(settings.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS);
       setManualBackupOnly(!!settings.manualBackupOnly);
-      setIntakeFormId((settings as unknown as Record<string, unknown>).intakeFormId as string ?? '');
-      setIntakeApiToken((settings as unknown as Record<string, unknown>).intakeApiToken as string ?? '');
+      setWeb3formsKey((settings as unknown as Record<string, unknown>).web3formsKey as string ?? '');
       const hasZoConfig = !!(
         localStorage.getItem(ZO_BACKUP_URL_KEY) ||
         localStorage.getItem(ZO_BACKUP_KEY_KEY) ||
@@ -935,8 +949,8 @@ export function Settings() {
     setIntakeTestResult(null);
     try {
       const current = await getSettings();
-      await saveSettings({ ...current, intakeFormId, intakeApiToken } as NotarySettings);
-      const result = await testFormspreeConnection();
+      await saveSettings({ ...current, web3formsKey } as NotarySettings);
+      const result = await testIntakeConnection();
       setIntakeTestResult(result);
     } catch (err) {
       setIntakeTestResult({ ok: false, message: err instanceof Error ? err.message : 'Failed to save.' });
@@ -974,9 +988,15 @@ export function Settings() {
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
           <Card>
             <CardHeader>
-              <CardTitle>Notary Profile</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle>Notary Profile</CardTitle>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('notary-profile')}>
+                  {collapsedSections.has('notary-profile') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                </Button>
+              </div>
               <CardDescription>Your official commission information used for journal entries</CardDescription>
             </CardHeader>
+            {!collapsedSections.has('notary-profile') && (
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
@@ -1053,6 +1073,7 @@ export function Settings() {
                 />
               </div>
             </CardContent>
+            )}
           </Card>
 
           {/* ── Journal Compliance Card ─────────────────────────────────
@@ -1064,11 +1085,17 @@ export function Settings() {
               jurisdictions.                                              */}
           <Card>
             <CardHeader>
-              <CardTitle>Journal Compliance</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle>Journal Compliance</CardTitle>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('journal-compliance')}>
+                  {collapsedSections.has('journal-compliance') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                </Button>
+              </div>
               <CardDescription>
                 Match what your state allows you to record. Defaults are on for most states.
               </CardDescription>
             </CardHeader>
+            {!collapsedSections.has('journal-compliance') && (
             <CardContent className="space-y-4">
               {/* Compliance toggles save IMMEDIATELY on change, not on the
                   bottom "Save Settings" button. These rules drive what's
@@ -1150,13 +1177,20 @@ export function Settings() {
                 />
               </div>
             </CardContent>
+            )}
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Security & Appearance</CardTitle>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle>Security & Appearance</CardTitle>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('security-appearance')}>
+                  {collapsedSections.has('security-appearance') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                </Button>
+              </div>
               <CardDescription>App access and display preferences</CardDescription>
             </CardHeader>
+            {!collapsedSections.has('security-appearance') && (
             <CardContent className="space-y-6">
               <div className="rounded-lg border p-4 shadow-sm space-y-4">
                 <div className="flex flex-row items-start justify-between gap-4">
@@ -1321,6 +1355,7 @@ export function Settings() {
                 )}
               />
             </CardContent>
+            )}
             <CardFooter className="bg-muted/30 border-t px-6 py-4">
               <Button type="submit" disabled={isSaving} className="gap-2" data-testid="button-save-settings">
                 <Save className="w-4 h-4" />
@@ -1334,49 +1369,39 @@ export function Settings() {
       {/* ── Client Intake Form ─────────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle>Client Intake Form</CardTitle>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle>Client Intake Form</CardTitle>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('client-intake')}>
+              {collapsedSections.has('client-intake') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </Button>
+          </div>
           <CardDescription>
             Share a link with clients so they can submit their info before the appointment.
-            Requires a free <a href="https://formspree.io" target="_blank" rel="noreferrer" className="underline">Formspree</a> account.
+            Uses <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline">Web3Forms</a> (free, no signup).
           </CardDescription>
         </CardHeader>
+        {!collapsedSections.has('client-intake') && (
         <CardContent className="space-y-4">
           <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">
-            <p className="font-medium">Quick Setup (2 minutes):</p>
+            <p className="font-medium">Quick Setup (1 minute):</p>
             <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-              <li>Create a free form at <a href="https://formspree.io" target="_blank" rel="noreferrer" className="underline text-foreground">formspree.io</a></li>
-              <li>Copy your <strong>Form Endpoint</strong> (looks like <code className="text-xs bg-muted px-1 rounded">xnqkvpzy</code>)</li>
-              <li>Go to <strong>Settings → API</strong> in Formspree → generate a token</li>
-              <li>Paste both below</li>
+              <li>Go to <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline text-foreground">web3forms.com</a> → get your free access key</li>
+              <li>Paste it below → Save</li>
+              <li>In your Web3Forms dashboard, set the <strong>Webhook URL</strong> to: <code className="text-xs bg-muted px-1 rounded">{window.location.origin}/api/intake-webhook</code></li>
             </ol>
           </div>
 
           <div>
-            <Label htmlFor="intake-endpoint">Formspree Form Endpoint *</Label>
+            <Label htmlFor="web3forms-key">Web3Forms Access Key *</Label>
             <Input
-              id="intake-endpoint"
-              placeholder="e.g. xnqkvpzy"
-              value={intakeFormId}
-              onChange={(e) => setIntakeFormId(e.target.value)}
+              id="web3forms-key"
+              placeholder="Paste your Web3Forms access key here"
+              value={web3formsKey}
+              onChange={(e) => setWeb3formsKey(e.target.value)}
               className="mt-1"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              Just the ID part — we'll build the URL automatically
-            </p>
-          </div>
-
-          <div>
-            <Label htmlFor="intake-token">Formspree API Token *</Label>
-            <Input
-              id="intake-token"
-              type="password"
-              placeholder="Paste your API token here"
-              value={intakeApiToken}
-              onChange={(e) => setIntakeApiToken(e.target.value)}
-              className="mt-1"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Found in Formspree dashboard → Settings → API → Generate Token
+              Found at web3forms.com — no account or signup required
             </p>
           </div>
 
@@ -1398,12 +1423,12 @@ export function Settings() {
               className="gap-2"
             >
               {intakeSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Save &amp; Test Connection
+              Save &amp; Test
             </Button>
             <Button
               variant="outline"
               onClick={handleCopyIntakeLink}
-              disabled={!intakeFormId}
+              disabled={!web3formsKey}
               className="gap-2"
             >
               <ExternalLink className="w-4 h-4" />
@@ -1411,26 +1436,39 @@ export function Settings() {
             </Button>
           </div>
 
-          {intakeFormId && (
-            <div className="rounded-lg border bg-muted/50 p-3">
-              <p className="text-xs text-muted-foreground mb-1">Your intake link:</p>
-              <p className="text-sm font-mono break-all">{window.location.origin}/intake</p>
+          {web3formsKey && (
+            <div className="rounded-lg border bg-muted/50 p-3 space-y-2">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Intake link (share with clients):</p>
+                <p className="text-sm font-mono break-all">{window.location.origin}/intake</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Webhook URL (paste in Web3Forms dashboard):</p>
+                <p className="text-sm font-mono break-all">{window.location.origin}/api/intake-webhook</p>
+              </div>
             </div>
           )}
         </CardContent>
+        )}
       </Card>
 
       {/* ── Default Fees Card ─────────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Wallet className="w-5 h-5 text-primary" />
-            Default Fees
-          </CardTitle>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle className="flex items-center gap-2">
+              <Wallet className="w-5 h-5 text-primary" />
+              Default Fees
+            </CardTitle>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('default-fees')}>
+              {collapsedSections.has('default-fees') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </Button>
+          </div>
           <CardDescription>
             Pre-fill the fee on new entries based on the type of notarial act. Leave blank to use $0.
           </CardDescription>
         </CardHeader>
+        {!collapsedSections.has('default-fees') && (
         <CardContent className="space-y-3">
           {FEE_TYPES.map(ft => (
             <div key={ft} className="flex items-center justify-between gap-3">
@@ -1452,6 +1490,7 @@ export function Settings() {
             </div>
           ))}
         </CardContent>
+        )}
         <CardFooter className="bg-muted/30 border-t px-6 py-4">
           <Button onClick={handleSaveDefaultFees} disabled={savingFees} className="gap-2" data-testid="button-save-default-fees">
             <Save className="w-4 h-4" /> {savingFees ? 'Saving...' : 'Save Default Fees'}
@@ -1461,14 +1500,20 @@ export function Settings() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Wallet className="w-5 h-5 text-primary" />
-            Stamp fee (per notarial act)
-          </CardTitle>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle className="flex items-center gap-2">
+              <Wallet className="w-5 h-5 text-primary" />
+              Stamp Fee
+            </CardTitle>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('stamp-fee')}>
+              {collapsedSections.has('stamp-fee') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </Button>
+          </div>
           <CardDescription>
             Statutory fee per stamp. On new entries, # of stamps × this rate fills the notarial fee. Mobile/travel stays in Default Fees above.
           </CardDescription>
         </CardHeader>
+        {!collapsedSections.has('stamp-fee') && (
         <CardContent>
           <div className="flex items-center justify-between gap-3 max-w-sm">
             <Label htmlFor="stamp-fee">Fee per stamp</Label>
@@ -1487,6 +1532,7 @@ export function Settings() {
             </div>
           </div>
         </CardContent>
+        )}
         <CardFooter className="bg-muted/30 border-t px-6 py-4">
           <Button onClick={handleSaveStampFee} disabled={savingStampFee} className="gap-2" data-testid="button-save-stamp-fee">
             <Save className="w-4 h-4" /> {savingStampFee ? 'Saving...' : 'Save stamp fee'}
@@ -1497,14 +1543,20 @@ export function Settings() {
       {/* ── Notary Seal or Logo Card ───────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Stamp className="w-5 h-5 text-primary" />
-            Notary Seal or Logo
-          </CardTitle>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle className="flex items-center gap-2">
+              <Stamp className="w-5 h-5 text-primary" />
+              Seal/Logo
+            </CardTitle>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('seal-logo')}>
+              {collapsedSections.has('seal-logo') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </Button>
+          </div>
           <CardDescription>
             Upload a small PNG or JPG of your seal or logo (recommended ~300×300 pixels). It will be stamped in the lower-right corner of every page in your exported PDFs.
           </CardDescription>
         </CardHeader>
+        {!collapsedSections.has('seal-logo') && (
         <CardContent className="space-y-4">
           {sealImage ? (
             <div className="flex items-center gap-4 p-3 border rounded-lg bg-muted/30">
@@ -1551,6 +1603,7 @@ export function Settings() {
             Image is resized to about 600px and stored locally. PNG with transparency works best.
           </p>
         </CardContent>
+        )}
       </Card>
 
       {/* ── Backup Visibility Card ──────────────────────────────────────── */}

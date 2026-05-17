@@ -40,6 +40,16 @@ function stampSealOnAllPages(doc: jsPDF, sealImage?: string): void {
   }
 }
 
+/**
+ * Extract the image format and raw base64 from a data URL.
+ * Returns { format: 'PNG' | 'JPEG', base64: string } or throws.
+ */
+function extractImageFormat(dataUrl: string): { format: 'PNG' | 'JPEG'; base64: string } {
+  if (/^data:image\/jpe?g/i.test(dataUrl)) return { format: 'JPEG', base64: dataUrl };
+  if (/^data:image\/png/i.test(dataUrl)) return { format: 'PNG', base64: dataUrl };
+  throw new Error('Unsupported image format in data URL');
+}
+
 // ── Single-entry PDF ───────────────────────────────────────────────────────
 
 export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): void {
@@ -99,6 +109,39 @@ export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): v
   if (entry.signatureImage) {
     doc.text('Signer Signature:', 20, y); y += 5;
     doc.addImage(entry.signatureImage, 'PNG', 20, y, 80, 30);
+  }
+
+  // Embed ID photos if available
+  let photoY = y + 40;
+  if (entry.idFrontImage) {
+    try {
+      const { format, base64 } = extractImageFormat(entry.idFrontImage);
+      if (photoY + 60 > doc.internal.pageSize.height - 20) {
+        doc.addPage();
+        photoY = 20;
+      }
+      doc.setFontSize(8);
+      doc.text('ID Front', 20, photoY);
+      doc.addImage(base64, format, 20, photoY + 3, 80, 45);
+      photoY += 55;
+    } catch (err) {
+      console.warn('Failed to embed ID front photo:', err);
+    }
+  }
+  if (entry.idBackImage) {
+    try {
+      const { format, base64 } = extractImageFormat(entry.idBackImage);
+      if (photoY + 60 > doc.internal.pageSize.height - 20) {
+        doc.addPage();
+        photoY = 20;
+      }
+      doc.setFontSize(8);
+      doc.text('ID Back', 20, photoY);
+      doc.addImage(base64, format, 20, photoY + 3, 80, 45);
+      photoY += 55;
+    } catch (err) {
+      console.warn('Failed to embed ID back photo:', err);
+    }
   }
 
   // Footer
@@ -513,6 +556,37 @@ export function exportJournalTablePDF(
 
     y += rowH;
   });
+
+  // Add ID photos section
+  const entriesWithPhotos = entries.filter(e => e.idFrontImage || e.idBackImage);
+  if (entriesWithPhotos.length > 0) {
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.text('ID Photos', 20, 20);
+    let py = 30;
+    for (const entry of entriesWithPhotos) {
+      if (py + 70 > doc.internal.pageSize.height - 20) {
+        doc.addPage();
+        py = 20;
+      }
+      doc.setFontSize(8);
+      doc.text(`Entry #${entry.entryNumber} — ${entry.signerFullName}`, 20, py);
+      py += 5;
+      if (entry.idFrontImage) {
+        try {
+          const { format, base64 } = extractImageFormat(entry.idFrontImage);
+          doc.addImage(base64, format, 20, py, 60, 40);
+        } catch { /* skip */ }
+      }
+      if (entry.idBackImage) {
+        try {
+          const { format, base64 } = extractImageFormat(entry.idBackImage);
+          doc.addImage(base64, format, 85, py, 60, 40);
+        } catch { /* skip */ }
+      }
+      py += 50;
+    }
+  }
 
   // ── Footer line on every page ────────────────────────────────────────
   const totalPagesActual = doc.getNumberOfPages();

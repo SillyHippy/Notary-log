@@ -2,6 +2,7 @@ import { mkdir, readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 const PUBLIC_DIR = "./artifacts/notary-journal/dist/public";
 const BACKUP_DIR = "./Documents/Notary Journal/backups";
+const INTAKE_DIR = "./Documents/Notary Journal/intake";
 const BACKUP_KEY_FILE = join(BACKUP_DIR, ".backup-key");
 function json(data: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
@@ -128,6 +129,67 @@ async function handleBackupRequest(request: Request, url: URL) {
   return json({ error: "Method not allowed" }, { status: 405, headers });
 }
 
+/* ── Intake webhook ─────────────────────────────────────────────── */
+
+async function handleIntakeRequest(request: Request, url: URL) {
+  const headers = corsHeaders();
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers });
+  }
+
+  // Webhook receiver — no auth required (Web3Forms calls this)
+  if (request.method === "POST" && url.pathname === "/api/intake-webhook") {
+    try {
+      const body = await request.json();
+      await mkdir(INTAKE_DIR, { recursive: true });
+      const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+      const fileName = `intake-${id}.json`;
+      await Bun.write(join(INTAKE_DIR, fileName), JSON.stringify(body, null, 2));
+      return json({ success: true, id }, { headers });
+    } catch (err) {
+      return json({ error: String(err) }, { status: 400, headers });
+    }
+  }
+
+  // List / get submissions — requires backup auth
+  if (!(await requireBackupAuth(request))) {
+    return json({ error: "Unauthorized" }, { status: 401, headers });
+  }
+
+  await mkdir(INTAKE_DIR, { recursive: true });
+
+  if (request.method === "GET") {
+    const requestedFile = url.searchParams.get("file");
+    if (requestedFile) {
+      const fileName = safeBackupName(requestedFile);
+      const file = Bun.file(join(INTAKE_DIR, fileName));
+      if (!(await file.exists())) {
+        return json({ error: "Submission not found" }, { status: 404, headers });
+      }
+      return new Response(file, {
+        headers: { ...headers, "Content-Type": "application/json" },
+      });
+    }
+
+    const names = await readdir(INTAKE_DIR);
+    const files = await Promise.all(
+      names
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => {
+          const info = await stat(join(INTAKE_DIR, name));
+          return { name, modifiedTime: info.mtime.toISOString(), size: info.size };
+        }),
+    );
+    files.sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime));
+    return json({ files }, { headers });
+  }
+
+  return json({ error: "Method not allowed" }, { status: 405, headers });
+}
+
+/* ── Server ─────────────────────────────────────────────────────── */
+
 const server = Bun.serve({
   port: process.env.PORT || 3000,
   async fetch(request) {
@@ -136,6 +198,10 @@ const server = Bun.serve({
 
     if (path === "/api/backup") {
       return handleBackupRequest(request, url);
+    }
+
+    if (path.startsWith("/api/intake")) {
+      return handleIntakeRequest(request, url);
     }
 
     if (path === "/") {
@@ -165,4 +231,6 @@ void ensureBackupKey().then((key) => {
   console.log(`Zo Backup API URL: /api/backup`);
   console.log(`Zo Backup Key: ${key}`);
   console.log(`Zo Backup Storage: ${BACKUP_DIR}`);
+  console.log(`Intake webhook URL: /api/intake-webhook`);
+  console.log(`Intake submissions dir: ${INTAKE_DIR}`);
 });

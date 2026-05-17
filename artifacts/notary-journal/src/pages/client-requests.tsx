@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Link } from 'wouter';
 import {
   listSubmissions,
   getSubmission,
   markSubmissionRead,
+  deleteSubmission,
+  type IntakeSubmission,
   type IntakeRequest,
-} from '@/lib/formspree-api';
+} from '@/lib/intake-api';
 import { stashIntakePrefill } from '@/lib/intake-prefill';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,30 +20,56 @@ import {
   FileText,
   CheckCircle2,
   AlertCircle,
-  ExternalLink,
+  Check,
+  X,
+  Eye,
+  ChevronDown,
 } from 'lucide-react';
+import { getSettings } from '@/lib/db';
 
 /**
- * Client Requests page — shows pending intake submissions from Formspree.
- * Also offers a "Paste Submission" dialog for non-webhook platforms.
+ * Client Requests page — shows pending intake submissions received via Web3Forms webhook.
+ * Each card shows signer name, date, file count. "Start Entry" auto-fills a new journal entry.
  */
 export function ClientRequests() {
   const { toast } = useToast();
-  const [requests, setRequests] = React.useState<IntakeRequest[]>([]);
+  const [submissions, setSubmissions] = React.useState<IntakeSubmission[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [configured, setConfigured] = React.useState(true);
+  const [hasBackupKey, setHasBackupKey] = React.useState(false);
+  const [expandedCards, setExpandedCards] = React.useState<Set<string>>(new Set());
+  const [expandedData, setExpandedData] = React.useState<Record<string, IntakeRequest>>({});
+
+  const toggleCard = (name: string) => {
+    setExpandedCards(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
 
   const loadSubmissions = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      // Check if backup key exists (required for intake auth)
+      const key = localStorage.getItem('zo_backup_key');
+      if (!key) {
+        setConfigured(false);
+        setHasBackupKey(false);
+        setSubmissions([]);
+        setLoading(false);
+        return;
+      }
+      setHasBackupKey(true);
+
       const subs = await listSubmissions();
-      setRequests(subs as unknown as IntakeRequest[]);
+      setSubmissions(subs);
       setConfigured(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load';
-      if (msg.includes('not configured')) {
+      if (msg.includes('not configured') || msg.includes('Unauthorized')) {
         setConfigured(false);
       } else {
         setError(msg);
@@ -55,25 +82,55 @@ export function ClientRequests() {
     loadSubmissions();
   }, [loadSubmissions]);
 
-  const handleStartEntry = async (request: IntakeRequest) => {
+  const handleAccept = async (sub: IntakeSubmission) => {
     try {
-      // Fetch full submission with file data
-      const full = await getSubmission(request.id);
+      const full = await getSubmission(sub.name);
       stashIntakePrefill(full);
-      await markSubmissionRead(request.id);
+      await deleteSubmission(sub.name);
+      setSubmissions(prev => prev.filter(s => s.name !== sub.name));
       window.location.href = '/entry/new';
     } catch (err) {
       toast({
-        title: 'Failed to load submission',
+        title: 'Failed to accept request',
         description: err instanceof Error ? err.message : 'Unknown error',
         variant: 'destructive',
       });
     }
   };
 
-  const unreadCount = requests.filter((r) => !r.read).length;
+  const handleDeny = async (sub: IntakeSubmission) => {
+    try {
+      await deleteSubmission(sub.name);
+      setSubmissions(prev => prev.filter(s => s.name !== sub.name));
+      toast({ title: 'Request denied', description: 'The intake request has been removed.' });
+    } catch (err) {
+      toast({
+        title: 'Failed to deny request',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+  };
 
-  // Not configured
+  const handleViewDetails = async (sub: IntakeSubmission) => {
+    if (expandedData[sub.name]) {
+      toggleCard(sub.name);
+      return;
+    }
+    try {
+      const full = await getSubmission(sub.name);
+      setExpandedData(prev => ({ ...prev, [sub.name]: full }));
+      toggleCard(sub.name);
+    } catch (err) {
+      toast({
+        title: 'Failed to load details',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Not configured (no Zo backup key = no auth for intake API)
   if (!configured) {
     return (
       <div className="min-h-[100dvh] bg-background p-4 pb-24 md:ml-64 md:p-8">
@@ -83,22 +140,16 @@ export function ClientRequests() {
           <AlertTitle>Not Configured</AlertTitle>
           <AlertDescription className="mt-2">
             <p className="mb-3">
-              Set up your Formspree form to receive client intake submissions.
+              Client intake requires Zo backup to be set up first (the intake API uses the same auth).
             </p>
             <ol className="list-decimal list-inside space-y-1 text-sm">
-              <li>Create a free form at formspree.io</li>
-              <li>Get your API token from Settings → API</li>
-              <li>Add them in Settings → Client Intake</li>
+              <li>Deploy on Zo with server.ts</li>
+              <li>Open Settings → Backup &amp; Restore → enable Zo backup</li>
+              <li>Paste your backup API URL and key</li>
+              <li>Return here — requests will appear after clients submit</li>
             </ol>
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="mt-4 gap-2"
-            >
-              <Link href="/settings">
-                <Settings className="w-4 h-4" /> Open Settings
-              </Link>
+            <Button asChild variant="outline" size="sm" className="mt-4 gap-2">
+              <Settings className="w-4 h-4" /> Open Settings
             </Button>
           </AlertDescription>
         </Alert>
@@ -106,7 +157,6 @@ export function ClientRequests() {
     );
   }
 
-  // Loading
   if (loading) {
     return (
       <div className="min-h-[100dvh] bg-background p-4 pb-24 md:ml-64 md:p-8 flex items-center justify-center">
@@ -118,7 +168,6 @@ export function ClientRequests() {
     );
   }
 
-  // Error
   if (error) {
     return (
       <div className="min-h-[100dvh] bg-background p-4 pb-24 md:ml-64 md:p-8">
@@ -128,20 +177,14 @@ export function ClientRequests() {
           <AlertTitle>Error</AlertTitle>
           <AlertDescription className="mt-2">{error}</AlertDescription>
         </Alert>
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-4"
-          onClick={loadSubmissions}
-        >
+        <Button variant="outline" size="sm" className="mt-4" onClick={loadSubmissions}>
           Retry
         </Button>
       </div>
     );
   }
 
-  // Empty
-  if (requests.length === 0) {
+  if (submissions.length === 0) {
     return (
       <div className="min-h-[100dvh] bg-background p-4 pb-24 md:ml-64 md:p-8">
         <h1 className="text-2xl font-bold mb-6">Client Requests</h1>
@@ -157,97 +200,189 @@ export function ClientRequests() {
     );
   }
 
-  // List
   return (
     <div className="min-h-[100dvh] bg-background p-4 pb-24 md:ml-64 md:p-8">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Client Requests</h1>
-          {unreadCount > 0 && (
-            <p className="text-sm text-muted-foreground mt-1">
-              {unreadCount} unread
-            </p>
-          )}
+          <p className="text-sm text-muted-foreground mt-1">
+            {submissions.length} submission{submissions.length !== 1 ? 's' : ''}
+          </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={loadSubmissions}
-          className="gap-2"
-        >
-          <Loader2 className="w-4 h-4" />
-          Refresh
+        <Button variant="outline" size="sm" onClick={loadSubmissions} className="gap-2">
+          <Loader2 className="w-4 h-4" /> Refresh
         </Button>
       </div>
 
       <div className="space-y-3">
-        {requests.map((req) => (
-          <Card
-            key={req.id}
-            className={
-              !req.read ? 'border-primary/50 bg-primary/5' : undefined
-            }
-          >
-            <CardHeader className="py-3">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-2">
-                  <User className="w-4 h-4 text-muted-foreground" />
-                  <CardTitle className="text-sm font-semibold">
-                    {[req.signerFirstName, req.signerMiddleName, req.signerLastName]
-                      .filter(Boolean)
-                      .join(' ') || 'Unknown'}
-                  </CardTitle>
-                  {!req.read && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/20 text-primary">
-                      New
-                    </span>
-                  )}
+        {submissions.map((sub) => {
+          const isExpanded = expandedCards.has(sub.name);
+          const data = expandedData[sub.name];
+          const shortName = sub.name.replace('intake-', '').split('-').slice(0, 2).join('-');
+
+          return (
+            <Card key={sub.name}>
+              <CardHeader className="py-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2">
+                    <User className="w-4 h-4 text-muted-foreground" />
+                    <CardTitle className="text-sm font-semibold">
+                      {shortName}
+                    </CardTitle>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(sub.modifiedTime).toLocaleDateString()}
+                  </span>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {new Date(req.createdAt).toLocaleDateString()}
-                </span>
-              </div>
-            </CardHeader>
-            <CardContent className="py-3 pt-0">
-              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground mb-3">
-                {req.phone && (
-                  <div>
-                    <span className="text-foreground">Phone:</span> {req.phone}
+              </CardHeader>
+              <CardContent className="py-3 pt-0">
+                {!isExpanded && (
+                  <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground mb-3">
+                    <div>
+                      <FileText className="w-3 h-3 inline mr-1" />
+                      {(sub.size / 1024).toFixed(0)} KB
+                    </div>
                   </div>
                 )}
-                {req.city && (
-                  <div>
-                    <span className="text-foreground">Location:</span>{' '}
-                    {req.city}, {req.state}
+
+                {isExpanded && data && (
+                  <div className="mb-4 space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                      {/* Primary Signer */}
+                      <div className="space-y-2">
+                        <h4 className="font-semibold text-primary">Primary Signer</h4>
+                        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <dt className="text-muted-foreground">Name</dt>
+                          <dd>{[data.signerFirstName, data.signerMiddleName, data.signerLastName].filter(Boolean).join(' ') || '—'}</dd>
+                          <dt className="text-muted-foreground">Email</dt>
+                          <dd>{data.email || '—'}</dd>
+                          <dt className="text-muted-foreground">Phone</dt>
+                          <dd>{data.phone || '—'}</dd>
+                          <dt className="text-muted-foreground">Address</dt>
+                          <dd>
+                            {[data.address, data.address2].filter(Boolean).join(', ') || '—'}
+                            <br />
+                            {[data.city, data.state, data.zip].filter(Boolean).join(', ') || '—'}
+                          </dd>
+                        </dl>
+                      </div>
+
+                      {/* ID Information */}
+                      <div className="space-y-2">
+                        <h4 className="font-semibold text-primary">ID Information</h4>
+                        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <dt className="text-muted-foreground">Type</dt>
+                          <dd>{data.idType || '—'}</dd>
+                          <dt className="text-muted-foreground">Number</dt>
+                          <dd>{data.idNumber || '—'}</dd>
+                          <dt className="text-muted-foreground">Issued By</dt>
+                          <dd>{data.idIssuedBy || '—'}</dd>
+                          <dt className="text-muted-foreground">Date Issued</dt>
+                          <dd>{data.idDateIssued || '—'}</dd>
+                          <dt className="text-muted-foreground">Expiration</dt>
+                          <dd>{data.idExpirationDate || '—'}</dd>
+                        </dl>
+                      </div>
+
+                      {/* Service Details */}
+                      <div className="space-y-2">
+                        <h4 className="font-semibold text-primary">Service Details</h4>
+                        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <dt className="text-muted-foreground">Services</dt>
+                          <dd>{data.servicesPerformed.join(', ') || '—'}</dd>
+                          <dt className="text-muted-foreground">Type</dt>
+                          <dd>{data.serviceType || '—'}</dd>
+                          <dt className="text-muted-foreground">Preferred Date</dt>
+                          <dd>{data.preferredDate || '—'}</dd>
+                        </dl>
+                      </div>
+
+                      {/* Payment */}
+                      <div className="space-y-2">
+                        <h4 className="font-semibold text-primary">Payment</h4>
+                        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <dt className="text-muted-foreground">Method</dt>
+                          <dd>{data.paymentMethod || '—'}</dd>
+                          <dt className="text-muted-foreground">Amount</dt>
+                          <dd>{data.totalAmount || '—'}</dd>
+                          <dt className="text-muted-foreground">Payer</dt>
+                          <dd>{data.payerName || '—'}</dd>
+                        </dl>
+                      </div>
+
+                      {/* Additional Signer */}
+                      {data.hasSigner2 && (
+                        <div className="space-y-2">
+                          <h4 className="font-semibold text-primary">Additional Signer</h4>
+                          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                            <dt className="text-muted-foreground">Name</dt>
+                            <dd>{[data.signer2FirstName, data.signer2LastName].filter(Boolean).join(' ') || '—'}</dd>
+                            <dt className="text-muted-foreground">Phone</dt>
+                            <dd>{data.signer2Phone || '—'}</dd>
+                            <dt className="text-muted-foreground">ID Type</dt>
+                            <dd>{data.signer2IdType || '—'}</dd>
+                            <dt className="text-muted-foreground">ID Number</dt>
+                            <dd>{data.signer2IdNumber || '—'}</dd>
+                            <dt className="text-muted-foreground">Issued By</dt>
+                            <dd>{data.signer2IdIssuedBy || '—'}</dd>
+                            <dt className="text-muted-foreground">Expiration</dt>
+                            <dd>{data.signer2IdExpirationDate || '—'}</dd>
+                          </dl>
+                        </div>
+                      )}
+
+                      {/* Notes */}
+                      {data.notes && (
+                        <div className="md:col-span-2 space-y-1">
+                          <h4 className="font-semibold text-primary">Notes</h4>
+                          <p className="text-xs text-muted-foreground">{data.notes}</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
-                {(req.idFrontFiles.length + req.idBackFiles.length) > 0 && (
-                  <div>
-                    <FileText className="w-3 h-3 inline mr-1" />
-                    {req.idFrontFiles.length + req.idBackFiles.length} ID
-                    file(s)
-                  </div>
-                )}
-                {req.servicesPerformed.length > 0 && (
-                  <div>
-                    <span className="text-foreground">Services:</span>{' '}
-                    {req.servicesPerformed.join(', ')}
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => handleStartEntry(req)}
-                  className="flex-1 gap-2"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Start Entry
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="flex-1 gap-2 bg-green-600 hover:bg-green-700"
+                    onClick={() => handleAccept(sub)}
+                  >
+                    <Check className="w-4 h-4" />
+                    Accept
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 gap-2 text-red-600 border-red-300 hover:bg-red-50"
+                    onClick={() => handleDeny(sub)}
+                  >
+                    <X className="w-4 h-4" />
+                    Deny
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="gap-2"
+                    onClick={() => handleViewDetails(sub)}
+                  >
+                    {isExpanded ? (
+                      <>
+                        <ChevronDown className="w-4 h-4 rotate-180" />
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-4 h-4" />
+                        Details
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

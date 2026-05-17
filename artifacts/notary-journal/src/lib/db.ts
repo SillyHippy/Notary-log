@@ -116,9 +116,8 @@ export interface NotarySettings {
   // include in backups; connector secrets and tokens stay in browser storage.
   showGoogleBackup?: boolean;
   showZoBackup?: boolean;
-  // Client Intake Form — Formspree integration
-  intakeFormId?: string;
-  intakeApiToken?: string;
+  // Client Intake Form — Web3Forms integration
+  web3formsKey?: string;
   // State-compliance toggles. Default to `true` (record everything) when
   // unset so existing installs see no behavior change. When set to `false`,
   // the corresponding fields are hidden in the new-entry / edit-entry forms,

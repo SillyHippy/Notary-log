@@ -41,7 +41,8 @@ const STATES = [
 
 const ID_TYPES = ["Driver's License", 'State ID', 'Passport', 'Military ID', 'Other'];
 
-const ENDPOINT = import.meta.env.VITE_INTAKE_FORM_ENDPOINT ?? '';
+const WEB3FORMS_ACCESS_KEY = import.meta.env.VITE_WEB3FORMS_ACCESS_KEY ?? '';
+const WEBHOOK_URL = import.meta.env.VITE_INTAKE_WEBHOOK_URL ?? '';
 
 export function ClientIntake() {
   const [, setLocation] = useLocation();
@@ -213,7 +214,7 @@ export function ClientIntake() {
     setStep((s) => Math.max(0, s - 1));
   };
 
-  // Submit to Formspree
+  // Submit to Web3Forms
   const handleSubmit = async () => {
     const err = validateStep(7);
     if (err) {
@@ -224,86 +225,98 @@ export function ClientIntake() {
     setSubmitting(true);
     setSubmitError(null);
 
-    if (!ENDPOINT) {
+    if (!WEB3FORMS_ACCESS_KEY) {
       setSubmitError('Intake form is not configured. Contact the notary.');
       setSubmitting(false);
       return;
     }
 
     try {
-      const formData = new FormData();
-      // Append all text fields
-      formData.append('preferredDate', form.preferredDate);
-      formData.append('servicesPerformed', form.services.join(', '));
-      formData.append('serviceType', form.serviceType);
-      formData.append('signerFirstName', form.signerFirstName);
-      formData.append('signerMiddleName', form.signerMiddleName);
-      formData.append('signerLastName', form.signerLastName);
-      formData.append('email', form.email);
-      formData.append('phone', form.phone);
-      formData.append('signerAddress', form.signerAddress);
-      formData.append('signerAddress2', form.signerAddress2);
-      formData.append('signerCity', form.signerCity);
-      formData.append('signerState', form.signerState);
-      formData.append('signerZip', form.signerZip);
-      formData.append('idType', form.idType);
-      formData.append('idNumber', form.idNumber);
-      formData.append('idIssuedBy', form.idIssuedBy);
-      formData.append('idDateIssued', form.idDateIssued);
-      formData.append('idExpirationDate', form.idExpirationDate);
-      formData.append('notes', form.notes);
+      // Build JSON payload — Web3Forms accepts JSON or form-data
+      const payload: Record<string, unknown> = {
+        access_key: WEB3FORMS_ACCESS_KEY,
+        preferredDate: form.preferredDate,
+        servicesPerformed: form.services.join(', '),
+        serviceType: form.serviceType,
+        signerFirstName: form.signerFirstName,
+        signerMiddleName: form.signerMiddleName,
+        signerLastName: form.signerLastName,
+        email: form.email,
+        phone: form.phone,
+        signerAddress: form.signerAddress,
+        signerAddress2: form.signerAddress2,
+        signerCity: form.signerCity,
+        signerState: form.signerState,
+        signerZip: form.signerZip,
+        idType: form.idType,
+        idNumber: form.idNumber,
+        idIssuedBy: form.idIssuedBy,
+        idDateIssued: form.idDateIssued,
+        idExpirationDate: form.idExpirationDate,
+        notes: form.notes,
+        hasSigner2: needsSigner2 ? 'Yes' : 'No',
+        paymentMethod: form.paymentMethod,
+        totalAmount: form.totalAmount,
+        payerName: form.payerName,
+        doc1Type: form.doc1Type,
+        doc1Date: form.doc1Date,
+        doc2Type: needDoc2 ? form.doc2Type : '',
+        doc2Date: needDoc2 ? form.doc2Date : '',
+        doc3Type: needDoc3 ? form.doc3Type : '',
+        doc3Date: needDoc3 ? form.doc3Date : '',
+      };
 
-      // ID files
-      form.idFrontFiles.forEach((f) => formData.append('idFront', f));
-      form.idBackFiles.forEach((f) => formData.append('idBack', f));
-
-      // Signer 2
-      formData.append('hasSigner2', needsSigner2 ? 'Yes' : 'No');
       if (needsSigner2) {
-        formData.append('signer2FirstName', form.signer2FirstName);
-        formData.append('signer2LastName', form.signer2LastName);
-        formData.append('signer2Phone', form.signer2Phone);
-        formData.append('signer2IdType', form.signer2IdType);
-        formData.append('signer2IdNumber', form.signer2IdNumber);
-        formData.append('signer2IdIssuedBy', form.signer2IdIssuedBy);
-        formData.append('signer2IdExpirationDate', form.signer2IdExpirationDate);
-        form.signer2IdFrontFiles.forEach((f) => formData.append('idFront_Signer2', f));
-        form.signer2IdBackFiles.forEach((f) => formData.append('idBack_Signer2', f));
+        payload.signer2FirstName = form.signer2FirstName;
+        payload.signer2LastName = form.signer2LastName;
+        payload.signer2Phone = form.signer2Phone;
+        payload.signer2IdType = form.signer2IdType;
+        payload.signer2IdNumber = form.signer2IdNumber;
+        payload.signer2IdIssuedBy = form.signer2IdIssuedBy;
+        payload.signer2IdExpirationDate = form.signer2IdExpirationDate;
       }
 
-      // Documents
-      formData.append('doc1Type', form.doc1Type);
-      formData.append('doc1Date', form.doc1Date);
-      if (needDoc2) {
-        formData.append('doc2Type', form.doc2Type);
-        formData.append('doc2Date', form.doc2Date);
+      // Convert files to base64 for JSON submission
+      const fileToBase64 = (file: File): Promise<string> =>
+        new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+
+      if (form.idFrontFiles.length) {
+        const encoded = await Promise.all(form.idFrontFiles.map(fileToBase64));
+        payload.idFrontFiles = encoded;
       }
-      if (needDoc3) {
-        formData.append('doc3Type', form.doc3Type);
-        formData.append('doc3Date', form.doc3Date);
+      if (form.idBackFiles.length) {
+        const encoded = await Promise.all(form.idBackFiles.map(fileToBase64));
+        payload.idBackFiles = encoded;
+      }
+      if (needsSigner2 && form.signer2IdFrontFiles.length) {
+        const encoded = await Promise.all(form.signer2IdFrontFiles.map(fileToBase64));
+        payload.signer2IdFrontFiles = encoded;
+      }
+      if (needsSigner2 && form.signer2IdBackFiles.length) {
+        const encoded = await Promise.all(form.signer2IdBackFiles.map(fileToBase64));
+        payload.signer2IdBackFiles = encoded;
       }
 
-      // Payment
-      formData.append('paymentMethod', form.paymentMethod);
-      formData.append('totalAmount', form.totalAmount);
-      formData.append('payerName', form.payerName);
-
-      // Signature
+      // Signature as base64
       const sigData = sigPadRef.current?.toDataURL();
-      if (sigData) formData.append('eSignature', sigData);
+      if (sigData) payload.eSignature = sigData;
 
-      // Submit via AJAX (no redirect)
-      const res = await fetch(`https://formspree.io/f/${ENDPOINT}`, {
+      // Submit to Web3Forms
+      const res = await fetch('https://api.web3forms.com/submit', {
         method: 'POST',
-        body: formData,
-        headers: { Accept: 'application/json' },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
         setSubmitted(true);
       } else {
         const data = await res.json().catch(() => ({}));
-        setSubmitError(data.errors?.[0]?.message || 'Submission failed. Try again.');
+        setSubmitError(data.message || 'Submission failed. Try again.');
       }
     } catch {
       setSubmitError('Network error. Check your connection and try again.');
@@ -329,7 +342,7 @@ export function ClientIntake() {
   }
 
   // ── Not configured ──
-  if (!ENDPOINT && step === 0) {
+  if (!WEB3FORMS_ACCESS_KEY && step === 0) {
     return (
       <div className="min-h-[100dvh] bg-background flex items-center justify-center p-6">
         <Alert>
