@@ -7,6 +7,7 @@ const PRECACHE_ASSETS = [
   '/favicon.png',
   '/icon-192.png',
   '/icon-512.png',
+  '/offline.html',
 ];
 
 self.addEventListener('install', event => {
@@ -58,7 +59,7 @@ self.addEventListener('fetch', event => {
         })
         .catch(async () => {
           const cached = await caches.match(request);
-          return cached || caches.match('/index.html') || new Response('Offline', { status: 503 });
+          return cached || caches.match('/index.html') || caches.match('/offline.html') || new Response('Offline', { status: 503 });
         })
     );
     return;
@@ -74,7 +75,7 @@ self.addEventListener('fetch', event => {
         return response;
       }).catch(() => null);
 
-      return cached || networkFetch || new Response('Offline', { status: 503 });
+      return cached || networkFetch || caches.match('/offline.html') || new Response('Offline', { status: 503 });
     })
   );
 });

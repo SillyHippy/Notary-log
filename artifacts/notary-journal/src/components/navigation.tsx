@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'wouter';
-import { LayoutDashboard, BookOpen, Plus, Settings, FileBarChart } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Plus, Settings, FileBarChart, Inbox } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function Navigation() {
@@ -8,6 +8,7 @@ export function Navigation() {
   const navItems = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/journal', label: 'Journal', icon: BookOpen },
+    { href: '/requests', label: 'Requests', icon: Inbox },
     { href: '/reports', label: 'Reports', icon: FileBarChart },
   ];
 
@@ -18,43 +19,49 @@ export function Navigation() {
   return (
     <>
       {/* Mobile Bottom Nav */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border pb-safe">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border pb-safe" aria-label="Main navigation">
         <div className="flex items-center justify-around h-16 px-2 relative">
-          <Link href="/" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors", location === '/' ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-dashboard">
-            <LayoutDashboard className="w-5 h-5 mb-1" />
+          <Link href="/" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location === '/' ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-dashboard" aria-label="Dashboard" aria-current={location === '/' ? 'page' : undefined}>
+            <LayoutDashboard className="w-5 h-5 mb-1" aria-hidden="true" />
             <span className="sr-only">Dashboard</span>
           </Link>
-          
-          <Link href="/journal" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors", location.startsWith('/journal') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-journal">
-            <BookOpen className="w-5 h-5 mb-1" />
+
+          <Link href="/journal" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location.startsWith('/journal') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-journal" aria-label="Journal" aria-current={location.startsWith('/journal') ? 'page' : undefined}>
+            <BookOpen className="w-5 h-5 mb-1" aria-hidden="true" />
             <span className="sr-only">Journal</span>
           </Link>
 
-          <Link href="/reports" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors", location.startsWith('/reports') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-reports">
-            <FileBarChart className="w-5 h-5 mb-1" />
+          <Link href="/requests" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location.startsWith('/requests') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-requests" aria-label="Client Requests" aria-current={location.startsWith('/requests') ? 'page' : undefined}>
+            <Inbox className="w-5 h-5 mb-1" aria-hidden="true" />
+            <span className="sr-only">Requests</span>
+          </Link>
+
+          <Link href="/reports" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location.startsWith('/reports') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-reports" aria-label="Reports" aria-current={location.startsWith('/reports') ? 'page' : undefined}>
+            <FileBarChart className="w-5 h-5 mb-1" aria-hidden="true" />
             <span className="sr-only">Reports</span>
           </Link>
 
-          <div className="flex-1 flex justify-center -mt-6">
-            <Link href="/entry/new" className="flex items-center justify-center w-14 h-14 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 active:translate-y-0" data-testid="link-nav-new-entry">
-              <Plus className="w-6 h-6" />
+          <Link href="/settings" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location.startsWith('/settings') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-settings" aria-label="Settings" aria-current={location.startsWith('/settings') ? 'page' : undefined}>
+            <Settings className="w-5 h-5 mb-1" aria-hidden="true" />
+            <span className="sr-only">Settings</span>
+          </Link>
+
+          {/* FAB for new entry — now 4th from right since we have 5 nav items */}
+          <div className="absolute -top-6 left-1/2 -translate-x-1/2">
+            <Link href="/entry/new" className="flex items-center justify-center w-14 h-14 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 active:translate-y-0 touch-target" data-testid="link-nav-new-entry" aria-label="New journal entry">
+              <Plus className="w-6 h-6" aria-hidden="true" />
               <span className="sr-only">New Entry</span>
             </Link>
           </div>
-          
-          <Link href="/settings" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors", location.startsWith('/settings') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-settings">
-            <Settings className="w-5 h-5 mb-1" />
-            <span className="sr-only">Settings</span>
-          </Link>
         </div>
-      </div>
+      </nav>
 
       {/* Desktop Sidebar */}
       <div className="hidden md:flex flex-col w-64 h-screen fixed left-0 top-0 border-r border-border bg-sidebar text-sidebar-foreground">
         <div className="p-6 border-b border-border">
           <h1 className="text-xl font-bold tracking-tight text-sidebar-primary">Notary Journal</h1>
         </div>
-        
+
         <div className="flex-1 py-6 px-4 flex flex-col gap-2">
           <div className="mb-6">
             <Link href="/entry/new" className="flex items-center justify-center gap-2 w-full bg-primary text-primary-foreground font-medium rounded-lg h-12 shadow-sm hover:opacity-90 transition-opacity" data-testid="link-nav-new-entry-desktop">
@@ -62,10 +69,10 @@ export function Navigation() {
               New Entry
             </Link>
           </div>
-          
+
           <div className="space-y-1">
             {navItems.map(item => (
-              <Link 
+              <Link
                 key={item.href}
                 href={item.href}
                 className={cn(
@@ -81,10 +88,10 @@ export function Navigation() {
               </Link>
             ))}
           </div>
-          
+
           <div className="mt-auto space-y-1">
             {secondaryNavItems.map(item => (
-              <Link 
+              <Link
                 key={item.href}
                 href={item.href}
                 className={cn(

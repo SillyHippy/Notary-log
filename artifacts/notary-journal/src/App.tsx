@@ -18,6 +18,8 @@ const EditEntry = lazy(() => import("@/pages/edit-entry").then(m => ({ default: 
 const Settings = lazy(() => import("@/pages/settings").then(m => ({ default: m.Settings })));
 const Reports = lazy(() => import("@/pages/reports").then(m => ({ default: m.Reports })));
 const NotFound = lazy(() => import("@/pages/not-found"));
+const ClientIntake = lazy(() => import("@/pages/client-intake").then(m => ({ default: m.ClientIntake })));
+const ClientRequests = lazy(() => import("@/pages/client-requests").then(m => ({ default: m.ClientRequests })));
 import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked } from "@/lib/db";
 
 const queryClient = new QueryClient();
@@ -41,6 +43,7 @@ function Router() {
           <Route path="/entry/new" component={NewEntry} />
           <Route path="/entry/:id/edit" component={EditEntry} />
           <Route path="/entry/:id" component={EntryDetail} />
+          <Route path="/requests" component={ClientRequests} />
           <Route path="/reports" component={Reports} />
           <Route path="/settings" component={Settings} />
           <Route component={NotFound} />
@@ -155,7 +158,13 @@ function App() {
         )}
         {mode === 'unlocked' && (
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-            <Router />
+            {/* Public intake form — no auth required */}
+            <Switch>
+              <Route path="/intake" component={ClientIntake} />
+              <Route>
+                <Router />
+              </Route>
+            </Switch>
           </WouterRouter>
         )}
         <Toaster />

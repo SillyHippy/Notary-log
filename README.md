@@ -426,6 +426,77 @@ If you have multiple deployment URLs (Replit + Netlify + Cloudflare + a custom d
 
 ---
 
+## Client Intake Form (optional)
+
+Share a link with clients so they can submit their information *before* the appointment. When they submit, you get an email and the request appears in your app's **Requests** tab — tap "Start Entry" to auto-fill a new journal entry with all their data and ID photos.
+
+### How it works
+
+```
+Client opens your intake link on their phone
+    ↓
+Fills form (name, phone, ID details, uploads ID photos, e-signs)
+    ↓
+Submits → Formspree emails you everything
+    ↓
+You open the app → Requests tab shows the pending request
+    ↓
+Tap "Start Entry" → New Entry opens with everything prefilled
+    ↓
+Review, complete, save to your encrypted journal
+```
+
+### Setup (2 minutes, no tech skills needed)
+
+#### Step 1: Create your Formspree form
+
+1. Go to [formspree.io](https://formspree.io) and create a free account
+2. Click **"New Form"** → name it "Notary Intake" → create
+3. Copy the **Form Endpoint** — it looks like `xnqkvpzy` (just the ID part, not the full URL)
+
+#### Step 2: Get your API token
+
+1. In your Formspree dashboard, click on your form
+2. Go to **Settings → API** (in the left sidebar)
+3. Click **"Generate Token"** → copy the token
+
+#### Step 3: Configure the app
+
+1. Open your Notary Journal app
+2. Go to **Settings → Client Intake Form**
+3. Paste your **Form Endpoint** (just the ID) into the first field
+4. Paste your **API Token** into the second field
+5. Click **"Save & Test Connection"**
+
+#### Step 4: Share with clients
+
+1. In Settings, click **"Copy Intake Link"**
+2. Send the link to clients via text, email, or QR code
+3. When they submit, you'll get an email and see the request in the **Requests** tab
+
+> **Free tier:** 50 submissions per month (about 1-2 per day for most notaries). If you need more, Formspree Pro is $10/mo for unlimited.
+
+### What clients see
+
+The intake form is mobile-friendly and works on any device. Clients fill out:
+
+- **Notarization details** — preferred date, type of notarial act
+- **Signer info** — name, phone, address
+- **ID information** — type, number, issuing state, expiration
+- **ID uploads** — front and back photos (camera or file upload)
+- **Additional signer** — optional, same fields
+- **Documents** — what needs notarizing
+- **Payment** — method and amount
+- **E-signature** — drawn on screen with confirmation
+
+### What you get
+
+**Email notification** with all the client's data and download links for their ID photos.
+
+**In-app request** in the **Requests** tab. Tap "Start Entry" to open a prefilled journal entry.
+
+---
+
 ## Post-deploy gotchas
 
 ### "It works in my Chrome tab but not in Incognito or other browsers"

@@ -3,7 +3,7 @@ import { Link } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint } from 'lucide-react';
+import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -47,6 +47,7 @@ import {
   resolveBackupPanelVisibility,
   saveBackupPanelVisibility,
 } from '@/lib/backup-visibility';
+import { testFormspreeConnection } from '@/lib/formspree-api';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -155,6 +156,12 @@ export function Settings() {
   const [selectedZoFile, setSelectedZoFile] = useState<ZoBackupFile | null>(null);
   const [isZoRestoring, setIsZoRestoring] = useState(false);
 
+  // Client Intake state
+  const [intakeFormId, setIntakeFormId] = useState('');
+  const [intakeApiToken, setIntakeApiToken] = useState('');
+  const [intakeSaving, setIntakeSaving] = useState(false);
+  const [intakeTestResult, setIntakeTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsSchema),
     defaultValues: {
@@ -203,6 +210,8 @@ export function Settings() {
       setGoogleEmail(settings.googleEmail ?? '');
       setBackupReminderDays(settings.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS);
       setManualBackupOnly(!!settings.manualBackupOnly);
+      setIntakeFormId((settings as unknown as Record<string, unknown>).intakeFormId as string ?? '');
+      setIntakeApiToken((settings as unknown as Record<string, unknown>).intakeApiToken as string ?? '');
       const hasZoConfig = !!(
         localStorage.getItem(ZO_BACKUP_URL_KEY) ||
         localStorage.getItem(ZO_BACKUP_KEY_KEY) ||
@@ -921,6 +930,30 @@ export function Settings() {
 
   const configured = isGdriveConfigured();
 
+  const handleSaveIntakeSettings = async () => {
+    setIntakeSaving(true);
+    setIntakeTestResult(null);
+    try {
+      const current = await getSettings();
+      await saveSettings({ ...current, intakeFormId, intakeApiToken } as NotarySettings);
+      const result = await testFormspreeConnection();
+      setIntakeTestResult(result);
+    } catch (err) {
+      setIntakeTestResult({ ok: false, message: err instanceof Error ? err.message : 'Failed to save.' });
+    }
+    setIntakeSaving(false);
+  };
+
+  const handleCopyIntakeLink = async () => {
+    const url = `${window.location.origin}/intake`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({ title: 'Link copied', description: 'Share this link with your clients.' });
+    } catch {
+      toast({ title: 'Copy failed', description: `Your intake link is: ${url}`, variant: 'destructive' });
+    }
+  };
+
   return (
     <div className="p-6 lg:p-8 max-w-4xl mx-auto space-y-8">
       <div className="flex items-start justify-between gap-4">
@@ -1297,6 +1330,95 @@ export function Settings() {
           </Card>
         </form>
       </Form>
+
+      {/* ── Client Intake Form ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Client Intake Form</CardTitle>
+          <CardDescription>
+            Share a link with clients so they can submit their info before the appointment.
+            Requires a free <a href="https://formspree.io" target="_blank" rel="noreferrer" className="underline">Formspree</a> account.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">
+            <p className="font-medium">Quick Setup (2 minutes):</p>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+              <li>Create a free form at <a href="https://formspree.io" target="_blank" rel="noreferrer" className="underline text-foreground">formspree.io</a></li>
+              <li>Copy your <strong>Form Endpoint</strong> (looks like <code className="text-xs bg-muted px-1 rounded">xnqkvpzy</code>)</li>
+              <li>Go to <strong>Settings → API</strong> in Formspree → generate a token</li>
+              <li>Paste both below</li>
+            </ol>
+          </div>
+
+          <div>
+            <Label htmlFor="intake-endpoint">Formspree Form Endpoint *</Label>
+            <Input
+              id="intake-endpoint"
+              placeholder="e.g. xnqkvpzy"
+              value={intakeFormId}
+              onChange={(e) => setIntakeFormId(e.target.value)}
+              className="mt-1"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Just the ID part — we'll build the URL automatically
+            </p>
+          </div>
+
+          <div>
+            <Label htmlFor="intake-token">Formspree API Token *</Label>
+            <Input
+              id="intake-token"
+              type="password"
+              placeholder="Paste your API token here"
+              value={intakeApiToken}
+              onChange={(e) => setIntakeApiToken(e.target.value)}
+              className="mt-1"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Found in Formspree dashboard → Settings → API → Generate Token
+            </p>
+          </div>
+
+          {intakeTestResult && (
+            <Alert variant={intakeTestResult.ok ? 'default' : 'destructive'} className={intakeTestResult.ok ? 'border-green-500 bg-green-50 dark:bg-green-950/30' : ''}>
+              {intakeTestResult.ok ? (
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+              ) : (
+                <AlertCircle className="h-4 w-4" />
+              )}
+              <AlertDescription>{intakeTestResult.message}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={handleSaveIntakeSettings}
+              disabled={intakeSaving}
+              className="gap-2"
+            >
+              {intakeSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Save &amp; Test Connection
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleCopyIntakeLink}
+              disabled={!intakeFormId}
+              className="gap-2"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Copy Intake Link
+            </Button>
+          </div>
+
+          {intakeFormId && (
+            <div className="rounded-lg border bg-muted/50 p-3">
+              <p className="text-xs text-muted-foreground mb-1">Your intake link:</p>
+              <p className="text-sm font-mono break-all">{window.location.origin}/intake</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Default Fees Card ─────────────────────────────────────────── */}
       <Card>

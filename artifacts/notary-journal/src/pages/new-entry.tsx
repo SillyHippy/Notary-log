@@ -6,7 +6,7 @@ import * as z from 'zod';
 import SignaturePad from 'signature_pad';
 import { BrowserPDF417Reader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
-import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen } from 'lucide-react';
+import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen, Plus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
+import { consumeIntakePrefill } from '@/lib/intake-prefill';
 import { Checkbox } from '@/components/ui/checkbox';
 
 import { createEntry, completeEntry, getSettings, getAllEntries, shouldRecordSignerDOB, shouldRecordSignerIdNumber, type JournalEntry, type NotarySettings } from '@/lib/db';
@@ -52,6 +53,7 @@ const entrySchema = z
     notarialActType: z.enum(['acknowledgment', 'jurat', 'copy_certification', 'signature_witnessing', 'other']),
     feeType: z.enum(FEE_TYPES),
     stampCount: z.coerce.number().min(1).default(1),
+    additionalFee: z.coerce.number().min(0).default(0),
     feeCharged: z.coerce.number().min(0),
     feeWaived: z.boolean().default(false),
     locationCity: z.string().min(1, 'Location city is required'),
@@ -158,6 +160,8 @@ export function NewEntry() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [locationDetected, setLocationDetected] = useState(false);
+  // After completing an entry, offer to add another signer on the same document.
+  const [lastCompletedId, setLastCompletedId] = useState<number | null>(null);
 
   const liveVideoRef = useRef<HTMLVideoElement>(null);
   const photoVideoRef = useRef<HTMLVideoElement>(null);
@@ -186,6 +190,7 @@ export function NewEntry() {
       notarialActType: 'acknowledgment',
       feeType: 'Acknowledgment',
       stampCount: 1,
+      additionalFee: 0,
       feeCharged: 0,
       feeWaived: false,
       locationCity: '',
@@ -254,6 +259,7 @@ export function NewEntry() {
                 form.setValue('feeCharged', prefill.feeCharged / 100); // cents → dollars
                 isFeeAppDerivedRef.current = false;
               }
+              if (prefill.additionalFee !== undefined) form.setValue('additionalFee', prefill.additionalFee);
               if (prefill.feeWaived !== undefined) form.setValue('feeWaived', prefill.feeWaived);
               // Location fields (override settings defaults)
               if (prefill.locationCity) form.setValue('locationCity', prefill.locationCity);
@@ -266,6 +272,55 @@ export function NewEntry() {
             }
           } catch {
             // Corrupt prefill — ignore and start fresh.
+          }
+
+          // Also check for intake prefill (from Client Requests → Start Entry)
+          try {
+            const intake = consumeIntakePrefill();
+            if (intake) {
+              // Primary signer
+              if (intake.signerFirstName) form.setValue('signerFullName', `${intake.signerFirstName} ${intake.signerMiddleName} ${intake.signerLastName}`.trim());
+              if (intake.phone) form.setValue('signerPhone', intake.phone);
+              if (intake.address) form.setValue('signerAddress', intake.address);
+              if (intake.city) form.setValue('signerCity', intake.city);
+              if (intake.state) form.setValue('signerState', intake.state);
+              if (intake.notes) form.setValue('notes', intake.notes);
+              // ID info
+              if (intake.idType) form.setValue('idType', intake.idType.toLowerCase().replace(/'/g, '').replace(/ /g, '_') as never);
+              if (intake.idNumber) form.setValue('idNumber', intake.idNumber);
+              if (intake.idIssuedBy) form.setValue('idIssuingState', intake.idIssuedBy);
+              if (intake.idExpirationDate) form.setValue('idExpirationDate', intake.idExpirationDate);
+              // ID images
+              if (intake.idFrontFiles?.length) setIdFrontImage(intake.idFrontFiles[0]);
+              if (intake.idBackFiles?.length) setIdBackImage(intake.idBackFiles[0]);
+              // Date
+              if (intake.preferredDate) form.setValue('documentDate', intake.preferredDate);
+              // Services → notarial act type (use first selected)
+              if (intake.servicesPerformed?.length) {
+                const first = intake.servicesPerformed[0].toLowerCase().replace(/ /g, '_');
+                const actMap: Record<string, JournalEntry['notarialActType']> = {
+                  'acknowledgement': 'acknowledgment',
+                  'jurat': 'jurat',
+                  'copy_certification': 'copy_certification',
+                  'signature_witnessing': 'signature_witnessing',
+                  'oath': 'other',
+                  'other': 'other',
+                };
+                form.setValue('notarialActType', actMap[first] ?? 'acknowledgment');
+              }
+              // Payment info → total amount
+              if (intake.totalAmount) {
+                form.setValue('feeCharged', parseFloat(intake.totalAmount) || 0);
+                isFeeAppDerivedRef.current = false;
+              }
+
+              toast({
+                title: 'Request loaded',
+                description: `Pre-filled from ${intake.signerFirstName || 'client'}'s submission.`,
+              });
+            }
+          } catch {
+            // Corrupt intake data — ignore
           }
 
         }
@@ -283,6 +338,16 @@ export function NewEntry() {
     const sub = form.watch((value, { name }) => {
       if (!appSettings) return;
 
+      // Helper: recompute total = stamp fee + additional fee
+      const recompute = (count?: number, addFee?: number) => {
+        if (isFeeAppDerivedRef.current && !value.feeWaived) {
+          const c = count ?? Number(value.stampCount) ?? 1;
+          const a = addFee ?? Number(value.additionalFee) ?? 0;
+          const stampCents = computeStampFeeCents(c, appSettings);
+          form.setValue('feeCharged', (stampCents / 100) + a);
+        }
+      };
+
       // User picked a different notarial act → mirror its fee category and
       // attempt to auto-fill the dollar amount.
       if (name === 'notarialActType') {
@@ -290,10 +355,7 @@ export function NewEntry() {
         if (!act) return;
         const mappedFeeType = ACT_TYPE_TO_FEE_TYPE[act];
         form.setValue('feeType', mappedFeeType);
-        if (isFeeAppDerivedRef.current && !value.feeWaived) {
-          const count = Number(value.stampCount) || 1;
-          form.setValue('feeCharged', computeStampFeeCents(count, appSettings) / 100);
-        }
+        recompute();
       }
 
       // User picked a different fee category directly.
@@ -306,13 +368,22 @@ export function NewEntry() {
           isAppDerived: isFeeAppDerivedRef.current,
           settings: appSettings,
         });
-        if (next !== null) form.setValue('feeCharged', next / 100);
+        if (next !== null) {
+          const addFee = Number(value.additionalFee) || 0;
+          form.setValue('feeCharged', (next / 100) + addFee);
+        }
       }
 
-      if (name === 'stampCount' && isFeeAppDerivedRef.current && !value.feeWaived) {
+      if (name === 'stampCount') {
+        recompute(Number(value.stampCount));
+      }
+
+      // User changed additional fee (travel, mobile, etc.) → add to total
+      if (name === 'additionalFee' && !value.feeWaived) {
+        const addFee = Number(value.additionalFee) || 0;
         const count = Number(value.stampCount) || 1;
-        const cents = computeStampFeeCents(count, appSettings);
-        form.setValue('feeCharged', cents / 100);
+        const stampCents = computeStampFeeCents(count, appSettings);
+        form.setValue('feeCharged', (stampCents / 100) + addFee);
       }
 
       // Toggling Waive off restores app-derived behaviour for the next change.
@@ -849,6 +920,7 @@ export function NewEntry() {
             notarialActType: d.notarialActType,
             feeType: d.feeType,
             feeCharged: feeCents, // store in cents (matches DB)
+            additionalFee: d.additionalFee,
             feeWaived: d.feeWaived,
             locationCity: d.locationCity,
             locationState: d.locationState,
@@ -857,7 +929,13 @@ export function NewEntry() {
         } catch { /* ignore */ }
       }
 
-      setLocation(`/entry/${id}`);
+      // For completed entries, show the "add another signer" prompt instead
+      // of auto-redirecting. For drafts, go straight to the entry.
+      if (status === 'completed') {
+        setLastCompletedId(id);
+      } else {
+        setLocation(`/entry/${id}`);
+      }
     } catch (err) {
       console.error('Save entry failed', err);
       const rawMsg = err instanceof Error ? err.message : String(err);
@@ -1116,16 +1194,17 @@ export function NewEntry() {
                 <CheckCircle2 className="w-12 h-12 text-green-600 dark:text-green-400 mx-auto mb-3" />
                 <h2 className="text-xl font-bold mb-1 text-green-800 dark:text-green-300">Barcode Scanned!</h2>
                 <p className="text-green-700 dark:text-green-400 text-sm mb-4">
-                  License data was extracted.
-                  {appSettings?.requireIdFrontPhoto && !idFrontImage
-                    ? ' Capture the front of the ID before continuing.'
-                    : ' Review and correct the fields on the next step.'}
+                  License data was extracted. Review and correct the fields on the next step.
                 </p>
                 <div className="flex flex-col items-center gap-3">
+                  {/* Capture ID photo — always available, not just when settings require it */}
+                  <Button onClick={startPhotoCapture} variant="outline" className="gap-2">
+                    <Camera className="w-4 h-4" /> Also Capture ID Photo
+                  </Button>
                   {appSettings?.requireIdFrontPhoto && !idFrontImage && (
-                    <Button onClick={startPhotoCapture} className="gap-2">
-                      <Camera className="w-4 h-4" /> Capture front of ID
-                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      ⚠️ Your settings require a front-of-ID photo.
+                    </p>
                   )}
                   <div className="flex justify-center gap-3">
                     <Button
@@ -1431,56 +1510,98 @@ export function NewEntry() {
                         </FormItem>
                       )} />
 
-                      <FormField control={form.control} name="stampCount" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel># of stamps (notarial acts)</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              min={1}
-                              step={1}
-                              {...field}
-                              data-testid="input-stamp-count"
-                            />
-                          </FormControl>
-                          <FormDescription className="text-xs">
+                      <div className="space-y-3 md:col-span-2">
+                        {/* Stamp count input */}
+                        <FormField control={form.control} name="stampCount" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel># of Stamps (Notarial Acts)</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                min={1}
+                                step={1}
+                                {...field}
+                                data-testid="input-stamp-count"
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              Each notarial act requires one stamp. The per-stamp rate is set in Settings.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+
+                        {/* Stamp fee breakdown — read-only, computed from settings */}
+                        <div className="rounded-lg border bg-muted/30 p-3">
+                          <p className="text-xs font-medium text-muted-foreground mb-1">Stamp Fee</p>
+                          <div className="text-sm font-mono">
                             {(() => {
                               const count = Number(form.watch('stampCount')) || 1;
                               const per = getStampFeeCents(appSettings ?? undefined);
                               const total = computeStampFeeCents(count, appSettings ?? undefined);
-                              return `${count} × $${(per / 100).toFixed(2)} = $${(total / 100).toFixed(2)} (per stamp fee from Settings)`;
+                              return (
+                                <span className="text-foreground">
+                                  {count} × ${(per / 100).toFixed(2)} = ${(total / 100).toFixed(2)}
+                                </span>
+                              );
                             })()}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            Per-stamp rate from Settings · change stamp count above
+                          </p>
+                        </div>
 
-                      <FormField control={form.control} name="feeCharged" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Fee Charged ($)</FormLabel>
-                          <div className="flex gap-2">
+                        {/* Additional fees — travel, mobile, etc. */}
+                        <FormField control={form.control} name="additionalFee" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Additional Fees ($) — travel, mobile, etc.</FormLabel>
                             <FormControl>
                               <Input
                                 type="number"
                                 step="0.01"
                                 min="0"
+                                placeholder="0.00"
                                 {...field}
                                 disabled={form.watch('feeWaived')}
-                                value={form.watch('feeWaived') ? 0 : field.value}
-                                data-testid="input-fee-charged"
                                 onChange={(e) => {
-                                  // Any keystroke from the user is treated as
-                                  // a manual override; stop auto-filling on
-                                  // subsequent act/fee-type changes.
                                   isFeeAppDerivedRef.current = false;
                                   field.onChange(e);
                                 }}
                               />
                             </FormControl>
-                            <Button 
-                              type="button" 
-                              variant={form.watch('feeWaived') ? 'default' : 'outline'} 
-                              onClick={() => {
+                            <FormDescription className="text-xs">
+                              Any extra charges beyond the per-stamp notarial fee.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+
+                        {/* Total fee — auto-computed, manual override possible */}
+                        <FormField control={form.control} name="feeCharged" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Total Fee Charged ($)</FormLabel>
+                            <div className="flex gap-2">
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  {...field}
+                                  disabled={form.watch('feeWaived')}
+                                  value={form.watch('feeWaived') ? 0 : field.value}
+                                  data-testid="input-fee-charged"
+                                  className="font-bold text-base"
+                                  onChange={(e) => {
+                                    // Manual override — stop auto-filling
+                                    isFeeAppDerivedRef.current = false;
+                                    field.onChange(e);
+                                  }}
+                                />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                variant={form.watch('feeWaived') ? 'default' : 'outline'}
+                                onClick={() => {
                                 const isWaived = !form.getValues('feeWaived');
                                 form.setValue('feeWaived', isWaived);
                                 if (isWaived) {
@@ -1510,7 +1631,8 @@ export function NewEntry() {
                           <FormMessage />
                         </FormItem>
                       )} />
-                      
+                      </div>
+
                       <FormField control={form.control} name="notes" render={({ field }) => (
                         <FormItem className="md:col-span-2 mt-2">
                           <FormLabel>Additional Notes</FormLabel>
@@ -1600,6 +1722,17 @@ export function NewEntry() {
                   <div>
                     <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Location:</span> <span className="col-span-2">{form.getValues('locationCity')}, {form.getValues('locationState')}</span></div>
                     <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Fee:</span> <span className="col-span-2 font-medium">{form.getValues('feeWaived') ? 'Waived' : `$${Number(form.getValues('feeCharged')).toFixed(2)}`}</span></div>
+                    {!form.getValues('feeWaived') && (Number(form.getValues('additionalFee')) || 0) > 0 && (
+                      <div className="grid grid-cols-3 gap-1 text-xs text-muted-foreground mt-1">
+                        <span></span>
+                        <span className="col-span-2">
+                          Stamp: ${(() => {
+                            const c = Number(form.getValues('stampCount')) || 1;
+                            return (computeStampFeeCents(c, appSettings ?? undefined) / 100).toFixed(2);
+                          })()} · Additional: ${Number(form.getValues('additionalFee')).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1657,6 +1790,55 @@ export function NewEntry() {
           )}
         </div>
       </div>
+
+      {/* Post-completion: "Add Another Signer" prompt */}
+      {lastCompletedId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Add another signer">
+          <div className="w-full max-w-sm rounded-xl border bg-card p-6 shadow-xl">
+            <div className="text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
+                <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
+              </div>
+              <h3 className="text-lg font-semibold">Entry Saved</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Add another signer to this same document?
+              </p>
+            </div>
+            <div className="mt-5 flex flex-col gap-2">
+              <Button
+                onClick={() => {
+                  setLastCompletedId(null);
+                  setLocation('/entry/new');
+                }}
+                className="w-full"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Another Signer
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setLastCompletedId(null);
+                  setLocation(`/entry/${lastCompletedId}`);
+                }}
+                className="w-full"
+              >
+                View Entry
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setLastCompletedId(null);
+                  setLocation('/journal');
+                }}
+                className="w-full text-muted-foreground"
+              >
+                Done
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

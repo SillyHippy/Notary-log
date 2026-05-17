@@ -142,9 +142,9 @@ export function rollupYear(
     if (e.status !== 'completed' && e.status !== 'amended') continue;
     const d = new Date(e.createdAt);
     if (Number.isNaN(d.getTime())) continue;
-    if (d.getFullYear() !== year) continue;
+    if (d.getUTCFullYear() !== year) continue;
 
-    applyEntry(monthly[d.getMonth()], e, settings);
+    applyEntry(monthly[d.getUTCMonth()], e, settings);
     applyEntry(totals, e, settings);
 
     const ft = resolveFeeType(e);
@@ -189,7 +189,7 @@ export function availableReportYears(entries: JournalEntry[]): number[] {
   for (const e of entries) {
     if (e.status !== 'completed' && e.status !== 'amended') continue;
     const d = new Date(e.createdAt);
-    if (!Number.isNaN(d.getTime())) years.add(d.getFullYear());
+    if (!Number.isNaN(d.getTime())) years.add(d.getUTCFullYear());
   }
   if (years.size === 0) years.add(new Date().getFullYear());
   return [...years].sort((a, b) => b - a);
