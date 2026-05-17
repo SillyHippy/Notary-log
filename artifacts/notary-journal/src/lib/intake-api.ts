@@ -3,11 +3,33 @@
  *
  * The server stores submissions received from Web3Forms webhooks.
  * This client lists them and fetches individual submissions for prefill.
+ * Every request must include ?access_key=<Web3Forms Access Key> for multi-user isolation.
  */
 
 import { getSettings } from '@/lib/db';
 
 const INTAKE_BASE = '/api/intake';
+
+/** Retrieve the Web3Forms access key from settings (IndexedDB), falling back to localStorage. */
+async function getWeb3FormsKey(): Promise<string | null> {
+  // Try IndexedDB settings first
+  try {
+    const settings = await getSettings();
+    if (settings.web3formsKey) return settings.web3formsKey;
+  } catch {
+    // fall through
+  }
+  // Fallback: localStorage (for tests or manual override)
+  return localStorage.getItem('web3forms_key');
+}
+
+/** Build the base URL with the access_key query parameter. */
+async function getIntakeUrl(path: string): Promise<string> {
+  const key = await getWeb3FormsKey();
+  if (!key) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}access_key=${encodeURIComponent(key)}`;
+}
 
 /** Raw submission stored on the server */
 export interface IntakeSubmission {
@@ -74,23 +96,31 @@ async function getBackupKey(): Promise<string | null> {
   return localStorage.getItem('zo_backup_key');
 }
 
-/** Build auth headers — empty since intake API is standalone (no auth required) */
+/** Build auth headers — access_key is now in the URL, so headers stay empty */
 async function authHeaders(): Promise<HeadersInit> {
   return {};
 }
 
-/** List all intake submissions — no auth required */
+/** List all intake submissions — requires access_key */
 export async function listSubmissions(): Promise<IntakeSubmission[]> {
-  const res = await fetch(INTAKE_BASE);
-  if (!res.ok) throw new Error(`Intake API error: ${res.status}`);
+  const url = await getIntakeUrl(INTAKE_BASE);
+  const res = await fetch(url);
+  if (!res.ok) {
+    if (res.status === 401) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
+    throw new Error(`Intake API error: ${res.status}`);
+  }
   const json = await res.json();
   return json.files || [];
 }
 
-/** Fetch a single submission by filename — no auth required */
+/** Fetch a single submission by filename — requires access_key */
 export async function getSubmission(fileName: string): Promise<IntakeRequest> {
-  const res = await fetch(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}`);
-  if (!res.ok) throw new Error(`Intake API error: ${res.status}`);
+  const url = await getIntakeUrl(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}`);
+  const res = await fetch(url);
+  if (!res.ok) {
+    if (res.status === 401) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
+    throw new Error(`Intake API error: ${res.status}`);
+  }
   const raw = await res.json();
   return normalizeSubmission(raw, fileName);
 }
@@ -106,13 +136,17 @@ export async function markSubmissionRead(fileName: string): Promise<void> {
   }
 }
 
-/** Delete a submission from the intake store */
+/** Delete a submission from the intake store — requires access_key */
 export async function deleteSubmission(fileName: string): Promise<void> {
-  const res = await fetch(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}&_method=DELETE`, {
+  const url = await getIntakeUrl(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}&_method=DELETE`);
+  const res = await fetch(url, {
     method: 'DELETE',
     headers: await authHeaders(),
   });
-  if (!res.ok) throw new Error(`Failed to delete: ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 401) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
+    throw new Error(`Failed to delete: ${res.status}`);
+  }
 }
 
 /** Check if a submission has been read */
@@ -183,11 +217,13 @@ function normalizeSubmission(raw: Record<string, unknown>, fileName: string): In
   };
 }
 
-/** Test the intake connection (validates server reachability — no auth needed) */
+/** Test the intake connection — validates server reachability and key validity */
 export async function testIntakeConnection(): Promise<{ ok: boolean; message: string }> {
   try {
-    const res = await fetch(INTAKE_BASE);
+    const url = await getIntakeUrl(INTAKE_BASE);
+    const res = await fetch(url);
     if (res.ok) return { ok: true, message: 'Connected to intake endpoint successfully.' };
+    if (res.status === 401) return { ok: false, message: 'Intake key not configured or invalid. Please add your Web3Forms key in Settings.' };
     return { ok: false, message: `Intake API error: ${res.status}` };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Connection failed.' };

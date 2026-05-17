@@ -416,6 +416,17 @@ Client opens your intake link on their phone
 You see it in the app -> Requests tab -> "Start Entry" -> Prefilled journal entry
 ```
 
+### Platform Support
+
+| Platform | Form | Email (Web3Forms) | Pending Queue | Cost |
+|----------|------|-------------------|---------------|------|
+| **Zo Computer** | Full support (auto) | Yes | Yes (server auto-provisions) | $0 |
+| **Cloudflare Workers** | Full support (auto) | Yes | Yes (auto-provisions KV via Wrangler) | $0 |
+| **Netlify** | Full support (auto) | Yes | Yes (auto-provisions Blobs via Functions) | $0 |
+| **Hostinger / Shared Hosting** | Works | Yes | **Not available** (no server) | $0 |
+
+All server-side options run on free-tier infrastructure -- **$0 cost**.
+
 ### Step 1: Get your Web3Forms access key
 
 1. Go to [web3forms.com](https://web3forms.com)

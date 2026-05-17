@@ -51,7 +51,12 @@ export function ClientRequests() {
       setSubmissions(subs);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load';
-      setError(msg);
+      // Show a friendlier message when the key is not configured
+      if (msg.includes('Intake key not configured')) {
+        setError('Intake key not configured. Please add your Web3Forms key in Settings.');
+      } else {
+        setError(msg);
+      }
     }
     setLoading(false);
   }, []);

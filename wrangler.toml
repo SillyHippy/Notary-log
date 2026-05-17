@@ -2,6 +2,9 @@ name = "notary-log"
 main = "cloudflare/worker.ts"
 compatibility_date = "2024-04-05"
 
+[[kv_namespaces]]
+binding = "INTAKE_KV"
+
 [assets]
 directory = "artifacts/notary-journal/dist/public"
 binding = "ASSETS"
