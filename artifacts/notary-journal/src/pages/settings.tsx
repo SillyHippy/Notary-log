@@ -1391,9 +1391,12 @@ export function Settings() {
             <p className="font-medium">Quick Setup (1 minute):</p>
             <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
               <li>Go to <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline text-foreground">web3forms.com</a> → get your free access key</li>
-              <li>Paste it below → Save</li>
-              <li>In your Web3Forms dashboard, set the <strong>Webhook URL</strong> to: <code className="text-xs bg-muted px-1 rounded">{window.location.origin}/api/intake-webhook</code></li>
+              <li>Paste it below → Save & Test</li>
+              <li>Share the generated intake link with your clients</li>
             </ol>
+            <p className="text-xs text-muted-foreground mt-1">
+              Clients fill the form → you get an email via Web3Forms + the request appears in your Pending queue.
+            </p>
           </div>
 
           <div>
@@ -1444,7 +1447,7 @@ export function Settings() {
           {web3formsKey && (
             <div className="rounded-lg border bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground mb-1">Intake link (share with clients):</p>
-              <p className="text-sm font-mono break-all">{window.location.origin}/intake</p>
+              <p className="text-sm font-mono break-all">{window.location.origin}/intake?key={web3formsKey}</p>
             </div>
           )}
         </CardContent>
