@@ -73,6 +73,17 @@ async function handleIntake(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method === "GET") {
+    const file = url.searchParams.get("file");
+    if (file) {
+      // Return a single submission's contents
+      const kvKey = `user:${accessKey}:${file}`;
+      const raw = await env.INTAKE_KV.get(kvKey);
+      if (!raw) {
+        return jsonResponse(404, { error: "Submission not found" });
+      }
+      return jsonResponse(200, JSON.parse(raw));
+    }
+    // List all submissions for this user
     const list = await env.INTAKE_KV.list({ prefix: `user:${accessKey}:` });
     const files = list.keys.map((k) => ({
       name: k.name.replace(`user:${accessKey}:`, ""),
