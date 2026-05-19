@@ -310,12 +310,28 @@ export async function backupToDrive(entries: JournalEntry[], settings: NotarySet
   let latestFileId: string;
 
   if (cachedLatestId) {
-    latestFileId = await uploadMultipart(
-      token, 'PATCH',
-      `https://www.googleapis.com/upload/drive/v3/files/${cachedLatestId}?uploadType=multipart`,
-      { name: LATEST_FILE_NAME },
-      content,
-    );
+    try {
+      latestFileId = await uploadMultipart(
+        token, 'PATCH',
+        `https://www.googleapis.com/upload/drive/v3/files/${cachedLatestId}?uploadType=multipart`,
+        { name: LATEST_FILE_NAME },
+        content,
+      );
+    } catch (err) {
+      // If the cached file was deleted (404), clear the cache and create fresh
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('404') || message.includes('notFound')) {
+        localStorage.removeItem(LATEST_FILE_ID_KEY);
+        latestFileId = await uploadMultipart(
+          token, 'POST',
+          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+          { name: LATEST_FILE_NAME, parents: [folderId] },
+          content,
+        );
+      } else {
+        throw err;
+      }
+    }
   } else {
     // Fall back to name search on first run or after disconnect
     const foundId = await findFile(token, folderId, LATEST_FILE_NAME);

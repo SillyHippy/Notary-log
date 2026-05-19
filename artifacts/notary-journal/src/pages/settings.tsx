@@ -1442,15 +1442,9 @@ export function Settings() {
           </div>
 
           {web3formsKey && (
-            <div className="rounded-lg border bg-muted/50 p-3 space-y-2">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Intake link (share with clients):</p>
-                <p className="text-sm font-mono break-all">{window.location.origin}/intake</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Webhook URL (paste in Web3Forms dashboard):</p>
-                <p className="text-sm font-mono break-all">{window.location.origin}/api/intake-webhook</p>
-              </div>
+            <div className="rounded-lg border bg-muted/50 p-3">
+              <p className="text-xs text-muted-foreground mb-1">Intake link (share with clients):</p>
+              <p className="text-sm font-mono break-all">{window.location.origin}/intake</p>
             </div>
           )}
         </CardContent>

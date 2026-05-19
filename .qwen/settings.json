@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "WebFetch(usebasin.com)",
-      "WebFetch(help.formspree.io)"
+      "WebFetch(help.formspree.io)",
+      "Bash(npx *)"
     ]
   },
   "$version": 4

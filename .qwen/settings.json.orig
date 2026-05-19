@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(usebasin.com)"
+      "WebFetch(usebasin.com)",
+      "WebFetch(help.formspree.io)"
     ]
   },
   "$version": 4
