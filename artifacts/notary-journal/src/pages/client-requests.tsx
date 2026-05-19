@@ -34,13 +34,24 @@ export function ClientRequests() {
   const [error, setError] = React.useState<string | null>(null);
   const [expandedCards, setExpandedCards] = React.useState<Set<string>>(new Set());
   const [expandedData, setExpandedData] = React.useState<Record<string, IntakeRequest>>({});
+  const [expandedImage, setExpandedImage] = React.useState<string | null>(null);
 
-  const toggleCard = (name: string) => {
-    setExpandedCards(prev => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name); else next.add(name);
-      return next;
-    });
+  const toggleCard = async (name: string) => {
+    if (expandedCards.has(name)) {
+      setExpandedCards(prev => { const next = new Set(prev); next.delete(name); return next; });
+      return;
+    }
+    // Load full data when expanding for the first time
+    if (!expandedData[name]) {
+      try {
+        const full = await getSubmission(name);
+        setExpandedData(prev => ({ ...prev, [name]: full }));
+      } catch (err) {
+        toast({ title: 'Failed to load details', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+        return;
+      }
+    }
+    setExpandedCards(prev => { const next = new Set(prev); next.add(name); return next; });
   };
 
   const loadSubmissions = React.useCallback(async () => {
@@ -96,21 +107,7 @@ export function ClientRequests() {
   };
 
   const handleViewDetails = async (sub: IntakeSubmission) => {
-    if (expandedData[sub.name]) {
-      toggleCard(sub.name);
-      return;
-    }
-    try {
-      const full = await getSubmission(sub.name);
-      setExpandedData(prev => ({ ...prev, [sub.name]: full }));
-      toggleCard(sub.name);
-    } catch (err) {
-      toast({
-        title: 'Failed to load details',
-        description: err instanceof Error ? err.message : 'Unknown error',
-        variant: 'destructive',
-      });
-    }
+    await toggleCard(sub.name);
   };
 
   if (loading) {
@@ -172,7 +169,6 @@ export function ClientRequests() {
         {submissions.map((sub) => {
           const isExpanded = expandedCards.has(sub.name);
           const data = expandedData[sub.name];
-          const shortName = sub.name.replace('intake-', '').split('-').slice(0, 2).join('-');
 
           return (
             <Card key={sub.name}>
@@ -181,7 +177,9 @@ export function ClientRequests() {
                   <div className="flex items-center gap-2">
                     <User className="w-4 h-4 text-muted-foreground" />
                     <CardTitle className="text-sm font-semibold">
-                      {shortName}
+                      {data
+                        ? [data.signerFirstName, data.signerMiddleName, data.signerLastName].filter(Boolean).join(' ') || sub.name
+                        : sub.name}
                     </CardTitle>
                   </div>
                   <span className="text-xs text-muted-foreground">
@@ -249,7 +247,8 @@ export function ClientRequests() {
                                 <img
                                   src={data.idFrontImage}
                                   alt="ID Front"
-                                  className="w-32 h-20 object-cover rounded border"
+                                  className="w-32 h-20 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
+                                  onClick={() => setExpandedImage(data.idFrontImage!)}
                                 />
                               </div>
                             )}
@@ -259,7 +258,8 @@ export function ClientRequests() {
                                 <img
                                   src={data.idBackImage}
                                   alt="ID Back"
-                                  className="w-32 h-20 object-cover rounded border"
+                                  className="w-32 h-20 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
+                                  onClick={() => setExpandedImage(data.idBackImage!)}
                                 />
                               </div>
                             )}
@@ -365,6 +365,28 @@ export function ClientRequests() {
           );
         })}
       </div>
+
+      {/* Full-size image modal */}
+      {expandedImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setExpandedImage(null)}
+        >
+          <button
+            className="absolute top-4 right-4 text-white p-2 hover:bg-white/20 rounded-full"
+            onClick={() => setExpandedImage(null)}
+            aria-label="Close image"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={expandedImage}
+            alt="ID document"
+            className="max-w-full max-h-[90vh] object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

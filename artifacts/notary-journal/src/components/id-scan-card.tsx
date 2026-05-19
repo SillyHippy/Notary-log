@@ -70,6 +70,7 @@ export function IdScanCard({
   const [backImage, setBackImage] = useState<string | undefined>(initialBackImage);
   const [lastResult, setLastResult] = useState<ScanResultPayload | null>(null);
   const [liveScanActive, setLiveScanActive] = useState(false);
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
   const frontInputRef = useRef<HTMLInputElement>(null);
   const backInputRef = useRef<HTMLInputElement>(null);
@@ -511,7 +512,12 @@ export function IdScanCard({
               </p>
               {frontImage ? (
                 <div className="relative rounded-lg overflow-hidden border bg-black/5">
-                  <img src={frontImage} alt={isPassport ? 'Passport data page' : 'ID front'} className="w-full h-32 object-contain" />
+                  <img
+                    src={frontImage}
+                    alt={isPassport ? 'Passport data page' : 'ID front'}
+                    className="w-full h-32 object-contain cursor-pointer hover:opacity-80 transition-opacity"
+                    onClick={() => setExpandedImage(frontImage)}
+                  />
                 </div>
               ) : (
                 <div className="h-32 rounded-lg border-2 border-dashed border-border flex items-center justify-center text-xs text-muted-foreground">
@@ -548,7 +554,12 @@ export function IdScanCard({
                 </p>
                 {backImage ? (
                   <div className="relative rounded-lg overflow-hidden border bg-black/5">
-                    <img src={backImage} alt="ID back" className="w-full h-32 object-contain" />
+                    <img
+                      src={backImage}
+                      alt="ID back"
+                      className="w-full h-32 object-contain cursor-pointer hover:opacity-80 transition-opacity"
+                      onClick={() => setExpandedImage(backImage)}
+                    />
                   </div>
                 ) : (
                   <div className="h-32 rounded-lg border-2 border-dashed border-border flex items-center justify-center text-xs text-muted-foreground">
@@ -580,6 +591,28 @@ export function IdScanCard({
             )}
           </div>
         </CardContent>
+      )}
+
+      {/* Full-size image modal */}
+      {expandedImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setExpandedImage(null)}
+        >
+          <button
+            className="absolute top-4 right-4 text-white p-2 hover:bg-white/20 rounded-full"
+            onClick={() => setExpandedImage(null)}
+            aria-label="Close image"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={expandedImage}
+            alt="ID document"
+            className="max-w-full max-h-[90vh] object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </Card>
   );
