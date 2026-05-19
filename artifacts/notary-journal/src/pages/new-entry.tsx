@@ -619,6 +619,19 @@ export function NewEntry() {
   const runOcr = async (imageSrc: string): Promise<{ text: string; confidence: number }> => {
     toast({ title: 'Scanning...', description: 'Analyzing ID text via OCR. This may take a moment.' });
     const worker = await createWorker('eng');
+
+    // Tesseract config tuned for driver's license / ID card OCR:
+    //   PSM 6   = uniform block of text (good for the dense label/value layout)
+    //   Oem 1   = LSTM neural net only (best accuracy, no legacy fallback)
+    //   whitelist = uppercase letters, digits, common punctuation (no lowercase noise)
+    //   tessedit_preserve_min_wd_len = 1 (don't discard single-letter tokens like "A ST")
+    await worker.setParameters({
+      tessedit_pageseg_mode: 6 as never,
+      ocr_engine_mode: 1 as never,
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,;:#/-@',
+      tessedit_preserve_min_wd_len: 1,
+    });
+
     const { data } = await worker.recognize(imageSrc);
     await worker.terminate();
     return { text: data.text, confidence: data.confidence };
