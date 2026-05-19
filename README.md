@@ -57,53 +57,51 @@ Choose **one** option below. Each one produces a live URL you can open from any 
 Zo gives you a free computer with 100GB storage, one hosted service, and built-in backup. This is the easiest path because the backup API runs in the same service.
 
 **What you'll end up with:**
-- Public app URL: `https://notary-journal-{your-handle}.zocomputer.io`
-- Backup API: `https://notary-journal-{your-handle}.zocomputer.io/api/backup`
+- Public app URL: `https://notary-log-{your-handle}.zocomputer.io`
+- Backup API: `https://notary-log-{your-handle}.zocomputer.io/api/backup`
 - Backup files stored in: `Documents/Notary Journal/backups/`
 
 ### Step 1: Sign up
 
-Create a free Zo account using the project referral link:
-https://zo-computer.cello.so/XvrzHZZ53TV
+Create a free Zo account: https://zo-computer.cello.so/XvrzHZZ53TV
 
-### Step 2: Clone and build
+### Step 2: Deploy
 
-Open your Zo terminal and run these commands:
+Open your Zo terminal and run:
 
 ```bash
 git clone https://github.com/SillyHippy/Notary-log
 cd Notary-log
-bun install
-bun run build
+bun install && bun run build && bun run prod
 ```
 
-### Step 3: Publish
+That's it. Zo assigns the `PORT` automatically. The server starts, serves the built app, and exposes the backup API.
+
+### Step 3: Get your backup key
+
+The server prints a backup key when it starts. On Zo, this goes to the **service logs**, not the terminal. Retrieve it with:
 
 ```bash
-bun run prod
+zo logs --service notary-log
 ```
 
-The server (`server.ts`) starts automatically. It will print a **backup key** — save this somewhere safe. The server serves the built app from `artifacts/notary-journal/dist/public` and handles `/api/backup` for server-side backups.
-
-Zo listens on its `PORT` environment variable automatically. The service is public by default.
+Look for the line: `Zo Backup Key: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` — save this somewhere safe.
 
 ### Step 4: Verify
 
-Open the URL Zo shows you (should look like `https://notary-journal-{your-handle}.zocomputer.io`). Confirm you see the PIN setup screen.
+Open your Zo URL (e.g. `https://notary-log-{your-handle}.zocomputer.io`). Confirm you see the PIN setup screen.
 
 ### Step 5: Configure in-app Zo backup
 
-1. Open the app in your browser
-2. Go to **Settings > Backup & Restore**
-3. Turn on **Show Zo backup**
-4. Paste the backup API URL (your public URL + `/api/backup`)
-5. Paste the backup key printed when you ran `bun run prod`
-6. Click **Test Connection** — it should say success
-7. Click **Backup to Zo** to create your first backup
+1. Open the app → **Settings > Backup & Restore**
+2. Turn on **Show Zo backup**
+3. API URL: `https://notary-log-{your-handle}.zocomputer.io/api/backup`
+4. Paste the backup key from Step 3
+5. Click **Save** — you're done
 
 ### AI Deploy Prompt (optional)
 
-If you want Zo's AI agent to handle everything, paste this into Zo:
+If you want Zo's AI agent to handle everything, paste this into the Zo AI chat:
 
 ```
 Deploy the Notary Journal app for me on Zo using the free plan.
@@ -111,26 +109,28 @@ Deploy the Notary Journal app for me on Zo using the free plan.
 Use this repository:
 https://github.com/SillyHippy/Notary-log
 
-Please do all of this:
-
-1. Clone the repo.
-2. Use Bun.
-3. From the repo root, run: bun install && bun run build
+Do all of this:
+1. Clone the repo
+2. Use Bun
+3. From the repo root run: bun install && bun run build
 4. Publish with: bun run prod
-5. The production server is server.ts — it serves artifacts/notary-journal/dist/public and handles /api/backup.
-6. Make the site public.
-7. Store backup files in Documents/Notary Journal/backups/.
-8. Protect /api/backup with a generated backup key (print it when done).
-9. Add CORS headers for /api/backup (allow GET, POST, OPTIONS; allow Authorization and Content-Type headers).
-10. When finished, tell me: the public app URL, the backup API URL, and the backup key.
+5. The production server is server.ts — it serves artifacts/notary-journal/dist/public and handles /api/backup
+6. Make the site public
+7. Store backup files in Documents/Notary Journal/backups/
+8. Protect /api/backup with a generated backup key (print it when done)
+9. Add CORS headers for /api/backup
+10. When done, tell me: the public app URL, the backup API URL, and the backup key
 ```
 
-### Zo Limitations (good to know)
+Then retrieve your backup key from logs: `zo logs --service notary-log`
+
+### Zo Limitations
 
 - Free Zo computers can sleep when idle — the first request after sleeping may take a few seconds
-- Free accounts get one hosted service — that's all you need for this app
-- The app protects journal access with an in-app PIN, but the URL itself is public
+- Free accounts get one hosted service — that's all you need
+- The app URL is public, but journal data is protected by your in-app PIN
 - Zo snapshots protect the Zo computer state, NOT your browser's local data — always keep JSON backups
+- Backup files live at `~/Documents/Notary Journal/backups/` on the Zo machine
 
 ---
 
@@ -402,7 +402,7 @@ If you have multiple deployment URLs (e.g., a test deploy and a production deplo
 
 ## Client Intake Form (Optional)
 
-Let clients fill out their information before the appointment. When they submit, you get an email and the data appears in your app's **Requests** tab. Tap "Start Entry" to auto-fill a new journal entry.
+Let clients fill out their information before the appointment. When they submit, you get an email and the data appears in your app's **Requests** tab. Tap "Accept" to auto-fill a new journal entry.
 
 **Cost: $0. Uses [Web3Forms](https://web3forms.com) — free, no signup required.**
 
@@ -412,49 +412,29 @@ Let clients fill out their information before the appointment. When they submit,
 Client opens your intake link on their phone
     -> Fills form (name, ID details, uploads ID photos, e-signs)
     -> Submits -> You get an email via Web3Forms
-    -> Web3Forms sends data to your app's /api/intake-webhook endpoint
-You see it in the app -> Requests tab -> "Start Entry" -> Prefilled journal entry
+                -> The request appears in your app's Requests tab
+You tap "Accept" -> Prefilled journal entry is created
 ```
 
 ### Platform Support
 
-| Platform | Form | Email (Web3Forms) | Pending Queue | Cost |
-|----------|------|-------------------|---------------|------|
-| **Zo Computer** | Full support (auto) | Yes | Yes (server auto-provisions) | $0 |
-| **Cloudflare Workers** | Full support (auto) | Yes | Yes (auto-provisions KV via Wrangler) | $0 |
-| **Netlify** | Full support (auto) | Yes | Yes (auto-provisions Blobs via Functions) | $0 |
-| **Hostinger / Shared Hosting** | Works | Yes | **Not available** (no server) | $0 |
+| Platform | Email (Web3Forms) | Pending Queue | Cost |
+|----------|-------------------|---------------|------|
+| **Zo Computer** | Yes | Yes (built-in) | $0 |
+| **Cloudflare Workers/Pages** | Yes | Yes (KV namespace) | $0 |
+| **Netlify** | Yes | Yes | $0 |
+| **Hostinger / Shared Hosting** | Yes | No (no server) | $0 |
 
-All server-side options run on free-tier infrastructure -- **$0 cost**.
+### Setup (1 minute)
 
-### Step 1: Get your Web3Forms access key
+1. Go to [web3forms.com](https://web3forms.com) → get your free access key
+2. Open your Notary Journal app → **Settings > Client Intake Form**
+3. Paste your Web3Forms Access Key → click **Save**
+4. Copy the generated intake link and share it with clients
 
-1. Go to [web3forms.com](https://web3forms.com)
-2. Enter your email address
-3. Click "Get your Access Key"
-4. Copy the key from the email you receive
+That's it. No webhook configuration needed — the form handles both email and in-app queue automatically.
 
-### Step 2: Configure the app
-
-1. Open your Notary Journal app
-2. Go to **Settings > Client Intake Form**
-3. Paste your **Web3Forms Access Key**
-4. Click **Save & Test**
-
-### Step 3: Set the webhook URL in Web3Forms
-
-1. Go to your Web3Forms dashboard
-2. Find your form > click the **Webhooks** tab
-3. Add this webhook URL: `https://yoursite.com/api/intake-webhook`
-   (Replace `yoursite.com` with your actual deployed domain)
-
-### Step 4: Share with clients
-
-In Settings, click **Copy Intake Link** and send it to clients via text, email, or QR code.
-
-The copied link includes your unique key (e.g., `?key=86e34...`). This key is required for the form to work — it tells the system where to route submissions so they show up in your **Requests** tab. The key is safe to share; it's a public form identifier, not a password or secret.
-
-> **Works everywhere:** The intake form works on **any deployment** (Zo, Cloudflare Workers, Netlify, etc.). No Zo backup or extra config needed — just paste your Web3Forms key and go. Clients can open the link from any device or browser.
+> The intake link includes your key (e.g., `?key=86e34...`). This is a public form identifier, not a secret. Share it freely via text, email, or QR code.
 
 ---
 
@@ -510,9 +490,9 @@ The build didn't produce the asset files, or the host isn't serving the `assets/
 
 ### Zo backup connection fails
 
-1. Confirm the backup API URL is correct: `https://your-zo-url.zocomputer.io/api/backup`
-2. Confirm the backup key matches what `bun run prod` printed
-3. Click **Test Connection** — if it fails, check the Zo terminal for server errors
+1. Confirm the backup API URL is correct: `https://notary-log-{your-handle}.zocomputer.io/api/backup`
+2. Confirm the backup key matches what `zo logs --service notary-log` shows
+3. Check the Zo service logs for server errors: `zo logs --service notary-log`
 4. Make sure you didn't create a second Zo service — the backup runs in the same service as the app
 
 ---
@@ -522,12 +502,15 @@ The build didn't produce the asset files, or the host isn't serving the `assets/
 | File | Purpose |
 |------|---------|
 | `netlify.toml` | Netlify git-connected build config + SPA redirect |
-| `wrangler.toml` | Cloudflare Workers static assets + SPA fallback |
+| `wrangler.toml` | Cloudflare Workers static assets + SPA fallback + KV for intake |
 | `zosite.json` | Zo publish configuration |
-| `server.ts` | Zo server — serves static files + `/api/backup` |
-| `artifacts/notary-journal/` | The main app source code |
-| `cloudflare/worker.ts` | Cloudflare Workers entry point |
-| `scripts/cloudflare-deploy.mjs` | One-step build + deploy for Cloudflare |
+| `server.ts` | Zo server — serves static files + Zo backup API |
+| `cloudflare/worker.ts` | Cloudflare Workers entry point + intake webhook/KV |
+| `artifacts/notary-journal/src/` | Main app source (pages, components, lib) |
+| `artifacts/notary-journal/src/pages/client-requests.tsx` | Pending intake requests UI |
+| `artifacts/notary-journal/src/pages/client-intake.tsx` | Client-facing intake form |
+| `artifacts/notary-journal/src/lib/gdrive.ts` | Google Drive backup logic |
+| `artifacts/notary-journal/src/lib/intake-api.ts` | Intake API client (talks to server) |
 
 ---
 
