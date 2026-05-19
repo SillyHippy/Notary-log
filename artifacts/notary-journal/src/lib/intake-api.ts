@@ -23,12 +23,12 @@ async function getWeb3FormsKey(): Promise<string | null> {
   return localStorage.getItem('web3forms_key');
 }
 
-/** Build the base URL with the access_key query parameter. */
+/** Build the base URL with the key query parameter. */
 async function getIntakeUrl(path: string): Promise<string> {
   const key = await getWeb3FormsKey();
   if (!key) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
   const sep = path.includes('?') ? '&' : '?';
-  return `${path}${sep}access_key=${encodeURIComponent(key)}`;
+  return `${path}${sep}key=${encodeURIComponent(key)}`;
 }
 
 /** Raw submission stored on the server */

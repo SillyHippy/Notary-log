@@ -257,6 +257,20 @@ export function ClientIntake() {
         payload.signer2IdExpirationDate = form.signer2IdExpirationDate;
       }
 
+      // --- Step A: Web3Forms (email notification) — text-only, NO base64 ---
+      let emailOk = false;
+      try {
+        const emailRes = await fetch('https://api.web3forms.com/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, access_key: urlKey }),
+        });
+        emailOk = emailRes.ok;
+      } catch {
+        emailOk = false;
+      }
+
+      // --- Step B: App Worker (pending queue) — full payload WITH base64 ---
       // Convert files to base64 (gracefully handle empty)
       if (form.idFrontFiles.length) {
         payload.idFrontFiles = await Promise.all(form.idFrontFiles.map(fileToBase64));
@@ -275,20 +289,6 @@ export function ClientIntake() {
       const sigData = sigPadRef.current?.toDataURL();
       if (sigData) payload.eSignature = sigData;
 
-      // --- Step A: Web3Forms (email notification) ---
-      let emailOk = false;
-      try {
-        const emailRes = await fetch('https://api.web3forms.com/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, access_key: urlKey }),
-        });
-        emailOk = emailRes.ok;
-      } catch {
-        emailOk = false;
-      }
-
-      // --- Step B: App Worker (pending queue) ---
       const appRes = await fetch('/api/intake-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

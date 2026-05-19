@@ -3,7 +3,7 @@ import { Link } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -47,7 +47,6 @@ import {
   resolveBackupPanelVisibility,
   saveBackupPanelVisibility,
 } from '@/lib/backup-visibility';
-import { testIntakeConnection } from '@/lib/intake-api';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -159,7 +158,6 @@ export function Settings() {
   // Client Intake state
   const [web3formsKey, setWeb3formsKey] = useState('');
   const [intakeSaving, setIntakeSaving] = useState(false);
-  const [intakeTestResult, setIntakeTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Collapsible sections state — persisted to localStorage
   const [collapsedSections, setCollapsedSections] = React.useState<Set<string>>(() => {
@@ -946,14 +944,12 @@ export function Settings() {
 
   const handleSaveIntakeSettings = async () => {
     setIntakeSaving(true);
-    setIntakeTestResult(null);
     try {
       const current = await getSettings();
       await saveSettings({ ...current, web3formsKey } as NotarySettings);
-      const result = await testIntakeConnection();
-      setIntakeTestResult(result);
+      toast({ title: 'Saved', description: 'Your Web3Forms key has been saved.' });
     } catch (err) {
-      setIntakeTestResult({ ok: false, message: err instanceof Error ? err.message : 'Failed to save.' });
+      toast({ title: 'Save failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
     }
     setIntakeSaving(false);
   };
@@ -1413,17 +1409,6 @@ export function Settings() {
             </p>
           </div>
 
-          {intakeTestResult && (
-            <Alert variant={intakeTestResult.ok ? 'default' : 'destructive'} className={intakeTestResult.ok ? 'border-green-500 bg-green-50 dark:bg-green-950/30' : ''}>
-              {intakeTestResult.ok ? (
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-              ) : (
-                <AlertCircle className="h-4 w-4" />
-              )}
-              <AlertDescription>{intakeTestResult.message}</AlertDescription>
-            </Alert>
-          )}
-
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={handleSaveIntakeSettings}
@@ -1431,7 +1416,7 @@ export function Settings() {
               className="gap-2"
             >
               {intakeSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Save &amp; Test
+              Save
             </Button>
             <Button
               variant="outline"
