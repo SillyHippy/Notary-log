@@ -6,7 +6,7 @@ import * as z from 'zod';
 import SignaturePad from 'signature_pad';
 import { BrowserPDF417Reader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
-import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen, Plus, Save } from 'lucide-react';
+import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen, Plus, Save, Eye, ZoomIn } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -151,6 +151,7 @@ export function NewEntry() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [idFrontImage, setIdFrontImage] = useState<string | undefined>();
   const [idBackImage, setIdBackImage] = useState<string | undefined>();
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [signatureImage, setSignatureImage] = useState<string | undefined>();
   const [needsReview, setNeedsReview] = useState(false);
   // Populated when MRZ parses but one or more check digits fail. The Signer
@@ -1264,15 +1265,47 @@ export function NewEntry() {
             {(idFrontImage || idBackImage) && (
               <div className="grid grid-cols-2 gap-3">
                 {idFrontImage && (
-                  <div className="relative rounded-lg overflow-hidden border">
-                    <img src={idFrontImage} alt="ID Front" className="w-full h-28 object-cover" />
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center font-medium">Front</div>
+                  <div className="relative rounded-lg overflow-hidden border group">
+                    <img
+                      src={idFrontImage}
+                      alt="ID Front"
+                      className="w-full h-28 object-cover cursor-pointer"
+                      onClick={() => setExpandedImage(idFrontImage)}
+                    />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors pointer-events-none" />
+                    <button
+                      className="absolute top-1 right-1 bg-black/60 text-white p-1 rounded-full hover:bg-red-600 transition-colors"
+                      onClick={(e) => { e.stopPropagation(); setIdFrontImage(undefined); }}
+                      aria-label="Delete front ID photo"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center font-medium pointer-events-none">Front</div>
+                    <div className="absolute bottom-6 right-1 text-white/80 pointer-events-none">
+                      <ZoomIn className="w-3 h-3" />
+                    </div>
                   </div>
                 )}
                 {idBackImage && (
-                  <div className="relative rounded-lg overflow-hidden border">
-                    <img src={idBackImage} alt="ID Back" className="w-full h-28 object-cover" />
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center font-medium">Back</div>
+                  <div className="relative rounded-lg overflow-hidden border group">
+                    <img
+                      src={idBackImage}
+                      alt="ID Back"
+                      className="w-full h-28 object-cover cursor-pointer"
+                      onClick={() => setExpandedImage(idBackImage)}
+                    />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors pointer-events-none" />
+                    <button
+                      className="absolute top-1 right-1 bg-black/60 text-white p-1 rounded-full hover:bg-red-600 transition-colors"
+                      onClick={(e) => { e.stopPropagation(); setIdBackImage(undefined); }}
+                      aria-label="Delete back ID photo"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 text-center font-medium pointer-events-none">Back</div>
+                    <div className="absolute bottom-6 right-1 text-white/80 pointer-events-none">
+                      <ZoomIn className="w-3 h-3" />
+                    </div>
                   </div>
                 )}
               </div>
@@ -1845,6 +1878,28 @@ export function NewEntry() {
               </Button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Full-size ID image modal */}
+      {expandedImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setExpandedImage(null)}
+        >
+          <button
+            className="absolute top-4 right-4 text-white p-2 hover:bg-white/20 rounded-full"
+            onClick={() => setExpandedImage(null)}
+            aria-label="Close image"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={expandedImage}
+            alt="ID document"
+            className="max-w-full max-h-[90vh] object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>
