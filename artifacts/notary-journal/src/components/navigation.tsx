@@ -41,21 +41,18 @@ export function Navigation() {
             <span className="sr-only">Reports</span>
           </Link>
 
-          {/* Spacer slot for FAB */}
-          <div className="flex flex-col items-center justify-center w-16 h-full" aria-hidden="true" />
+          {/* FAB slot — takes space of a nav item, button floats above */}
+          <div className="flex flex-col items-center justify-center w-16 h-full" aria-hidden="true">
+            <Link href="/entry/new" className="flex items-center justify-center w-14 h-14 -translate-y-1/2 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-all active:translate-y-0 touch-target" data-testid="link-nav-new-entry" aria-label="New journal entry">
+              <Plus className="w-6 h-6" aria-hidden="true" />
+              <span className="sr-only">New Entry</span>
+            </Link>
+          </div>
 
           <Link href="/settings" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location.startsWith('/settings') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-settings" aria-label="Settings" aria-current={location.startsWith('/settings') ? 'page' : undefined}>
             <Settings className="w-5 h-5 mb-1" aria-hidden="true" />
             <span className="sr-only">Settings</span>
           </Link>
-
-          {/* FAB for new entry */}
-          <div className="absolute -top-6 right-[calc(2*16px+1rem)] translate-x-1/2 sm:right-[calc(3*16px+1rem)]">
-            <Link href="/entry/new" className="flex items-center justify-center w-14 h-14 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 active:translate-y-0 touch-target" data-testid="link-nav-new-entry" aria-label="New journal entry">
-              <Plus className="w-6 h-6" aria-hidden="true" />
-              <span className="sr-only">New Entry</span>
-            </Link>
-          </div>
         </div>
       </nav>
 
