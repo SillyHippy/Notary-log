@@ -237,29 +237,29 @@ export function ClientRequests() {
                       </div>
 
                       {/* ID Photos */}
-                      {(data.idFrontImage || data.idBackImage) && (
+                      {(data.idFrontFiles?.length || data.idBackFiles?.length) && (
                         <div className="md:col-span-2 space-y-2">
                           <h4 className="font-semibold text-primary">ID Photos</h4>
                           <div className="flex flex-wrap gap-4">
-                            {data.idFrontImage && (
+                            {data.idFrontFiles?.[0] && (
                               <div className="space-y-1">
                                 <span className="text-xs font-medium text-muted-foreground">ID Front</span>
                                 <img
-                                  src={data.idFrontImage}
+                                  src={data.idFrontFiles[0]}
                                   alt="ID Front"
                                   className="w-32 h-20 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
-                                  onClick={() => setExpandedImage(data.idFrontImage!)}
+                                  onClick={() => setExpandedImage(data.idFrontFiles![0])}
                                 />
                               </div>
                             )}
-                            {data.idBackImage && (
+                            {data.idBackFiles?.[0] && (
                               <div className="space-y-1">
                                 <span className="text-xs font-medium text-muted-foreground">ID Back</span>
                                 <img
-                                  src={data.idBackImage}
+                                  src={data.idBackFiles[0]}
                                   alt="ID Back"
                                   className="w-32 h-20 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
-                                  onClick={() => setExpandedImage(data.idBackImage!)}
+                                  onClick={() => setExpandedImage(data.idBackFiles![0])}
                                 />
                               </div>
                             )}
