@@ -33,7 +33,7 @@ export function ClientRequests() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [expandedCards, setExpandedCards] = React.useState<Set<string>>(new Set());
-  const [expandedData, setExpandedData] = React.useState<Record<string, IntakeRequest>>({});
+  const [expandedData, setExpandedData] = React.useState<Record<string, IntakeRequest | null>>({});
   const [expandedImage, setExpandedImage] = React.useState<string | null>(null);
 
   const toggleCard = async (name: string) => {
@@ -60,6 +60,17 @@ export function ClientRequests() {
     try {
       const subs = await listSubmissions();
       setSubmissions(subs);
+      // Preload signer names so collapsed cards show client names immediately
+      const namePromises = subs.map(async (sub): Promise<[string, IntakeRequest | null]> => {
+        try {
+          const full = await getSubmission(sub.name);
+          return [sub.name, full];
+        } catch {
+          return [sub.name, null];
+        }
+      });
+      const nameResults = await Promise.all(namePromises);
+      setExpandedData(prev => ({ ...prev, ...Object.fromEntries(nameResults) }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load';
       // Show a friendlier message when the key is not configured
