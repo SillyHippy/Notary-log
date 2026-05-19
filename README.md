@@ -59,78 +59,71 @@ Zo gives you a free computer with 100GB storage, one hosted service, and built-i
 **What you'll end up with:**
 - Public app URL: `https://notary-log-{your-handle}.zocomputer.io`
 - Backup API: `https://notary-log-{your-handle}.zocomputer.io/api/backup`
-- Backup files stored in: `Documents/Notary Journal/backups/`
+- Backups stored on the server in `Documents/Notary Journal/backups/`
 
-### Step 1: Sign up
-
-Create a free Zo account: https://zo-computer.cello.so/XvrzHZZ53TV
-
-### Step 2: Deploy
-
-Open your Zo terminal and run:
+### Step 1: Clone the repo
 
 ```bash
+cd /home/workspace
 git clone https://github.com/SillyHippy/Notary-log
 cd Notary-log
-bun install && bun run build && bun run prod
 ```
 
-That's it. Zo assigns the `PORT` automatically. The server starts, serves the built app, and exposes the backup API.
-
-### Step 3: Get your backup key
-
-The server prints a backup key when it starts. On Zo, this goes to the **service logs**, not the terminal. Retrieve it with:
+### Step 2: Install and build
 
 ```bash
-zo logs --service notary-log
+bun i
+bun run build
 ```
 
-Look for the line: `Zo Backup Key: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` — save this somewhere safe.
+### Step 3: Deploy as a Zo service
 
-### Step 4: Verify
-
-Open your Zo URL (e.g. `https://notary-log-{your-handle}.zocomputer.io`). Confirm you see the PIN setup screen.
-
-### Step 5: Configure in-app Zo backup
-
-1. Open the app → **Settings > Backup & Restore**
-2. Turn on **Show Zo backup**
-3. API URL: `https://notary-log-{your-handle}.zocomputer.io/api/backup`
-4. Paste the backup key from Step 3
-5. Click **Save** — you're done
-
-### AI Deploy Prompt (optional)
-
-If you want Zo's AI agent to handle everything, paste this into the Zo AI chat:
+In your Zo AI chat, send this prompt:
 
 ```
-Deploy the Notary Journal app for me on Zo using the free plan.
+Deploy the Notary Journal app on this Zo Computer.
 
-Use this repository:
-https://github.com/SillyHippy/Notary-log
+Source repo: /home/workspace/Notary-log
 
-Do all of this:
-1. Clone the repo
-2. Use Bun
-3. From the repo root run: bun install && bun run build
-4. Publish with: bun run prod
-5. The production server is server.ts — it serves artifacts/notary-journal/dist/public and handles /api/backup
-6. Make the site public
-7. Store backup files in Documents/Notary Journal/backups/
-8. Protect /api/backup with a generated backup key (print it when done)
-9. Add CORS headers for /api/backup
-10. When done, tell me: the public app URL, the backup API URL, and the backup key
+1. If a service named "notary-log" already exists, delete it first:
+   list_user_services → find the notary-log service_id → delete_user_service(service_id=...)
+
+2. Register the service:
+   register_user_service(
+     label="notary-log",
+     mode="http",
+     entrypoint="bun run server.ts",
+     workdir="/home/workspace/Notary-log",
+     local_port=5173,
+     public=true
+   )
+
+3. Wait 10 seconds, then verify it's running:
+   cat /dev/shm/notary-log.log | grep "listening on"
+   curl -s -o /dev/null -w "%{http_code}" https://notary-log-{your-handle}.zocomputer.io
+   service_doctor(service="notary-log")
+
+4. Get your backup key from the logs:
+   cat /dev/shm/notary-log.log | grep "Zo Backup Key"
+
+Copy the backup key into the app's Settings > Backup section.
 ```
 
-Then retrieve your backup key from logs: `zo logs --service notary-log`
+### Step 4: Set Google OAuth
+
+The Google OAuth client ID must be set BEFORE building. Edit `artifacts/notary-journal/.env` and add:
+
+```
+VITE_GOOGLE_CLIENT_ID=your-google-client-id-here
+```
+
+Then rebuild: `bun run build`
 
 ### Zo Limitations
 
-- Free Zo computers can sleep when idle — the first request after sleeping may take a few seconds
-- Free accounts get one hosted service — that's all you need
-- The app URL is public, but journal data is protected by your in-app PIN
-- Zo snapshots protect the Zo computer state, NOT your browser's local data — always keep JSON backups
-- Backup files live at `~/Documents/Notary Journal/backups/` on the Zo machine
+- One HTTP service per account on free tier
+- Backups stored on the server (encrypted)
+- For Google Drive backup, set your client ID in `.env` before building
 
 ---
 
