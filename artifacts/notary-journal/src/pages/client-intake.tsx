@@ -149,7 +149,7 @@ export function ClientIntake() {
         canvas.height = Math.max(parent.clientHeight, 150);
       }
       sigPadRef.current = new SignaturePad(canvas, {
-        backgroundColor: 'rgba(255,255,255,0)',
+        backgroundColor: 'rgb(255,255,255)',
         penColor: 'rgb(0,0,0)',
       });
     }
@@ -895,7 +895,7 @@ export function ClientIntake() {
                 <div className="mt-2 relative border-2 border-primary/30 border-dashed rounded-xl bg-white overflow-hidden min-h-[200px]">
                   <canvas
                     ref={sigCanvasRef}
-                    className="w-full h-full cursor-crosshair touch-none"
+                    className="w-full h-full cursor-crosshair touch-none bg-white"
                   />
                   <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-10">
                     <span className="text-4xl font-serif font-bold tracking-widest rotate-[-10deg]">

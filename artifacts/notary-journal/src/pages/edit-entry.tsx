@@ -340,7 +340,7 @@ export function EditEntry() {
       canvas.height = parent ? (parent.clientHeight || 220) : 220;
       signaturePadRef.current?.off();
       signaturePadRef.current = new SignaturePad(canvas, {
-        backgroundColor: 'rgba(255, 255, 255, 0)',
+        backgroundColor: 'rgb(255, 255, 255)',
         penColor: 'rgb(0, 0, 0)',
       });
     });
@@ -674,7 +674,7 @@ export function EditEntry() {
                 <div className="relative border-2 border-primary/30 border-dashed rounded-xl bg-white overflow-hidden" style={{ minHeight: '220px' }}>
                   <canvas
                     ref={sigCanvasRef}
-                    className="w-full h-full cursor-crosshair touch-none"
+                    className="w-full h-full cursor-crosshair touch-none bg-white"
                     style={{ display: 'block', minHeight: '220px' }}
                     data-testid="signature-canvas"
                   />
