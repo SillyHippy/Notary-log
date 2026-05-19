@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUploadZone } from '@/components/file-upload-zone';
+import { compressImageToDataUrl } from '@/lib/image-compress';
 
 const STEPS = [
   'Notarization',
@@ -49,12 +50,13 @@ function getUrlKey(): string | null {
   return params.get('key');
 }
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve) => {
+async function fileToBase64(file: File): Promise<string> {
+  const rawDataUrl = await new Promise<string>((resolve) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result as string);
     reader.readAsDataURL(file);
   });
+  return compressImageToDataUrl(rawDataUrl, 800, 0.7);
 }
 
 // ---------------------------------------------------------------------------

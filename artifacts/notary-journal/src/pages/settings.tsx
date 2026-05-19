@@ -133,7 +133,7 @@ export function Settings() {
   // Google Drive state
   const [isConnected, setIsConnected] = useState(false);
   const [googleEmail, setGoogleEmail] = useState('');
-  const [autoBackup, setAutoBackup] = useState(false);
+  const [backupFrequency, setBackupFrequency] = useState<'off' | 'after-entry' | 'daily'>('off');
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [lastBackup, setLastBackup] = useState<string | null>(null);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
@@ -219,7 +219,7 @@ export function Settings() {
         recordSignerDOB: settings.recordSignerDOB !== false,
         recordSignerIdNumber: settings.recordSignerIdNumber !== false,
       });
-      setAutoBackup(settings.autoBackup ?? false);
+      setBackupFrequency((settings.backupFrequency as 'off' | 'after-entry' | 'daily') ?? (settings.autoBackup ? 'after-entry' : 'off'));
       setGoogleEmail(settings.googleEmail ?? '');
       setBackupReminderDays(settings.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS);
       setManualBackupOnly(!!settings.manualBackupOnly);
@@ -813,10 +813,11 @@ export function Settings() {
     toast({ title: 'Disconnected', description: 'Google Drive disconnected.' });
   };
 
-  const handleAutoBackupToggle = async (checked: boolean) => {
-    setAutoBackup(checked);
+  const handleBackupFrequencyChange = async (value: string) => {
+    const freq = value as 'off' | 'after-entry' | 'daily';
+    setBackupFrequency(freq);
     const current = await getSettings();
-    await saveSettings({ ...current, autoBackup: checked });
+    await saveSettings({ ...current, backupFrequency: value, autoBackup: freq !== 'off' });
   };
 
   const handleBackupNow = async () => {
@@ -1878,20 +1879,25 @@ export function Settings() {
 
               {isConnected && (
                 <>
-                  {/* Auto-backup toggle */}
+                  {/* Backup frequency selector */}
                   <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
                     <div className="space-y-0.5">
                       <p className="text-sm font-medium flex items-center gap-2">
                         <CloudUpload className="w-4 h-4 text-primary" />
                         Auto-backup
                       </p>
-                      <p className="text-xs text-muted-foreground">Silently back up to Drive after each new entry</p>
+                      <p className="text-xs text-muted-foreground">How often to back up to Drive</p>
                     </div>
-                    <Switch
-                      checked={autoBackup}
-                      onCheckedChange={handleAutoBackupToggle}
-                      data-testid="switch-auto-backup"
-                    />
+                    <Select value={backupFrequency} onValueChange={handleBackupFrequencyChange} data-testid="select-backup-frequency">
+                      <SelectTrigger className="w-[160px] h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="off">Off</SelectItem>
+                        <SelectItem value="after-entry">After each entry</SelectItem>
+                        <SelectItem value="daily">Daily</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   {/* Manual backup + restore */}
@@ -2163,6 +2169,9 @@ export function Settings() {
 
       <div className="text-center text-sm text-muted-foreground pt-4 pb-8">
         <p>Notary Journal App v1.1.0</p>
+        <Link href="/privacy" className="text-primary hover:underline mt-1 inline-block">
+          Privacy Policy
+        </Link>
       </div>
     </div>
   );

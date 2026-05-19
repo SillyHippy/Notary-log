@@ -97,6 +97,8 @@ export interface NotarySettings {
   pinHash?: string; // legacy plaintext-mode field — unused after migration
   darkMode: boolean;
   autoBackup?: boolean;
+  /** Backup frequency: 'off' | 'after-entry' (current auto-backup) | 'daily' */
+  backupFrequency?: string;
   googleEmail?: string;
   // Per-fee-type default amounts in cents, e.g. { Acknowledgment: 1000 }.
   // Used by the new-entry wizard to auto-fill the fee. Stored encrypted.

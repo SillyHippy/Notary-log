@@ -136,6 +136,15 @@ export function JournalList() {
   const hasDateFilter = dateFrom || dateTo;
   const hasActiveFilter = hasDateFilter || needsIdScanFilter;
 
+  // Pagination
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState(1);
+  const totalPages = Math.ceil(filteredAndSorted.length / PAGE_SIZE);
+  const pagedEntries = filteredAndSorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [activeTab, needsIdScanFilter, dateFrom, dateTo, searchQuery, sortField, sortDir]);
+
   return (
     <div className="p-6 lg:p-8 max-w-6xl mx-auto h-full flex flex-col pb-32 md:pb-0">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
@@ -296,7 +305,7 @@ export function JournalList() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {filteredAndSorted.map((entry) => (
+                {pagedEntries.map((entry) => (
                   <tr 
                     key={entry.id} 
                     className="group hover:bg-muted/30 cursor-pointer transition-colors"
@@ -381,6 +390,36 @@ export function JournalList() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Pagination controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+            <p className="text-xs text-muted-foreground">
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredAndSorted.length)} of {filteredAndSorted.length}
+            </p>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page === 1}
+                onClick={() => setPage(p => p - 1)}
+              >
+                Previous
+              </Button>
+              <span className="text-xs text-muted-foreground px-2">
+                {page} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page === totalPages}
+                onClick={() => setPage(p => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         )}
       </div>

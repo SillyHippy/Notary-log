@@ -27,6 +27,7 @@ import { backupToDrive, getStoredToken } from '@/lib/gdrive';
 import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, computeStampFeeCents, feeDollarsToCents, getStampFeeCents, shouldApplyAutoFee, type FeeType } from '@/lib/fees';
 import { hapticSuccess, hapticWarning } from '@/lib/haptic';
 import { getMissingCompletionFields, getSignerStepFieldsToCheck } from '@/lib/completion';
+import { compressImageToDataUrl } from '@/lib/image-compress';
 
 const entrySchema = z
   .object({
@@ -703,7 +704,7 @@ export function NewEntry() {
     setIsScanning(false);
   };
 
-  const handlePhotoCapture = () => {
+  const handlePhotoCapture = async () => {
     if (!photoVideoRef.current || !canvasRef.current) return;
     const video = photoVideoRef.current;
     const canvas = canvasRef.current;
@@ -712,7 +713,8 @@ export function NewEntry() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg');
+    const rawDataUrl = canvas.toDataURL('image/jpeg');
+    const dataUrl = await compressImageToDataUrl(rawDataUrl, 800, 0.7);
     const isPassport = form.getValues('idType') === 'passport';
 
     if (isPassport) {
@@ -742,12 +744,13 @@ export function NewEntry() {
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, isBack: boolean) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, isBack: boolean) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
-        const dataUrl = event.target?.result as string;
+      reader.onload = async (event) => {
+        const rawDataUrl = event.target?.result as string;
+        const dataUrl = await compressImageToDataUrl(rawDataUrl, 800, 0.7);
         // Passports are a single-page document; any upload — first or
         // replacement — should be processed as the authoritative scan in
         // 'replace' mode rather than the license front/back heuristic.
@@ -899,7 +902,8 @@ export function NewEntry() {
       (async () => {
         try {
           const settings = await getSettings();
-          if (settings.autoBackup && getStoredToken()) {
+          const shouldBackup = settings.backupFrequency === 'after-entry' || settings.backupFrequency === 'daily';
+          if (shouldBackup && getStoredToken()) {
             const allEntries = await getAllEntries();
             await backupToDrive(allEntries, settings);
           }

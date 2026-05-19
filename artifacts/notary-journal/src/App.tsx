@@ -17,6 +17,7 @@ const EntryDetail = lazy(() => import("@/pages/entry-detail").then(m => ({ defau
 const EditEntry = lazy(() => import("@/pages/edit-entry").then(m => ({ default: m.EditEntry })));
 const Settings = lazy(() => import("@/pages/settings").then(m => ({ default: m.Settings })));
 const Reports = lazy(() => import("@/pages/reports").then(m => ({ default: m.Reports })));
+const PrivacyPolicy = lazy(() => import("@/pages/privacy-policy").then(m => ({ default: m.PrivacyPolicy })));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const ClientIntake = lazy(() => import("@/pages/client-intake").then(m => ({ default: m.ClientIntake })));
 const ClientRequests = lazy(() => import("@/pages/client-requests").then(m => ({ default: m.ClientRequests })));
@@ -58,6 +59,7 @@ function Router() {
           <Route path="/requests" component={ClientRequests} />
           <Route path="/reports" component={Reports} />
           <Route path="/settings" component={Settings} />
+          <Route path="/privacy" component={PrivacyPolicy} />
           <Route component={NotFound} />
         </Switch>
       </Suspense>
