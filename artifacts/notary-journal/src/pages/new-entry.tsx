@@ -713,32 +713,30 @@ export function NewEntry() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const rawDataUrl = canvas.toDataURL('image/jpeg');
-    const dataUrl = await compressImageToDataUrl(rawDataUrl, 800, 0.7);
+    const fullResUrl = canvas.toDataURL('image/jpeg');
+    const compressedUrl = await compressImageToDataUrl(fullResUrl, 800, 0.7);
     const isPassport = form.getValues('idType') === 'passport';
 
     if (isPassport) {
       // Passports only need one photo of the data page; the MRZ lives at
       // the bottom of that single page.
-      setIdFrontImage(dataUrl);
-      processImageOCR(dataUrl);
+      processImageOCR(fullResUrl);
+      setIdFrontImage(compressedUrl);
       stopPhotoCamera();
       setScanMode('idle');
       return;
     }
 
     if (!idFrontImage) {
-      // OCR the FRONT immediately — that's where printed name, address,
-      // DOB, ID number and expiry live on US licenses. The result is
-      // applied in 'replace' mode so any prior partial data is cleared.
-      setIdFrontImage(dataUrl);
-      processImageOCR(dataUrl, 'replace');
+      // OCR the FRONT at full resolution, then store compressed.
+      processImageOCR(fullResUrl, 'replace');
+      setIdFrontImage(compressedUrl);
       toast({ title: 'Front captured', description: 'Optionally capture the BACK to fill any missing fields.' });
     } else {
       // BACK image is processed in 'fillGaps' mode so a confident front
       // OCR is never overwritten by a noisier back scan.
-      setIdBackImage(dataUrl);
-      processImageOCR(dataUrl, 'fillGaps');
+      processImageOCR(fullResUrl, 'fillGaps');
+      setIdBackImage(compressedUrl);
       stopPhotoCamera();
       setScanMode('idle');
     }
@@ -749,23 +747,26 @@ export function NewEntry() {
     if (file) {
       const reader = new FileReader();
       reader.onload = async (event) => {
-        const rawDataUrl = event.target?.result as string;
-        const dataUrl = await compressImageToDataUrl(rawDataUrl, 800, 0.7);
+        const fullResUrl = event.target?.result as string;
+        const compressedUrl = await compressImageToDataUrl(fullResUrl, 800, 0.7);
         // Passports are a single-page document; any upload — first or
         // replacement — should be processed as the authoritative scan in
         // 'replace' mode rather than the license front/back heuristic.
         const isPassport = form.getValues('idType') === 'passport';
         if (isPassport) {
-          setIdFrontImage(dataUrl);
+          processImageOCR(fullResUrl, 'replace');
+          setIdFrontImage(compressedUrl);
           setIdBackImage(undefined);
-          processImageOCR(dataUrl, 'replace');
           return;
         }
-        if (isBack) setIdBackImage(dataUrl);
-        else setIdFrontImage(dataUrl);
-        // Mirror camera capture: front = replace, back = fillGaps so an
-        // uploaded back-of-license never overwrites confident front data.
-        processImageOCR(dataUrl, isBack ? 'fillGaps' : 'replace');
+        // OCR at full resolution, store compressed.
+        if (isBack) {
+          processImageOCR(fullResUrl, 'fillGaps');
+          setIdBackImage(compressedUrl);
+        } else {
+          processImageOCR(fullResUrl, 'replace');
+          setIdFrontImage(compressedUrl);
+        }
       };
       reader.readAsDataURL(file);
     }
