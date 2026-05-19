@@ -108,7 +108,7 @@ export function Reports() {
 
   if (isLoading) {
     return (
-      <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-4">
+      <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-4 pb-32 md:pb-0">
         <div className="h-8 w-48 bg-muted rounded animate-pulse" />
         <div className="h-64 bg-muted rounded-xl animate-pulse" />
       </div>
@@ -116,7 +116,7 @@ export function Reports() {
   }
 
   return (
-    <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
+    <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-6 pb-32 md:pb-0">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">

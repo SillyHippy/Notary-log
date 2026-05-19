@@ -965,7 +965,7 @@ export function Settings() {
   };
 
   return (
-    <div className="p-6 lg:p-8 max-w-4xl mx-auto space-y-8">
+    <div className="p-6 lg:p-8 max-w-4xl mx-auto space-y-8 pb-32 md:pb-0">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Settings</h1>

@@ -338,7 +338,7 @@ export function ClientIntake() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-background flex flex-col safe-all">
+    <div className="min-h-[100dvh] bg-background flex flex-col safe-all pb-32 md:pb-0">
       {/* Header */}
       <header className="border-b bg-card px-4 py-3 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto">

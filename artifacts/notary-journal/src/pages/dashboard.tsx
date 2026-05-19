@@ -148,7 +148,7 @@ export function Dashboard() {
   }
 
   return (
-    <div className="p-6 lg:p-8 max-w-6xl mx-auto">
+    <div className="p-6 lg:p-8 max-w-6xl mx-auto pb-32 md:pb-0">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
         <div>
