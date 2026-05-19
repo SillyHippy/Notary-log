@@ -106,6 +106,16 @@ export function PrivacyPolicy() {
             If you have questions about this privacy policy or the data stored in the app, please contact the developer through the app&apos;s support channels.
           </p>
         </section>
+
+        <section>
+          <h2 className="text-xl font-semibold mb-3">State Notary Guidelines Disclaimer</h2>
+          <p className="text-sm text-muted-foreground leading-relaxed mb-3">
+            <strong>Important:</strong> This app is a record-keeping and journal management tool. It is <strong>not legal advice</strong> and does not guarantee compliance with any specific state&apos;s notary laws, rules, or requirements.
+          </p>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Notary laws vary significantly by state and are subject to change. You are solely responsible for consulting your state&apos;s official notary handbook, statutes, and administrative rules to ensure that your journal meets all applicable legal requirements. If you are unsure about your state&apos;s requirements, contact your state&apos;s notary regulating authority or a qualified attorney.
+          </p>
+        </section>
       </div>
     </div>
   );

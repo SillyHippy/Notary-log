@@ -402,7 +402,7 @@ export function EntryDetail() {
             </CardHeader>
             <CardContent>
               {entry.signatureImage ? (
-                <div className="border-2 border-dashed border-border rounded-lg p-2 bg-white dark:bg-zinc-900 flex justify-center">
+                <div className="border-2 border-dashed border-border rounded-lg p-2 bg-white flex justify-center">
                   <img src={entry.signatureImage} alt="Signer Signature" className="max-h-32 object-contain" style={{ filter: 'var(--signature-filter, none)' }} />
                 </div>
               ) : (

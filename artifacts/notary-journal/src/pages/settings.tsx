@@ -2167,11 +2167,17 @@ export function Settings() {
         </CardContent>
       </Card>
 
-      <div className="text-center text-sm text-muted-foreground pt-4 pb-8">
+      <div className="text-center text-sm text-muted-foreground pt-4 pb-8 space-y-1">
         <p>Notary Journal App v1.1.0</p>
-        <Link href="/privacy" className="text-primary hover:underline mt-1 inline-block">
-          Privacy Policy
-        </Link>
+        <div className="flex items-center justify-center gap-3">
+          <Link href="/privacy" className="text-primary hover:underline">
+            Privacy Policy
+          </Link>
+          <span>·</span>
+          <Link href="/terms" className="text-primary hover:underline">
+            Terms of Use
+          </Link>
+        </div>
       </div>
     </div>
   );
