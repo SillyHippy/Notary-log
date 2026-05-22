@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUploadZone } from '@/components/file-upload-zone';
 import { compressImageToDataUrl } from '@/lib/image-compress';
+import { isZoHost, isZoIntakeToken } from '@/lib/intake-api';
 
 const STEPS = [
   'Notarization',
@@ -65,6 +66,15 @@ async function fileToBase64(file: File): Promise<string> {
 
 export function ClientIntake() {
   const urlKey = React.useState(() => getUrlKey())[0];
+  const [zoIntakeMode, setZoIntakeMode] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!urlKey || !isZoHost()) {
+      setZoIntakeMode(false);
+      return;
+    }
+    void isZoIntakeToken(urlKey).then(setZoIntakeMode);
+  }, [urlKey]);
 
   const [submitting, setSubmitting] = React.useState(false);
   const [submitted, setSubmitted] = React.useState(false);
@@ -216,6 +226,8 @@ export function ClientIntake() {
     setSubmitting(true);
 
     try {
+      const sigData = sigPadRef.current?.toDataURL();
+
       const payload: Record<string, unknown> = {
         preferredDate: form.preferredDate,
         servicesPerformed: form.services.join(', '),
@@ -259,6 +271,42 @@ export function ClientIntake() {
         payload.signer2IdExpirationDate = form.signer2IdExpirationDate;
       }
 
+      if (sigData) payload.eSignature = sigData;
+
+      // --- Zo Computer intake (multipart + SQLite) ---
+      if (zoIntakeMode && urlKey) {
+        const fd = new FormData();
+        fd.append('token', urlKey);
+        for (const [key, value] of Object.entries(payload)) {
+          if (value === undefined || value === '') continue;
+          fd.append(key, typeof value === 'string' ? value : String(value));
+        }
+        for (const file of form.idFrontFiles) fd.append('idFrontFiles', file);
+        for (const file of form.idBackFiles) fd.append('idBackFiles', file);
+        if (needsSigner2) {
+          for (const file of form.signer2IdFrontFiles) fd.append('signer2IdFrontFiles', file);
+          for (const file of form.signer2IdBackFiles) fd.append('signer2IdBackFiles', file);
+        }
+
+        const zoRes = await fetch('/api/intake', { method: 'POST', body: fd });
+        if (zoRes.ok) {
+          setSubmitted(true);
+          setSubmitting(false);
+          return;
+        }
+        if (zoRes.status === 401) {
+          setSubmitError('Invalid intake link. Contact your notary for a new link.');
+          setSubmitting(false);
+          return;
+        }
+        const zoErr = await zoRes.json().catch(() => ({}));
+        setSubmitError(
+          (zoErr as { error?: string }).error || 'Submission failed. Try again.',
+        );
+        setSubmitting(false);
+        return;
+      }
+
       // --- Step A: Web3Forms (email notification) — text-only, NO base64 ---
       let emailOk = false;
       try {
@@ -286,10 +334,6 @@ export function ClientIntake() {
       if (needsSigner2 && form.signer2IdBackFiles.length) {
         payload.signer2IdBackFiles = await Promise.all(form.signer2IdBackFiles.map(fileToBase64));
       }
-
-      // Signature as base64
-      const sigData = sigPadRef.current?.toDataURL();
-      if (sigData) payload.eSignature = sigData;
 
       const appRes = await fetch('/api/intake-webhook', {
         method: 'POST',

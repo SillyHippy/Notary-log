@@ -118,8 +118,10 @@ export interface NotarySettings {
   // include in backups; connector secrets and tokens stay in browser storage.
   showGoogleBackup?: boolean;
   showZoBackup?: boolean;
-  // Client Intake Form — Web3Forms integration
+  // Client Intake Form — Web3Forms integration (all hosts) or Zo token (Zo Computer only)
   web3formsKey?: string;
+  /** Zo Computer per-notary intake token (SQLite multi-user intake on Zo deploy). */
+  zoComputerToken?: string;
   // State-compliance toggles. Default to `true` (record everything) when
   // unset so existing installs see no behavior change. When set to `false`,
   // the corresponding fields are hidden in the new-entry / edit-entry forms,

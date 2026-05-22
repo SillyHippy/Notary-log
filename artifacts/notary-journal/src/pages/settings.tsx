@@ -157,7 +157,9 @@ export function Settings() {
 
   // Client Intake state
   const [web3formsKey, setWeb3formsKey] = useState('');
+  const [zoComputerToken, setZoComputerToken] = useState('');
   const [intakeSaving, setIntakeSaving] = useState(false);
+  const [intakeTesting, setIntakeTesting] = useState(false);
 
   // Collapsible sections state — persisted to localStorage
   const [collapsedSections, setCollapsedSections] = React.useState<Set<string>>(() => {
@@ -223,7 +225,8 @@ export function Settings() {
       setGoogleEmail(settings.googleEmail ?? '');
       setBackupReminderDays(settings.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS);
       setManualBackupOnly(!!settings.manualBackupOnly);
-      setWeb3formsKey((settings as unknown as Record<string, unknown>).web3formsKey as string ?? '');
+      setWeb3formsKey(settings.web3formsKey ?? '');
+      setZoComputerToken(settings.zoComputerToken ?? '');
       const hasZoConfig = !!(
         localStorage.getItem(ZO_BACKUP_URL_KEY) ||
         localStorage.getItem(ZO_BACKUP_KEY_KEY) ||
@@ -947,16 +950,42 @@ export function Settings() {
     setIntakeSaving(true);
     try {
       const current = await getSettings();
-      await saveSettings({ ...current, web3formsKey } as NotarySettings);
-      toast({ title: 'Saved', description: 'Your Web3Forms key has been saved.' });
+      await saveSettings({
+        ...current,
+        web3formsKey: web3formsKey.trim() || undefined,
+        zoComputerToken: zoComputerToken.trim() || undefined,
+      });
+      toast({ title: 'Saved', description: 'Intake settings saved.' });
     } catch (err) {
       toast({ title: 'Save failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
     }
     setIntakeSaving(false);
   };
 
+  const activeIntakeKey = zoComputerToken.trim() || web3formsKey.trim();
+
+  const handleTestIntake = async () => {
+    setIntakeTesting(true);
+    try {
+      const { testIntakeConnection } = await import('@/lib/intake-api');
+      const result = await testIntakeConnection();
+      toast({
+        title: result.ok ? 'Intake connected' : 'Intake test failed',
+        description: result.message,
+        variant: result.ok ? 'default' : 'destructive',
+      });
+    } catch (err) {
+      toast({
+        title: 'Intake test failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+    setIntakeTesting(false);
+  };
+
   const handleCopyIntakeLink = async () => {
-    const url = `${window.location.origin}/intake?key=${web3formsKey}`;
+    const url = `${window.location.origin}/intake?key=${activeIntakeKey}`;
     try {
       await navigator.clipboard.writeText(url);
       toast({ title: 'Link copied', description: 'Share this link with your clients.' });
@@ -1379,25 +1408,40 @@ export function Settings() {
           </div>
           <CardDescription>
             Share a link with clients so they can submit their info before the appointment.
-            Uses <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline">Web3Forms</a> (free, no signup).
+            On Zo Computer, use a Zo form token; otherwise use{' '}
+            <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline">Web3Forms</a> (free).
           </CardDescription>
         </CardHeader>
         {!collapsedSections.has('client-intake') && (
         <CardContent className="space-y-4">
           <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">
-            <p className="font-medium">Quick Setup (1 minute):</p>
-            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-              <li>Go to <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline text-foreground">web3forms.com</a> → get your free access key</li>
-              <li>Paste it below → Save & Test</li>
-              <li>Share the generated intake link with your clients</li>
+            <p className="font-medium">Zo Computer (recommended on Zo deploy)</p>
+            <p className="text-muted-foreground text-xs">
+              Paste the token from your Zo deploy prompt (SQLite user row). When set on Zo, intake uses the built-in server — no Web3Forms required.
+            </p>
+            <p className="font-medium mt-3">Web3Forms (Cloudflare, Netlify, static, or Zo fallback)</p>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-xs">
+              <li>Get a free key at <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline text-foreground">web3forms.com</a></li>
+              <li>Paste below — kept if you switch back from Zo intake</li>
             </ol>
+          </div>
+
+          <div>
+            <Label htmlFor="zo-computer-token">Zo Computer Form Token</Label>
+            <Input
+              id="zo-computer-token"
+              placeholder="Paste token from Zo deploy (Zo Computer only)"
+              value={zoComputerToken}
+              onChange={(e) => setZoComputerToken(e.target.value)}
+              className="mt-1 font-mono text-sm"
+            />
             <p className="text-xs text-muted-foreground mt-1">
-              Clients fill the form → you get an email via Web3Forms + the request appears in your Pending queue.
+              When set on Zo Computer, intake link uses this token. Clear to use Web3Forms only.
             </p>
           </div>
 
           <div>
-            <Label htmlFor="web3forms-key">Web3Forms Access Key *</Label>
+            <Label htmlFor="web3forms-key">Web3Forms Access Key</Label>
             <Input
               id="web3forms-key"
               placeholder="Paste your Web3Forms access key here"
@@ -1421,8 +1465,17 @@ export function Settings() {
             </Button>
             <Button
               variant="outline"
+              onClick={handleTestIntake}
+              disabled={intakeTesting || (!zoComputerToken.trim() && !web3formsKey.trim())}
+              className="gap-2"
+            >
+              {intakeTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Test connection
+            </Button>
+            <Button
+              variant="outline"
               onClick={handleCopyIntakeLink}
-              disabled={!web3formsKey}
+              disabled={!activeIntakeKey}
               className="gap-2"
             >
               <ExternalLink className="w-4 h-4" />
@@ -1430,10 +1483,12 @@ export function Settings() {
             </Button>
           </div>
 
-          {web3formsKey && (
+          {activeIntakeKey && (
             <div className="rounded-lg border bg-muted/50 p-3">
-              <p className="text-xs text-muted-foreground mb-1">Intake link (share with clients):</p>
-              <p className="text-sm font-mono break-all">{window.location.origin}/intake?key={web3formsKey}</p>
+              <p className="text-xs text-muted-foreground mb-1">
+                Intake link ({zoComputerToken.trim() ? 'Zo Computer' : 'Web3Forms'}):
+              </p>
+              <p className="text-sm font-mono break-all">{window.location.origin}/intake?key={activeIntakeKey}</p>
             </div>
           )}
         </CardContent>

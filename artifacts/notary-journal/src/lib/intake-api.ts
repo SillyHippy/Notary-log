@@ -1,32 +1,66 @@
 /**
- * Intake API client — talks to our own server's /api/intake endpoints.
+ * Intake API client — Zo Computer SQLite intake or legacy Web3Forms JSON files.
  *
- * The server stores submissions received from Web3Forms webhooks.
- * This client lists them and fetches individual submissions for prefill.
- * Every request must include ?access_key=<Web3Forms Access Key> for multi-user isolation.
+ * On Zo Computer with zoComputerToken configured, lists/fetches/deletes via
+ * token-validated /api/intake. Otherwise uses Web3Forms key + file webhook store.
  */
 
 import { getSettings } from '@/lib/db';
 
 const INTAKE_BASE = '/api/intake';
 
-/** Retrieve the Web3Forms access key from settings (IndexedDB), falling back to localStorage. */
-async function getWeb3FormsKey(): Promise<string | null> {
-  // Try IndexedDB settings first
-  try {
-    const settings = await getSettings();
-    if (settings.web3formsKey) return settings.web3formsKey;
-  } catch {
-    // fall through
-  }
-  // Fallback: localStorage (for tests or manual override)
-  return localStorage.getItem('web3forms_key');
+export type IntakeMode = 'zo' | 'web3forms';
+
+/** True when the app is served from Zo Computer (same-origin Zo APIs available). */
+export function isZoHost(): boolean {
+  const host = window.location.hostname;
+  return (
+    host.endsWith('.zocomputer.io') ||
+    host === 'localhost' ||
+    host === '127.0.0.1'
+  );
 }
 
-/** Build the base URL with the key query parameter. */
+async function getSettingsKeys(): Promise<{
+  zoToken: string | null;
+  web3Key: string | null;
+}> {
+  try {
+    const settings = await getSettings();
+    return {
+      zoToken: settings.zoComputerToken?.trim() || null,
+      web3Key: settings.web3formsKey?.trim() || null,
+    };
+  } catch {
+    return { zoToken: null, web3Key: null };
+  }
+}
+
+/** Active intake backend for the notary dashboard. */
+export async function getIntakeMode(): Promise<IntakeMode> {
+  const { zoToken, web3Key } = await getSettingsKeys();
+  if (isZoHost() && zoToken) return 'zo';
+  if (web3Key) return 'web3forms';
+  throw new Error('Intake key not configured. Add a Zo Computer token or Web3Forms key in Settings.');
+}
+
+/** Key sent as ?key= on intake API requests. */
+export async function getActiveIntakeKey(): Promise<string> {
+  const mode = await getIntakeMode();
+  const { zoToken, web3Key } = await getSettingsKeys();
+  const key = mode === 'zo' ? zoToken : web3Key;
+  if (!key) {
+    throw new Error(
+      mode === 'zo'
+        ? 'Zo Computer form token not configured. Add your token in Settings.'
+        : 'Intake key not configured. Please add your Web3Forms key in Settings.',
+    );
+  }
+  return key;
+}
+
 async function getIntakeUrl(path: string): Promise<string> {
-  const key = await getWeb3FormsKey();
-  if (!key) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
+  const key = await getActiveIntakeKey();
   const sep = path.includes('?') ? '&' : '?';
   return `${path}${sep}key=${encodeURIComponent(key)}`;
 }
@@ -43,7 +77,6 @@ export interface IntakeRequest {
   id: string;
   createdAt: string;
   read: boolean;
-  // Primary signer
   signerFirstName: string;
   signerMiddleName: string;
   signerLastName: string;
@@ -54,32 +87,24 @@ export interface IntakeRequest {
   city: string;
   state: string;
   zip: string;
-  // ID
   idType: string;
   idNumber: string;
   idIssuedBy: string;
   idDateIssued: string;
   idExpirationDate: string;
-  // ID files (base64 data URLs)
   idFrontFiles: string[];
   idBackFiles: string[];
-  // ID images (single data URLs for display)
   idFrontImage?: string;
   idBackImage?: string;
-  // Services
   servicesPerformed: string[];
   serviceType: string;
   preferredDate: string;
   notes: string;
-  // Documents
   documents: Array<{ type: string; date: string }>;
-  // Payment
   paymentMethod: string;
   totalAmount: string;
   payerName: string;
-  // E-signature
   eSignature: string;
-  // Additional signer (Signer 2)
   hasSigner2: boolean;
   signer2FirstName: string;
   signer2LastName: string;
@@ -92,43 +117,42 @@ export interface IntakeRequest {
   signer2IdBackFiles: string[];
 }
 
-/** Get the backup key from settings for auth */
-async function getBackupKey(): Promise<string | null> {
-  // The backup key is stored server-side; the app gets it from the startup log
-  // We use a stored key in localStorage for convenience
-  return localStorage.getItem('zo_backup_key');
-}
-
-/** Build auth headers — access_key is now in the URL, so headers stay empty */
-async function authHeaders(): Promise<HeadersInit> {
-  return {};
-}
-
-/** List all intake submissions — requires access_key */
 export async function listSubmissions(): Promise<IntakeSubmission[]> {
   const url = await getIntakeUrl(INTAKE_BASE);
   const res = await fetch(url);
   if (!res.ok) {
-    if (res.status === 401) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
+    const mode = await getIntakeMode().catch(() => 'web3forms' as IntakeMode);
+    if (res.status === 401) {
+      throw new Error(
+        mode === 'zo'
+          ? 'Zo Computer form token invalid. Check Settings.'
+          : 'Intake key not configured. Please add your Web3Forms key in Settings.',
+      );
+    }
     throw new Error(`Intake API error: ${res.status}`);
   }
   const json = await res.json();
   return json.files || [];
 }
 
-/** Fetch a single submission by filename — requires access_key */
 export async function getSubmission(fileName: string): Promise<IntakeRequest> {
   const url = await getIntakeUrl(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}`);
   const res = await fetch(url);
   if (!res.ok) {
-    if (res.status === 401) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
+    const mode = await getIntakeMode().catch(() => 'web3forms' as IntakeMode);
+    if (res.status === 401) {
+      throw new Error(
+        mode === 'zo'
+          ? 'Zo Computer form token invalid. Check Settings.'
+          : 'Intake key not configured. Please add your Web3Forms key in Settings.',
+      );
+    }
     throw new Error(`Intake API error: ${res.status}`);
   }
   const raw = await res.json();
   return normalizeSubmission(raw, fileName);
 }
 
-/** Mark a submission as read (we track this client-side in localStorage) */
 export async function markSubmissionRead(fileName: string): Promise<void> {
   try {
     const read = JSON.parse(localStorage.getItem('intake_read') || '{}');
@@ -139,20 +163,22 @@ export async function markSubmissionRead(fileName: string): Promise<void> {
   }
 }
 
-/** Delete a submission from the intake store — requires access_key */
 export async function deleteSubmission(fileName: string): Promise<void> {
-  const url = await getIntakeUrl(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}&_method=DELETE`);
-  const res = await fetch(url, {
-    method: 'DELETE',
-    headers: await authHeaders(),
-  });
+  const url = await getIntakeUrl(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}`);
+  const res = await fetch(url, { method: 'DELETE' });
   if (!res.ok) {
-    if (res.status === 401) throw new Error('Intake key not configured. Please add your Web3Forms key in Settings.');
+    const mode = await getIntakeMode().catch(() => 'web3forms' as IntakeMode);
+    if (res.status === 401) {
+      throw new Error(
+        mode === 'zo'
+          ? 'Zo Computer form token invalid. Check Settings.'
+          : 'Intake key not configured. Please add your Web3Forms key in Settings.',
+      );
+    }
     throw new Error(`Failed to delete: ${res.status}`);
   }
 }
 
-/** Check if a submission has been read */
 function isSubmissionRead(fileName: string): boolean {
   try {
     const read = JSON.parse(localStorage.getItem('intake_read') || '{}');
@@ -162,9 +188,6 @@ function isSubmissionRead(fileName: string): boolean {
   }
 }
 
-/**
- * Normalize raw server data into the app's IntakeRequest shape.
- */
 function normalizeSubmission(raw: Record<string, unknown>, fileName: string): IntakeRequest {
   const d = raw;
   const str = (key: string, fallback = '') => String(d[key] ?? fallback).trim();
@@ -176,6 +199,8 @@ function normalizeSubmission(raw: Record<string, unknown>, fileName: string): In
   };
 
   const hasSigner2 = str('hasSigner2', 'no').toLowerCase() === 'yes';
+  const idFrontFiles = Array.isArray(d.idFrontFiles) ? d.idFrontFiles.map(String) : [];
+  const idBackFiles = Array.isArray(d.idBackFiles) ? d.idBackFiles.map(String) : [];
 
   return {
     id: fileName,
@@ -196,8 +221,10 @@ function normalizeSubmission(raw: Record<string, unknown>, fileName: string): In
     idIssuedBy: str('idIssuedBy'),
     idDateIssued: str('idDateIssued'),
     idExpirationDate: str('idExpirationDate'),
-    idFrontFiles: Array.isArray(d.idFrontFiles) ? d.idFrontFiles.map(String) : [],
-    idBackFiles: Array.isArray(d.idBackFiles) ? d.idBackFiles.map(String) : [],
+    idFrontFiles,
+    idBackFiles,
+    idFrontImage: idFrontFiles[0],
+    idBackImage: idBackFiles[0],
     servicesPerformed: multi('servicesPerformed'),
     serviceType: str('serviceType'),
     preferredDate: str('preferredDate'),
@@ -220,15 +247,46 @@ function normalizeSubmission(raw: Record<string, unknown>, fileName: string): In
   };
 }
 
-/** Test the intake connection — validates server reachability and key validity */
 export async function testIntakeConnection(): Promise<{ ok: boolean; message: string }> {
   try {
+    const mode = await getIntakeMode();
     const url = await getIntakeUrl(INTAKE_BASE);
     const res = await fetch(url);
-    if (res.ok) return { ok: true, message: 'Connected to intake endpoint successfully.' };
-    if (res.status === 401) return { ok: false, message: 'Intake key not configured or invalid. Please add your Web3Forms key in Settings.' };
+    if (res.ok) {
+      return {
+        ok: true,
+        message:
+          mode === 'zo'
+            ? 'Connected to Zo Computer intake successfully.'
+            : 'Connected to intake endpoint successfully.',
+      };
+    }
+    if (res.status === 401) {
+      return {
+        ok: false,
+        message:
+          mode === 'zo'
+            ? 'Zo Computer form token invalid. Check Settings or create a user row in SQLite.'
+            : 'Web3Forms key invalid or not configured.',
+      };
+    }
     return { ok: false, message: `Intake API error: ${res.status}` };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Connection failed.' };
+  }
+}
+
+/** Probe whether a URL key is a Zo Computer intake token (same-origin Zo host only). */
+export async function isZoIntakeToken(urlKey: string): Promise<boolean> {
+  if (!isZoHost() || !urlKey) return false;
+  try {
+    const res = await fetch(
+      `${INTAKE_BASE}?key=${encodeURIComponent(urlKey)}&probe=1`,
+    );
+    if (!res.ok) return false;
+    const data = (await res.json()) as { valid?: boolean; mode?: string };
+    return data.valid === true && data.mode === "zo";
+  } catch {
+    return false;
   }
 }

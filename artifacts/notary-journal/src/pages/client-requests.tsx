@@ -4,6 +4,7 @@ import {
   getSubmission,
   markSubmissionRead,
   deleteSubmission,
+  getIntakeMode,
   type IntakeSubmission,
   type IntakeRequest,
 } from '@/lib/intake-api';
@@ -73,9 +74,17 @@ export function ClientRequests() {
       setExpandedData(prev => ({ ...prev, ...Object.fromEntries(nameResults) }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load';
-      // Show a friendlier message when the key is not configured
-      if (msg.includes('Intake key not configured')) {
-        setError('Intake key not configured. Please add your Web3Forms key in Settings.');
+      if (msg.includes('not configured') || msg.includes('invalid')) {
+        try {
+          const mode = await getIntakeMode();
+          setError(
+            mode === 'zo'
+              ? 'Zo Computer form token not configured or invalid. Add your token in Settings.'
+              : 'Web3Forms key not configured. Add your Web3Forms access key in Settings.',
+          );
+        } catch {
+          setError('Intake not configured. Add a Zo Computer token or Web3Forms key in Settings.');
+        }
       } else {
         setError(msg);
       }

@@ -17,7 +17,7 @@ This guide covers deploying the Notary Journal PWA to **Zo Computer**, **Cloudfl
 
 **Node version on every host: `22` where configurable.** On Zo, use Bun with the committed `server.ts` and `zosite.json`.
 
-**Important:** Only **Zo Computer** includes the server-side backup API (`/api/backup`). All other hosts serve the static PWA only — you'll use JSON export/import or Google Drive backup for your data.
+**Important:** Only **Zo Computer** includes the server-side backup API (`/api/backup`) and Zo SQLite intake. All other hosts serve the static PWA only — use Web3Forms for client intake and JSON export/Google Drive for backups.
 
 ---
 
@@ -47,36 +47,11 @@ bun run build
 
 ### Step 3: Deploy as a Zo service
 
-In your Zo AI chat, send this prompt:
+Use the **single copy-paste Zo deploy prompt** in [README.md](README.md#option-1-zo-computer-recommended) (clone, build, `register_user_service` without `local_port`, backup key, SQLite user INSERT, Zo intake token in Settings).
 
-```
-Deploy the Notary Journal app on this Zo Computer.
+The server binds to `process.env.PORT` assigned by Zo. Local dev: `PORT=3000 bun run server.ts` after `bun run build`.
 
-Source repo: /home/workspace/Notary-log
-
-1. If a service named "notary-log" already exists, delete it first:
-   list_user_services → find the notary-log service_id → delete_user_service(service_id=...)
-
-2. Register the service:
-   register_user_service(
-     label="notary-log",
-     mode="http",
-     entrypoint="bun run server.ts",
-     workdir="/home/workspace/Notary-log",
-     local_port=5173,
-     public=true
-   )
-
-3. Wait 10 seconds, then verify it's running:
-   cat /dev/shm/notary-log.log | grep "listening on"
-   curl -s -o /dev/null -w "%{http_code}" https://notary-log-{your-handle}.zocomputer.io
-   service_doctor(service="notary-log")
-
-4. Get your backup key from the logs:
-   cat /dev/shm/notary-log.log | grep "Zo Backup Key"
-
-Copy the backup key into the app's Settings > Backup section.
-```
+Zo-only intake (`/api/intake` with SQLite) does not run on Cloudflare Workers or Netlify — those hosts keep Web3Forms intake unchanged.
 
 ### Step 4: Set Google OAuth
 
