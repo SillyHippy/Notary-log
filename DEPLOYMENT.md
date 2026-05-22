@@ -47,7 +47,7 @@ bun run build
 
 ### Step 3: Deploy as a Zo service
 
-Use the **single copy-paste Zo deploy prompt** in [README.md](README.md#option-1-zo-computer-recommended) (clone, build, `register_user_service` without `local_port`, backup key, SQLite user INSERT, Zo intake token in Settings).
+Use the **delete + deploy prompts** in [README.md](README.md#option-1-zo-computer-recommended) (clone, build, `register_user_service` without `local_port`, backup key and Zo intake token from server logs — auto-created on first start).
 
 The server binds to `process.env.PORT` assigned by Zo. Local dev: `PORT=3000 bun run server.ts` after `bun run build`.
 

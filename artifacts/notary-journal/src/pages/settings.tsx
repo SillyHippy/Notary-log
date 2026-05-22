@@ -1436,7 +1436,7 @@ export function Settings() {
               className="mt-1 font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              When set on Zo Computer, intake link uses this token. Clear to use Web3Forms only.
+              On first Zo deploy, copy <strong>Zo Intake Token</strong> from server logs (created automatically). Clear to use Web3Forms only.
             </p>
           </div>
 

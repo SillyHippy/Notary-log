@@ -67,13 +67,19 @@ async function fileToBase64(file: File): Promise<string> {
 export function ClientIntake() {
   const urlKey = React.useState(() => getUrlKey())[0];
   const [zoIntakeMode, setZoIntakeMode] = React.useState(false);
+  const [intakeProbeDone, setIntakeProbeDone] = React.useState(() => !isZoHost());
 
   React.useEffect(() => {
     if (!urlKey || !isZoHost()) {
       setZoIntakeMode(false);
+      setIntakeProbeDone(true);
       return;
     }
-    void isZoIntakeToken(urlKey).then(setZoIntakeMode);
+    setIntakeProbeDone(false);
+    void isZoIntakeToken(urlKey).then((zo) => {
+      setZoIntakeMode(zo);
+      setIntakeProbeDone(true);
+    });
   }, [urlKey]);
 
   const [submitting, setSubmitting] = React.useState(false);
@@ -976,7 +982,7 @@ export function ClientIntake() {
           {/* Submit button */}
           <Button
             onClick={handleSubmit}
-            disabled={submitting}
+            disabled={submitting || !intakeProbeDone}
             className="w-full gap-2"
             size="lg"
           >
@@ -984,10 +990,12 @@ export function ClientIntake() {
               <>
                 <Loader2 className="w-4 h-4 animate-spin" /> Submitting...
               </>
-            ) : (
+            ) : !intakeProbeDone ? (
               <>
-                Submit Request
+                <Loader2 className="w-4 h-4 animate-spin" /> Checking link...
               </>
+            ) : (
+              <>Submit Request</>
             )}
           </Button>
         </div>

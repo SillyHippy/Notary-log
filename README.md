@@ -77,67 +77,78 @@ bun i
 bun run build
 ```
 
-### Step 3: Deploy as a Zo service
+### Step 3: Remove an old Zo deployment (optional)
 
-In your Zo AI chat, paste this **entire** prompt (one block):
+If Notary-log is already on this Zo Computer, paste this in Zo AI chat first:
 
 ```
-Deploy the Notary Journal app on this Zo Computer.
+Remove the Notary Journal deployment from this Zo Computer.
 
-Source repo: /home/workspace/Notary-log
-
-1. Clone or update the repo:
-   cd /home/workspace
-   if [ ! -d Notary-log ]; then git clone https://github.com/SillyHippy/Notary-log; fi
-   cd Notary-log
-   git pull
-
-2. Optional: Google Drive backup — before building, set in artifacts/notary-journal/.env:
-   VITE_GOOGLE_CLIENT_ID=your-google-client-id
-
-3. Install and build:
-   bun i
-   bun run build
-
-4. If a service named "notary-log" already exists, delete it first:
-   list_user_services → find notary-log service_id → delete_user_service(service_id=...)
-
-5. Register ONE public HTTP service (do NOT set local_port — Zo assigns PORT automatically):
-   register_user_service(
-     label="notary-log",
-     mode="http",
-     entrypoint="bun run server.ts",
-     workdir="/home/workspace/Notary-log",
-     public=true
-   )
-
-6. Wait 10 seconds, then verify:
-   cat /dev/shm/notary-log.log | grep "listening on"
-   curl -s -o /dev/null -w "%{http_code}" https://notary-log-{my-handle}.zocomputer.io/
-   service_doctor(service="notary-log")
-
-7. From the logs, copy:
-   - Zo Backup Key → app Settings > Zo Backup
-   - Confirm: Intake SQLite DB and intake upload paths under Documents/Notary Journal/
-
-8. Create my notary intake user in SQLite (replace name, email, and pick a long random token):
-   bun -e "
-   const { Database } = require('bun:sqlite');
-   const db = new Database('./Documents/Notary Journal/notary.db');
-   const token = crypto.randomUUID().replace(/-/g,'') + crypto.randomUUID().replace(/-/g,'');
-   db.run('INSERT INTO users (id, token, name, email) VALUES (?, ?, ?, ?)',
-     [crypto.randomUUID(), token, 'Jane Notary', 'jane@example.com']);
-   console.log('Zo intake token (paste in Settings):', token);
-   "
-
-9. Optional: in Zo Advanced, set ZO_API_KEY so intake emails send via Zo.
-
-10. In the deployed app: Settings → paste Zo Backup Key → paste Zo Computer Form Token → Copy Intake Link → share with clients.
+1. list_user_services — find any service with label "notary-log" (or entrypoint containing "Notary-log" or "server.ts" for notary).
+2. For each match: delete_user_service(service_id=<id>)
+3. list_user_services again — confirm notary-log is gone.
+4. Do NOT delete Documents/Notary Journal unless I explicitly say "delete all notary data".
+5. Report which service_id was deleted.
 ```
+
+### Step 4: Deploy as a Zo service
+
+In your Zo AI chat, paste this **entire** prompt (one block). Replace `{my-handle}` with your Zo handle (or ask Zo to use your real handle in URLs):
+
+```
+Deploy Notary Journal on this Zo Computer from scratch. Follow every step in order.
+
+REPO: /home/workspace/Notary-log
+GITHUB: https://github.com/SillyHippy/Notary-log
+SERVICE LABEL: notary-log
+
+A. PREP
+1. cd /home/workspace
+2. If Notary-log exists: cd Notary-log && git pull
+   Else: git clone https://github.com/SillyHippy/Notary-log && cd Notary-log
+3. pwd must be /home/workspace/Notary-log
+
+B. BUILD
+4. Optional before build: artifacts/notary-journal/.env → VITE_GOOGLE_CLIENT_ID=...
+5. bun i
+6. bun run build — if this fails, stop and report the error
+
+C. REMOVE OLD SERVICE
+7. list_user_services
+8. If label "notary-log" exists: delete_user_service(service_id=...)
+9. Confirm notary-log is gone
+
+D. REGISTER ONE SERVICE (do NOT set local_port)
+10. register_user_service(
+      label="notary-log",
+      mode="http",
+      entrypoint="bun run server.ts",
+      workdir="/home/workspace/Notary-log",
+      public=true
+    )
+
+E. VERIFY
+11. Wait 15 seconds
+12. cat /dev/shm/notary-log.log | tail -60
+    Must include: "listening on", "Zo Backup Key", "Zo Intake Token"
+13. curl -s https://notary-log-{my-handle}.zocomputer.io/api/health
+14. service_doctor(service="notary-log")
+
+F. REPORT TO ME
+15. Public app URL
+16. Exact Zo Backup Key from logs
+17. Exact Zo Intake Token from logs (also in Documents/Notary Journal/.zo-intake-token)
+18. Optional: set ZO_API_KEY in Zo Advanced for intake emails
+
+G. IN THE APP
+19. Open the public URL → Settings → paste Zo Backup Key → paste Zo Computer Form Token → Copy Intake Link → test /intake?key=<token>
+```
+
+On first start with an empty database, the server **creates the notary user and intake token automatically** — no manual SQL. Optional env before deploy: `NOTARY_NAME`, `NOTARY_EMAIL` (defaults: Primary Notary / notary@localhost).
 
 Extended troubleshooting and optional features: [docs/zo-computer-setup.md](docs/zo-computer-setup.md).
 
-### Step 4: Set Google OAuth
+### Step 5: Set Google OAuth
 
 The Google OAuth client ID must be set BEFORE building. Edit `artifacts/notary-journal/.env` and add:
 

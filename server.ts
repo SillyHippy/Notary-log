@@ -115,6 +115,47 @@ function initDatabase(): Database {
   return db;
 }
 
+function generateIntakeToken(): string {
+  return (
+    crypto.randomUUID().replace(/-/g, "") +
+    crypto.randomUUID().replace(/-/g, "")
+  );
+}
+
+/** First Zo start with an empty users table: create one notary and return their token. */
+function ensureDefaultNotaryUser(db: Database): {
+  token: string;
+  name: string;
+  email: string;
+  created: boolean;
+} | null {
+  const row = db
+    .query("SELECT COUNT(*) AS count FROM users")
+    .get() as { count: number };
+  if (row.count > 0) {
+    return null;
+  }
+
+  const token = generateIntakeToken();
+  const id = crypto.randomUUID();
+  const name = process.env.NOTARY_NAME?.trim() || "Primary Notary";
+  const email = process.env.NOTARY_EMAIL?.trim() || "notary@localhost";
+
+  db.run(
+    "INSERT INTO users (id, token, name, email) VALUES (?, ?, ?, ?)",
+    [id, token, name, email],
+  );
+
+  return { token, name, email, created: true };
+}
+
+function getPrimaryIntakeToken(db: Database): string | null {
+  const row = db
+    .query("SELECT token FROM users ORDER BY created_at ASC LIMIT 1")
+    .get() as { token: string } | null;
+  return row?.token ?? null;
+}
+
 function validateToken(db: Database, token: string): ZoUser | null {
   if (!token) return null;
   const row = db
@@ -602,7 +643,40 @@ function handleHealth() {
 
 /* ── Server ─────────────────────────────────────────────────────── */
 
+await mkdir(JOURNAL_DIR, { recursive: true });
 const db = initDatabase();
+const INTAKE_TOKEN_FILE = join(JOURNAL_DIR, ".zo-intake-token");
+
+async function logStartupCredentials() {
+  await mkdir(JOURNAL_DIR, { recursive: true });
+
+  const created = ensureDefaultNotaryUser(db);
+  const intakeToken = created?.token ?? getPrimaryIntakeToken(db);
+
+  if (intakeToken) {
+    await Bun.write(INTAKE_TOKEN_FILE, `${intakeToken}\n`);
+    if (created) {
+      console.log(
+        `Zo Intake Token (new notary — paste in Settings): ${intakeToken}`,
+      );
+      console.log(`Zo Intake User: ${created.name} <${created.email}>`);
+    } else {
+      console.log(`Zo Intake Token (existing): ${intakeToken}`);
+    }
+    console.log(`Zo Intake Token file: ${INTAKE_TOKEN_FILE}`);
+  } else {
+    console.warn("No Zo intake users in database — client intake will return 401");
+  }
+
+  const backupKey = await ensureBackupKey();
+  console.log(`Zo Backup API URL: /api/backup`);
+  console.log(`Zo Backup Key: ${backupKey}`);
+  console.log(`Zo Backup Storage: ${BACKUP_DIR}`);
+  console.log(`Intake webhook URL: /api/intake-webhook`);
+  console.log(`Intake SQLite DB: ${DB_PATH}`);
+  console.log(`Intake uploads dir: ${join(JOURNAL_DIR, "intake")}/`);
+  console.log(`Legacy intake JSON dir: ${INTAKE_LEGACY_DIR}`);
+}
 
 const server = Bun.serve({
   port: PORT,
@@ -645,12 +719,4 @@ const server = Bun.serve({
 });
 
 console.log(`Notary Journal server listening on port ${server.port}`);
-void ensureBackupKey().then((key) => {
-  console.log(`Zo Backup API URL: /api/backup`);
-  console.log(`Zo Backup Key: ${key}`);
-  console.log(`Zo Backup Storage: ${BACKUP_DIR}`);
-  console.log(`Intake webhook URL: /api/intake-webhook`);
-  console.log(`Intake SQLite DB: ${DB_PATH}`);
-  console.log(`Intake uploads dir: ${INTAKE_LEGACY_DIR}/`);
-  console.log(`Legacy intake JSON dir: ${INTAKE_LEGACY_DIR}`);
-});
+void logStartupCredentials();
