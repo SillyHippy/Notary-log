@@ -35,6 +35,7 @@ Optional environment variables on the Zo service:
 
 | Variable | Purpose |
 |----------|---------|
+| `VITE_GOOGLE_CLIENT_ID` | **Build-time only** — write to `artifacts/notary-journal/.env` before `bun run build` to enable Google Drive in Settings. Zo Advanced env alone is not enough. |
 | `NOTARY_NAME` | Display name for the auto-created user (default: Primary Notary) |
 | `NOTARY_EMAIL` | Email for notifications (default: notary@localhost) |
 | `ZO_API_KEY` | Zo Advanced — enables intake confirmation emails |
@@ -73,6 +74,7 @@ Both modes can coexist on Zo: Zo token takes precedence in Settings when the app
 | 404 on app URL | `service_doctor(service="notary-log")`, confirm `public=true` |
 | Intake 401 for clients | Token in logs or `.zo-intake-token`; must match Settings |
 | Client Requests empty (Zo) | Settings → Zo token matches `users.token` |
+| Google Drive “Contact the app administrator” | `VITE_GOOGLE_CLIENT_ID` was missing at **build** time — see README [Enable Google Drive later](../README.md#step-5-enable-google-drive-backup-later-zo). Zo Advanced env alone is not enough. |
 | Port conflicts | Do not set `local_port`; Zo sets `PORT` |
 | Backup 401 | Copy exact `Zo Backup Key` from logs into Settings |
 | Fresh deploy, old data | Delete service only; wipe `Documents/Notary Journal` only if you want a clean DB |

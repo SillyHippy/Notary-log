@@ -49,25 +49,17 @@ bun run build
 
 Use the **delete + deploy prompts** in [README.md](README.md#option-1-zo-computer-recommended) (clone, build, `register_user_service` without `local_port`, backup key and Zo intake token from server logs — auto-created on first start).
 
+**Google Drive:** If you want Cloud Backup in Settings, read [Google Drive backup and Zo environment variables](README.md#google-drive-backup-and-zo-environment-variables) in the README. You must set `VITE_GOOGLE_CLIENT_ID` in `artifacts/notary-journal/.env` **before** `bun run build`. Zo Advanced env vars alone do not enable Google Drive. To add it after deploy, use [Enable Google Drive backup later (Zo)](README.md#step-5-enable-google-drive-backup-later-zo).
+
 The server binds to `process.env.PORT` assigned by Zo. Local dev: `PORT=3000 bun run server.ts` after `bun run build`.
 
 Zo-only intake (`/api/intake` with SQLite) does not run on Cloudflare Workers or Netlify — those hosts keep Web3Forms intake unchanged.
-
-### Step 4: Set Google OAuth
-
-The Google OAuth client ID must be set BEFORE building. Edit `artifacts/notary-journal/.env` and add:
-
-```
-VITE_GOOGLE_CLIENT_ID=your-google-client-id-here
-```
-
-Then rebuild: `bun run build`
 
 ### Zo Limitations
 
 - One HTTP service per account on free tier
 - Backups stored on the server (encrypted)
-- For Google Drive backup, set your client ID in `.env` before building
+- Google Drive: see README sections linked above
 
 ---
 

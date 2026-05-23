@@ -123,8 +123,17 @@ A. PREP
    Else: git clone https://github.com/SillyHippy/Notary-log && cd Notary-log
 3. pwd must be /home/workspace/Notary-log
 
-B. BUILD
-4. Optional before build: artifacts/notary-journal/.env → VITE_GOOGLE_CLIENT_ID=...
+B. BUILD (read Google note in README before this section)
+
+If I want Google Drive backup on this deploy:
+- Read VITE_GOOGLE_CLIENT_ID from Zo Advanced environment variables (or ask me for the value).
+- Write artifacts/notary-journal/.env containing exactly:
+  VITE_GOOGLE_CLIENT_ID=<that value>
+- Zo Advanced env alone does NOT enable Google Drive — it must be present for bun run build.
+
+If I do NOT want Google Drive yet, skip the .env file and continue; I can enable it later with the README “Enable Google Drive later” prompt.
+
+4. (Google Drive only) create or update artifacts/notary-journal/.env with VITE_GOOGLE_CLIENT_ID
 5. bun i
 6. bun run build — if this fails, stop and report the error
 
@@ -153,33 +162,69 @@ F. REPORT TO ME
 15. Public app URL
 16. Exact Zo Backup Key from logs
 17. Exact Zo Intake Token from logs (also in Documents/Notary Journal/.zo-intake-token)
-18. Optional: set ZO_API_KEY in Zo Advanced for intake emails
+18. Whether Google Drive was configured at build (yes/no)
+19. Optional: set ZO_API_KEY in Zo Advanced for intake emails
 
 G. IN THE APP
-19. Open the public URL → Settings → paste Zo Backup Key → paste Zo Computer Form Token → Copy Intake Link → test /intake?key=<token>
+20. Open the public URL → Settings → paste Zo Backup Key → paste Zo Computer Form Token → Copy Intake Link → test /intake?key=<token>
+21. If Google was configured at build: Settings → Cloud Backup should show “Connect Google Drive”, not “Contact the app administrator”
 ```
 
-On first start with an empty database, the server **creates the notary user and intake token automatically** — no manual SQL. Optional env before deploy: `NOTARY_NAME`, `NOTARY_EMAIL` (defaults: Primary Notary / notary@localhost).
+On first start with an empty database, the server **creates the notary user and intake token automatically** — no manual SQL. Optional runtime env on the Zo service: `NOTARY_NAME`, `NOTARY_EMAIL` (defaults: Primary Notary / notary@localhost).
 
-Extended troubleshooting and optional features: [docs/zo-computer-setup.md](docs/zo-computer-setup.md).
+### Step 5: Enable Google Drive backup later (Zo)
 
-### Step 5: Set Google OAuth
+Use this if you **skipped Google at deploy** or only added `VITE_GOOGLE_CLIENT_ID` to Zo Advanced **after** the app was already built. You must **rebuild** — Zo Settings env vars do not update an existing build.
 
-The Google OAuth client ID must be set BEFORE building. Edit `artifacts/notary-journal/.env` and add:
+**1.** Add `VITE_GOOGLE_CLIENT_ID` in Zo Advanced (if not already there).
+
+**2.** In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), add your app URL to **Authorized JavaScript origins** (e.g. `https://notary-log-{your-handle}.zocomputer.io`).
+
+**3.** Paste this in Zo AI chat:
 
 ```
-VITE_GOOGLE_CLIENT_ID=your-google-client-id-here
+Enable Google Drive backup for Notary Journal on this Zo Computer.
+
+REPO: /home/workspace/Notary-log
+
+1. cd /home/workspace/Notary-log && git pull
+
+2. Read VITE_GOOGLE_CLIENT_ID from Zo Advanced environment variables (or ask me to paste it).
+
+3. Write artifacts/notary-journal/.env with exactly:
+   VITE_GOOGLE_CLIENT_ID=<that value>
+   (Zo Advanced env alone is not enough — this file must exist before build.)
+
+4. bun run build — if this fails, stop and report the error
+
+5. Restart the notary-log service (list_user_services → restart or re-register if needed)
+
+6. Confirm in logs that the service is listening again
+
+7. Tell me to hard-refresh the app in the browser, then check Settings → Cloud Backup:
+   - Should show “Connect Google Drive”
+   - Must NOT show “Contact the app administrator”
 ```
 
-Then rebuild: `bun run build`
+### Step 6: Google OAuth reference (manual)
+
+Same as the “later” flow, without Zo chat — run on the Zo machine:
+
+```bash
+cd /home/workspace/Notary-log
+# Use the same client ID as in Zo Advanced:
+echo 'VITE_GOOGLE_CLIENT_ID=your-google-client-id-here.apps.googleusercontent.com' > artifacts/notary-journal/.env
+bun run build
+# Then restart the notary-log service
+```
 
 ### Zo Limitations
 
 - One HTTP service per account on free tier
 - Backups stored on the server (encrypted)
-- For Google Drive backup, set your client ID in `.env` before building
+- Google Drive requires `VITE_GOOGLE_CLIENT_ID` in `artifacts/notary-journal/.env` **before** `bun run build` (see [Google Drive backup and Zo environment variables](#google-drive-backup-and-zo-environment-variables) and [Enable Google Drive backup later](#step-5-enable-google-drive-backup-later-zo))
 
----
+Extended troubleshooting: [docs/zo-computer-setup.md](docs/zo-computer-setup.md).
 
 ## Option 2: Cloudflare Workers
 
@@ -507,6 +552,7 @@ The host doesn't know to serve `index.html` for non-file URLs.
 
 The `VITE_GOOGLE_CLIENT_ID` wasn't set when the app was built.
 
+- **Zo Computer:** Zo Advanced environment variables **do not** enable Google Drive by themselves. Use the [Enable Google Drive backup later (Zo)](#step-5-enable-google-drive-backup-later-zo) prompt (write `.env`, `bun run build`, restart service).
 - **Git-connected deploys (Netlify, Cloudflare Pages):** Set the variable in the host dashboard, then trigger a rebuild.
 - **Drag-and-drop / manual deploys:** Set `VITE_GOOGLE_CLIENT_ID` in your shell **before** running `pnpm run build`, then rebuild and re-upload. Host dashboard environment variables are ignored for drag-and-drop.
 
