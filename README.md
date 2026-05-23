@@ -61,6 +61,21 @@ Zo gives you a free computer with 100GB storage, one hosted service, and built-i
 - Backup API: `https://notary-log-{your-handle}.zocomputer.io/api/backup`
 - Client intake: Zo token link or Web3Forms fallback (same service)
 - Backups stored on the server in `Documents/Notary Journal/backups/`
+- Optional: Google Drive backup in Settings (only if configured **before** `bun run build` — see below)
+
+### Google Drive backup and Zo environment variables
+
+Google Drive uses `VITE_GOOGLE_CLIENT_ID`. That value is **baked into the app during `bun run build`**, not read when the server starts.
+
+| Where you set it | Enables Google Drive? |
+|------------------|------------------------|
+| Zo Advanced → environment variables **before** build, **and** written to `artifacts/notary-journal/.env` (or exported in the shell) **before** `bun run build` | Yes |
+| Zo Advanced only, after deploy, with no rebuild | **No** — Settings will show “Contact the app administrator” |
+| Skipped at deploy | No — use the **Enable Google Drive later** prompt below when ready |
+
+You can use **Zo backup**, **Google Drive**, or **both**. Zo intake and backup are unrelated to this step.
+
+If you use Google OAuth, add your Zo app URL (e.g. `https://notary-log-{your-handle}.zocomputer.io`) under **Authorized JavaScript origins** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
 
 ### Step 1: Clone the repo
 
