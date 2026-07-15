@@ -423,6 +423,7 @@ export function exportAllPDF(entries: JournalEntry[], settings: NotarySettings):
 export function exportJournalTablePDF(
   entries: JournalEntry[],
   settings: NotarySettings,
+  downloadName?: string,
 ): void {
   const doc = new jsPDF({ orientation: 'landscape' });
   const pageW = doc.internal.pageSize.getWidth();
@@ -604,7 +605,28 @@ export function exportJournalTablePDF(
   }
 
   stampSealOnAllPages(doc, settings.sealImage);
-  doc.save(`notary-journal-printable-${Date.now()}.pdf`);
+  doc.save(downloadName ?? `notary-journal-printable-${Date.now()}.pdf`);
+}
+
+/** Print all journal lines for one signing group (one row per act). */
+export function exportSigningGroupPDF(
+  entries: JournalEntry[],
+  settings: NotarySettings,
+  groupLabel?: string,
+): void {
+  const completed = entries
+    .filter(e => e.status === 'completed' || e.status === 'amended')
+    .sort((a, b) => {
+      const ai = a.actIndexInGroup ?? a.entryNumber;
+      const bi = b.actIndexInGroup ?? b.entryNumber;
+      return ai - bi || a.entryNumber - b.entryNumber;
+    });
+  if (completed.length === 0) {
+    throw new Error('No completed entries in this signing group.');
+  }
+  const label = groupLabel || completed[0].signingGroupLabel || completed[0].signerFullName || 'signing';
+  const safeLabel = label.replace(/[^a-z0-9-_]+/gi, '-').slice(0, 40);
+  exportJournalTablePDF(completed, settings, `notary-signing-${safeLabel}-${Date.now()}.pdf`);
 }
 
 // ── Annual report exports ──────────────────────────────────────────────────

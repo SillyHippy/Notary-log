@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'wouter';
-import { LayoutDashboard, BookOpen, Plus, Settings, FileBarChart, Inbox } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Plus, Settings, FileBarChart, Inbox, FileStack } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function Navigation() {
@@ -63,10 +63,14 @@ export function Navigation() {
         </div>
 
         <div className="flex-1 py-6 px-4 flex flex-col gap-2">
-          <div className="mb-6">
+          <div className="mb-6 space-y-2">
             <Link href="/entry/new" className="flex items-center justify-center gap-2 w-full bg-primary text-primary-foreground font-medium rounded-lg h-12 shadow-sm hover:opacity-90 transition-opacity" data-testid="link-nav-new-entry-desktop">
               <Plus className="w-5 h-5" />
               New Entry
+            </Link>
+            <Link href="/entry/new/session" className="flex items-center justify-center gap-2 w-full border border-border font-medium rounded-lg h-10 text-sm hover:bg-muted/50 transition-colors" data-testid="link-nav-signing-session-desktop">
+              <FileStack className="w-4 h-4" />
+              Signing Session
             </Link>
           </div>
 

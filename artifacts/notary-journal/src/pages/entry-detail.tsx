@@ -16,10 +16,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, getAllEntries,
+  getEntriesBySigningGroup,
   recomputeChainFrom, verifyChainPure, shouldRecordSignerDOB, shouldRecordSignerIdNumber,
   type JournalEntry, type NotarySettings,
 } from '@/lib/db';
-import { exportEntryPDF, exportEntryCSV, exportEntryJSON } from '@/lib/export';
+import { exportEntryPDF, exportEntryCSV, exportEntryJSON, exportSigningGroupPDF } from '@/lib/export';
+import { generateSigningGroupId } from '@/lib/signing-session';
 
 export function EntryDetail() {
   const [, setLocation] = useLocation();
@@ -35,6 +37,7 @@ export function EntryDetail() {
   const [isAmending, setIsAmending] = useState(false);
   const [amendmentText, setAmendmentText] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [groupSiblings, setGroupSiblings] = useState<JournalEntry[]>([]);
 
   useEffect(() => {
     async function loadData() {
@@ -71,6 +74,13 @@ export function EntryDetail() {
 
       setEntry(entryData);
       setSettings(settingsData ?? null);
+
+      if (entryData.signingGroupId) {
+        const siblings = await getEntriesBySigningGroup(entryData.signingGroupId);
+        setGroupSiblings(siblings.filter(e => e.id !== entryData!.id));
+      } else {
+        setGroupSiblings([]);
+      }
 
       if (entryData.status === 'completed' || entryData.status === 'amended') {
         if (!entryData.hash) {
@@ -225,6 +235,30 @@ export function EntryDetail() {
             </Button>
           </div>
 
+          {(entry.signingGroupId && groupSiblings.length > 0) && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => {
+                try {
+                  const allInGroup = [entry, ...groupSiblings].sort((a, b) => {
+                    const ai = a.actIndexInGroup ?? a.entryNumber;
+                    const bi = b.actIndexInGroup ?? b.entryNumber;
+                    return ai - bi || a.entryNumber - b.entryNumber;
+                  });
+                  exportSigningGroupPDF(allInGroup, settings, entry.signingGroupLabel);
+                  toast({ title: 'PDF generated', description: `${allInGroup.length} journal lines exported.` });
+                } catch (err) {
+                  toast({ title: 'Export failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+                }
+              }}
+              data-testid="button-print-signing-group"
+            >
+              <FileText className="w-4 h-4" /> Print signing
+            </Button>
+          )}
+
           {(entry.status === 'completed' || entry.status === 'amended') && (
             <Button
               variant="outline"
@@ -232,6 +266,7 @@ export function EntryDetail() {
               className="gap-2"
               onClick={() => {
                 try {
+                  const groupId = entry.signingGroupId ?? generateSigningGroupId();
                   sessionStorage.setItem('notary-journal:multiSignerPrefill', JSON.stringify({
                     documentType: entry.documentType,
                     documentDate: entry.documentDate,
@@ -243,6 +278,8 @@ export function EntryDetail() {
                     locationCity: entry.locationCity,
                     locationState: entry.locationState,
                     locationAddress: entry.locationAddress,
+                    signingGroupId: groupId,
+                    signingGroupLabel: entry.signingGroupLabel || entry.documentType,
                   }));
                 } catch { /* ignore */ }
                 setLocation(`/entry/new?multiSigner=${Date.now()}`);
@@ -414,6 +451,40 @@ export function EntryDetail() {
           </Card>
         </div>
       </div>
+
+      {(entry.signingGroupId && (groupSiblings.length > 0 || entry.signingGroupLabel)) && (
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Users className="w-5 h-5 text-primary" />
+              {entry.signingGroupLabel || 'Linked signing'}
+            </CardTitle>
+            <CardDescription>
+              {entry.actIndexInGroup && entry.actCountInGroup
+                ? `Act ${entry.actIndexInGroup} of ${entry.actCountInGroup} in this signing`
+                : `${groupSiblings.length + 1} linked entries`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {groupSiblings.map(sib => (
+              <button
+                key={sib.id}
+                type="button"
+                className="w-full flex items-center justify-between rounded-lg border px-3 py-2 text-sm hover:bg-muted/50 text-left"
+                onClick={() => setLocation(`/entry/${sib.id}`)}
+                data-testid={`link-sibling-${sib.id}`}
+              >
+                <span>
+                  Entry #{sib.entryNumber}
+                  {sib.actIndexInGroup ? ` · act ${sib.actIndexInGroup}` : ''}
+                  {sib.documentType ? ` — ${sib.documentType}` : ''}
+                </span>
+                <span className="text-muted-foreground capitalize">{sib.signerFullName}</span>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Amendments Section */}
       {(entry.amendments?.length || entry.status === 'completed' || entry.status === 'amended') && (

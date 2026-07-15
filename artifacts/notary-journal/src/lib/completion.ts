@@ -62,3 +62,27 @@ export function getMissingCompletionFields(
   }
   return missing;
 }
+
+/** Validate shared signer fields before completing a signing session. */
+export function getMissingSigningSessionSharedFields(
+  data: CompletionFields,
+  settings: NotarySettings | null | undefined,
+): string[] {
+  return getMissingCompletionFields(
+    { ...data, documentType: data.documentType || 'placeholder' },
+    settings,
+  ).filter(label => label !== 'Document type');
+}
+
+/** Per-act document row validation for signing sessions. */
+export function getMissingSigningActFields(
+  acts: Array<{ documentType?: string; notarialActType?: string }>,
+): string[] {
+  const missing: string[] = [];
+  acts.forEach((act, i) => {
+    if (!act.documentType?.trim()) missing.push(`Act ${i + 1}: document type`);
+    if (!act.notarialActType) missing.push(`Act ${i + 1}: notarial act type`);
+  });
+  if (acts.length === 0) missing.push('At least one document/act');
+  return missing;
+}

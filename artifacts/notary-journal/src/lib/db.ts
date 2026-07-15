@@ -13,6 +13,11 @@ import {
   DEFAULT_ITERATIONS,
   type EncBlob,
 } from './crypto';
+import {
+  buildDraftEntriesFromSession,
+  validateSigningSessionPayload,
+  type SigningSessionPayload,
+} from './signing-session';
 
 export interface JournalEntry {
   id?: number;
@@ -84,6 +89,12 @@ export interface JournalEntry {
   editHistory?: Array<{ field: string; oldValue: string; newValue: string; date: string }>;
 
   notes?: string;
+
+  /** Optional signing-session metadata (v1: not included in hash). */
+  signingGroupId?: string;
+  signingGroupLabel?: string;
+  actIndexInGroup?: number;
+  actCountInGroup?: number;
 }
 
 export interface NotarySettings {
@@ -829,7 +840,16 @@ export async function getStats() {
  */
 export async function generateEntryHash(entry: JournalEntry): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { id, hash, updatedAt, ...signed } = entry;
+  const {
+    id,
+    hash,
+    updatedAt,
+    signingGroupId,
+    signingGroupLabel,
+    actIndexInGroup,
+    actCountInGroup,
+    ...signed
+  } = entry;
   return sha256Hex(canonicalJson({
     ...signed,
     previousEntryHash: entry.previousEntryHash ?? '',
@@ -853,6 +873,39 @@ export async function completeEntry(id: number): Promise<JournalEntry> {
   const hash = await generateEntryHash(draft);
   await updateEntry(id, { status: 'completed', completedAt, previousEntryHash, hash });
   return { ...draft, hash };
+}
+
+/**
+ * Create and complete one journal entry per act in a signing session.
+ * Shared signer/ID/signature are copied to each row; documents/fees differ per act.
+ */
+export async function createAndCompleteSigningSession(
+  payload: SigningSessionPayload,
+): Promise<number[]> {
+  const errors = validateSigningSessionPayload(payload);
+  if (errors.length) {
+    throw new Error(errors.join('; '));
+  }
+  const drafts = buildDraftEntriesFromSession(payload);
+  const ids: number[] = [];
+  for (const draft of drafts) {
+    const id = await createEntry(draft);
+    await completeEntry(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/** All entries belonging to a signing group, sorted by act index then entry number. */
+export async function getEntriesBySigningGroup(groupId: string): Promise<JournalEntry[]> {
+  const all = await getAllEntries();
+  return all
+    .filter(e => e.signingGroupId === groupId)
+    .sort((a, b) => {
+      const ai = a.actIndexInGroup ?? a.entryNumber;
+      const bi = b.actIndexInGroup ?? b.entryNumber;
+      return ai - bi || a.entryNumber - b.entryNumber;
+    });
 }
 
 export interface ChainVerificationIssue {

@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'wouter';
 import { format } from 'date-fns';
-import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine, ScanLine, Printer } from 'lucide-react';
+import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine, ScanLine, Printer, ChevronDown, Link2, FileStack } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getAllEntries, searchEntries, deleteEntry, getSettings, shouldRecordSignerIdNumber, type JournalEntry, type NotarySettings } from '@/lib/db';
-import { exportJournalTablePDF } from '@/lib/export';
+import { exportJournalTablePDF, exportSigningGroupPDF } from '@/lib/export';
+import { buildJournalDisplayRows, groupLabel } from '@/lib/signing-group';
 import { useToast } from '@/hooks/use-toast';
 
 type SortField = 'date' | 'name' | 'entry';
@@ -32,6 +33,7 @@ export function JournalList() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [needsIdScanFilter, setNeedsIdScanFilter] = useState(false);
   const [settings, setSettings] = useState<NotarySettings | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   // Compliance: when this notary's state forbids storing the ID number, hide
   // the entire ID Number column (header + cell + masking control) so it never
   // appears on screen — even masked — for entries that may have been written
@@ -117,6 +119,17 @@ export function JournalList() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
 
+  const displayRows = buildJournalDisplayRows(filteredAndSorted);
+
+  const toggleGroup = (groupId: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed': return 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800';
@@ -133,14 +146,111 @@ export function JournalList() {
     return '****' + id.slice(-4);
   };
 
+  const renderEntryRow = (entry: JournalEntry, nested: boolean) => (
+    <tr
+      key={entry.id}
+      className={cn(
+        'group hover:bg-muted/30 cursor-pointer transition-colors',
+        nested && 'bg-muted/10',
+      )}
+      onClick={() => { if (confirmDeleteId === entry.id) return; setLocation(`/entry/${entry.id}`); }}
+      data-testid={`row-entry-${entry.id}`}
+    >
+      <td className={cn('px-4 py-3 font-medium whitespace-nowrap', nested && 'pl-8')}>
+        {entry.entryNumber}
+        {entry.signingGroupId && entry.actIndexInGroup && entry.actCountInGroup && entry.actCountInGroup > 1 && !nested && (
+          <Badge variant="outline" className="ml-2 text-[10px] py-0">
+            {entry.actIndexInGroup}/{entry.actCountInGroup}
+          </Badge>
+        )}
+      </td>
+      <td className="px-4 py-3 whitespace-nowrap">
+        {format(new Date(entry.createdAt), 'MMM d, yyyy')}
+      </td>
+      <td className="px-4 py-3 font-medium">
+        {entry.signerFullName || <span className="text-muted-foreground italic">None</span>}
+        {nested && entry.documentType && (
+          <span className="block text-xs text-muted-foreground font-normal truncate max-w-[12rem]">
+            {entry.documentType}
+          </span>
+        )}
+      </td>
+      {showIdColumn && (
+        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+          {maskIdNumber(entry.idNumber)}
+        </td>
+      )}
+      <td className="px-4 py-3 capitalize">
+        {entry.notarialActType.replace('_', ' ')}
+      </td>
+      <td className="px-4 py-3 text-right">
+        {entry.feeWaived ? 'Waived' : entry.feeCharged === 0 ? '$0.00' : `$${(entry.feeCharged / 100).toFixed(2)}`}
+      </td>
+      <td className="px-4 py-3 text-center">
+        <div className="flex flex-col items-center gap-1">
+          <Badge variant="outline" className={cn('capitalize shadow-sm font-medium', getStatusColor(entry.status))}>
+            {entry.status === 'draft' && <AlertCircle className="w-3 h-3 mr-1 inline-block" />}
+            {entry.status}
+          </Badge>
+          {entry.status === 'draft' && !entry.idFrontImage && (
+            <Badge
+              variant="outline"
+              className="text-orange-800 bg-orange-50 border-orange-200 dark:text-orange-300 dark:bg-orange-900/20 dark:border-orange-800 font-medium shadow-sm whitespace-nowrap"
+              data-testid={`badge-needs-id-scan-${entry.id}`}
+            >
+              <ScanLine className="w-3 h-3 mr-1 inline-block" />
+              Needs ID scan
+            </Badge>
+          )}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+        {confirmDeleteId === entry.id ? (
+          <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
+            <Button variant="destructive" size="sm" className="h-9 px-3 gap-1 text-sm font-medium" onClick={e => handleDeleteFromList(e, entry.id!)}>
+              <Check className="w-4 h-4" /> Delete
+            </Button>
+            <Button variant="outline" size="sm" className="h-9 px-3 border-border bg-background text-foreground" onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); }}>
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-end gap-1">
+            {entry.status === 'draft' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 w-9 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-primary/70 hover:text-primary hover:bg-primary/10"
+                onClick={e => { e.stopPropagation(); setLocation(`/entry/${entry.id}/edit?complete=1`); }}
+                data-testid={`btn-continue-${entry.id}`}
+                title="Continue &amp; Sign"
+              >
+                <PenLine className="w-4 h-4" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 w-9 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-foreground/40 hover:text-destructive hover:bg-destructive/10"
+              onClick={e => { e.stopPropagation(); setConfirmDeleteId(entry.id!); }}
+              data-testid={`btn-delete-${entry.id}`}
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+
   const hasDateFilter = dateFrom || dateTo;
   const hasActiveFilter = hasDateFilter || needsIdScanFilter;
 
   // Pagination
   const PAGE_SIZE = 25;
   const [page, setPage] = useState(1);
-  const totalPages = Math.ceil(filteredAndSorted.length / PAGE_SIZE);
-  const pagedEntries = filteredAndSorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.ceil(displayRows.length / PAGE_SIZE);
+  const pagedRows = displayRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Reset to page 1 when filters change
   useEffect(() => { setPage(1); }, [activeTab, needsIdScanFilter, dateFrom, dateTo, searchQuery, sortField, sortDir]);
@@ -163,10 +273,20 @@ export function JournalList() {
             data-testid="input-journal-search"
           />
         </form>
-        <Button
+        <div className="flex gap-2 shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            data-testid="button-new-signing-session"
+            onClick={() => setLocation('/entry/new/session')}
+          >
+            <FileStack className="w-4 h-4" /> Signing Session
+          </Button>
+          <Button
           variant="outline"
           size="sm"
-          className="gap-2 shrink-0"
+          className="gap-2"
           data-testid="button-print-journal"
           onClick={async () => {
             try {
@@ -185,6 +305,7 @@ export function JournalList() {
         >
           <Printer className="w-4 h-4" /> Print Journal
         </Button>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 mb-6">
@@ -262,7 +383,7 @@ export function JournalList() {
           <div className="p-8 flex justify-center items-center flex-1">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           </div>
-        ) : filteredAndSorted.length === 0 ? (
+        ) : displayRows.length === 0 ? (
           <div className="p-12 text-center flex flex-col items-center justify-center flex-1">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
               <FileText className="w-8 h-8 text-muted-foreground/50" />
@@ -305,89 +426,52 @@ export function JournalList() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {pagedEntries.map((entry) => (
-                  <tr 
-                    key={entry.id} 
-                    className="group hover:bg-muted/30 cursor-pointer transition-colors"
-                    onClick={() => { if (confirmDeleteId === entry.id) return; setLocation(`/entry/${entry.id}`); }}
-                    data-testid={`row-entry-${entry.id}`}
-                  >
-                    <td className="px-4 py-3 font-medium whitespace-nowrap">
-                      {entry.entryNumber}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {format(new Date(entry.createdAt), 'MMM d, yyyy')}
-                    </td>
-                    <td className="px-4 py-3 font-medium">
-                      {entry.signerFullName || <span className="text-muted-foreground italic">None</span>}
-                    </td>
-                    {showIdColumn && (
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                        {maskIdNumber(entry.idNumber)}
-                      </td>
-                    )}
-                    <td className="px-4 py-3 capitalize">
-                      {entry.notarialActType.replace('_', ' ')}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {entry.feeWaived ? 'Waived' : entry.feeCharged === 0 ? '$0.00' : `$${(entry.feeCharged / 100).toFixed(2)}`}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <Badge variant="outline" className={cn("capitalize shadow-sm font-medium", getStatusColor(entry.status))}>
-                          {entry.status === 'draft' && <AlertCircle className="w-3 h-3 mr-1 inline-block" />}
-                          {entry.status}
-                        </Badge>
-                        {entry.status === 'draft' && !entry.idFrontImage && (
-                          <Badge
-                            variant="outline"
-                            className="text-orange-800 bg-orange-50 border-orange-200 dark:text-orange-300 dark:bg-orange-900/20 dark:border-orange-800 font-medium shadow-sm whitespace-nowrap"
-                            data-testid={`badge-needs-id-scan-${entry.id}`}
-                          >
-                            <ScanLine className="w-3 h-3 mr-1 inline-block" />
-                            Needs ID scan
-                          </Badge>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
-                      {confirmDeleteId === entry.id ? (
-                        <div className="flex items-center justify-end gap-2" onClick={e => e.stopPropagation()}>
-                          <Button variant="destructive" size="sm" className="h-9 px-3 gap-1 text-sm font-medium" onClick={e => handleDeleteFromList(e, entry.id!)}>
-                            <Check className="w-4 h-4" /> Delete
-                          </Button>
-                          <Button variant="outline" size="sm" className="h-9 px-3 border-border bg-background text-foreground" onClick={e => { e.stopPropagation(); setConfirmDeleteId(null); }}>
-                            Cancel
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-end gap-1">
-                          {entry.status === 'draft' && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-9 w-9 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-primary/70 hover:text-primary hover:bg-primary/10"
-                              onClick={e => { e.stopPropagation(); setLocation(`/entry/${entry.id}/edit?complete=1`); }}
-                              data-testid={`btn-continue-${entry.id}`}
-                              title="Continue &amp; Sign"
-                            >
-                              <PenLine className="w-4 h-4" />
-                            </Button>
-                          )}
+                {pagedRows.flatMap((row) => {
+                  if (row.kind === 'solo') {
+                    return [renderEntryRow(row.entry, false)];
+                  }
+                  const collapsed = collapsedGroups.has(row.groupId);
+                  const header = (
+                    <tr
+                      key={`group-${row.groupId}`}
+                      className="bg-muted/40 hover:bg-muted/60 cursor-pointer"
+                      onClick={() => toggleGroup(row.groupId)}
+                      data-testid={`row-group-${row.groupId}`}
+                    >
+                      <td colSpan={showIdColumn ? 8 : 7} className="px-4 py-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 font-medium">
+                            {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            <Link2 className="w-4 h-4 text-primary" />
+                            <span>{row.label}</span>
+                            <Badge variant="secondary" className="text-xs">
+                              {row.entries.length} act{row.entries.length === 1 ? '' : 's'}
+                            </Badge>
+                          </div>
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-9 w-9 p-0 sm:opacity-0 sm:group-hover:opacity-100 text-foreground/40 hover:text-destructive hover:bg-destructive/10"
-                            onClick={e => { e.stopPropagation(); setConfirmDeleteId(entry.id!); }}
-                            data-testid={`btn-delete-${entry.id}`}
+                            className="h-8 gap-1 text-xs"
+                            onClick={e => {
+                              e.stopPropagation();
+                              if (!settings) return;
+                              try {
+                                exportSigningGroupPDF(row.entries, settings, row.label);
+                                toast({ title: 'PDF generated', description: `${row.entries.length} lines exported.` });
+                              } catch (err) {
+                                toast({ title: 'Export failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+                              }
+                            }}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Printer className="w-3.5 h-3.5" /> Print group
                           </Button>
                         </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                  if (collapsed) return [header];
+                  return [header, ...row.entries.map(e => renderEntryRow(e, true))];
+                })}
               </tbody>
             </table>
           </div>
@@ -397,7 +481,7 @@ export function JournalList() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-border">
             <p className="text-xs text-muted-foreground">
-              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredAndSorted.length)} of {filteredAndSorted.length}
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, displayRows.length)} of {displayRows.length}
             </p>
             <div className="flex items-center gap-1">
               <Button

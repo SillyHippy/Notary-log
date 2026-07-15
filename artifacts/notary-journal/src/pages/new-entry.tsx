@@ -19,7 +19,8 @@ import { useToast } from '@/hooks/use-toast';
 import { consumeIntakePrefill } from '@/lib/intake-prefill';
 import { Checkbox } from '@/components/ui/checkbox';
 
-import { createEntry, completeEntry, getSettings, getAllEntries, shouldRecordSignerDOB, shouldRecordSignerIdNumber, shouldRequireSignature, type JournalEntry, type NotarySettings } from '@/lib/db';
+import { createEntry, completeEntry, getSettings, getAllEntries, getEntriesBySigningGroup, shouldRecordSignerDOB, shouldRecordSignerIdNumber, shouldRequireSignature, type JournalEntry, type NotarySettings } from '@/lib/db';
+import { generateSigningGroupId } from '@/lib/signing-session';
 import { parseAAMVA } from '@/lib/aamva';
 import { extractLicenseFields } from '@/lib/ocr-license';
 import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
@@ -258,6 +259,8 @@ export function NewEntry() {
   // notarial-act/fee-type re-applies the configured default. As soon as the
   // user types into the fee input we stop overwriting their value.
   const isFeeAppDerivedRef = useRef(true);
+  const signingGroupIdRef = useRef<string | null>(null);
+  const signingGroupLabelRef = useRef<string | undefined>(undefined);
 
   // Load defaults (skipped when ?multiSigner= — handled by dedicated effect below)
   useEffect(() => {
@@ -403,6 +406,12 @@ export function NewEntry() {
       setAppSettings(settings);
       if (prefill) {
         applyMultiSignerDocumentPrefill(form, prefill, isFeeAppDerivedRef);
+        if (typeof prefill.signingGroupId === 'string') {
+          signingGroupIdRef.current = prefill.signingGroupId;
+        }
+        if (typeof prefill.signingGroupLabel === 'string') {
+          signingGroupLabelRef.current = prefill.signingGroupLabel;
+        }
         toast({
           title: 'Multi-signer mode',
           description: "Document and location carried over. Enter the new signer's name, address, and ID.",
@@ -981,6 +990,19 @@ export function NewEntry() {
         baseEntry.completedAt = new Date().toISOString();
       }
 
+      let groupId = signingGroupIdRef.current;
+      if (status === 'completed') {
+        if (!groupId) {
+          groupId = generateSigningGroupId();
+          signingGroupIdRef.current = groupId;
+        }
+        const siblings = await getEntriesBySigningGroup(groupId);
+        const d = form.getValues();
+        baseEntry.signingGroupId = groupId;
+        baseEntry.signingGroupLabel = signingGroupLabelRef.current || d.documentDescription || d.documentType;
+        baseEntry.actIndexInGroup = siblings.length + 1;
+      }
+
       const id = await createEntry(baseEntry);
 
       // Successful save — drop any leftover draft snapshot so a future
@@ -1033,6 +1055,8 @@ export function NewEntry() {
             locationCity: d.locationCity,
             locationState: d.locationState,
             locationAddress: d.locationAddress,
+            signingGroupId: signingGroupIdRef.current,
+            signingGroupLabel: signingGroupLabelRef.current || d.documentDescription || d.documentType,
           }));
         } catch { /* ignore */ }
       }
