@@ -245,7 +245,7 @@ export function EntryDetail() {
                     locationAddress: entry.locationAddress,
                   }));
                 } catch { /* ignore */ }
-                setLocation('/entry/new');
+                setLocation(`/entry/new?multiSigner=${Date.now()}`);
               }}
               data-testid="button-add-another-signer"
             >

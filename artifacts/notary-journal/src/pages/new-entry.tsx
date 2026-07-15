@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, type MutableRefObject } from 'react';
 import { useLocation } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -87,7 +87,58 @@ const DRAFT_KEY = 'notary-journal:newEntryDraft';
 // pre-populate them. Consumed once on mount, then removed.
 const MULTI_SIGNER_KEY = 'notary-journal:multiSignerPrefill';
 
+/** Fresh signer/ID fields when starting another signer on the same document. */
+const EMPTY_SIGNER_WIZARD_DEFAULTS: EntryFormValues = {
+  signerFullName: '',
+  signerAddress: '',
+  signerCity: '',
+  signerState: '',
+  signerDOB: '',
+  signerPhone: '',
+  idType: 'driver_license',
+  idNumber: '',
+  idIssuingState: '',
+  idExpirationDate: '',
+  documentType: '',
+  documentDate: new Date().toISOString().split('T')[0],
+  notarialActType: 'acknowledgment',
+  feeType: 'Acknowledgment',
+  stampCount: 1,
+  additionalFee: 0,
+  feeCharged: 0,
+  feeWaived: false,
+  locationCity: '',
+  locationState: '',
+  notes: '',
+};
+
+function applyMultiSignerDocumentPrefill(
+  form: ReturnType<typeof useForm<EntryFormValues>>,
+  prefill: Record<string, unknown>,
+  isFeeAppDerivedRef: MutableRefObject<boolean>,
+) {
+  if (prefill.documentType) form.setValue('documentType', prefill.documentType as string);
+  if (prefill.documentDate) form.setValue('documentDate', prefill.documentDate as string);
+  if (prefill.documentDescription) form.setValue('documentDescription', prefill.documentDescription as string);
+  if (prefill.notarialActType) form.setValue('notarialActType', prefill.notarialActType as JournalEntry['notarialActType']);
+  if (prefill.feeType) form.setValue('feeType', prefill.feeType as string);
+  if (prefill.feeCharged !== undefined) {
+    form.setValue('feeCharged', (prefill.feeCharged as number) / 100);
+    isFeeAppDerivedRef.current = false;
+  }
+  if (prefill.additionalFee !== undefined) form.setValue('additionalFee', prefill.additionalFee as number);
+  if (prefill.feeWaived !== undefined) form.setValue('feeWaived', prefill.feeWaived as boolean);
+  if (prefill.locationCity) form.setValue('locationCity', prefill.locationCity as string);
+  if (prefill.locationState) form.setValue('locationState', prefill.locationState as string);
+  if (prefill.locationAddress) form.setValue('locationAddress', prefill.locationAddress as string);
+}
+
 const STEPS = ['Scan ID', 'Signer', 'Notarial Act', 'Signature', 'Review'];
+
+/** Review step index — skip Signature (3) when journal signature is waived. */
+function reviewStepIndex(settings: NotarySettings | null | undefined): number {
+  return shouldRequireSignature(settings ?? undefined) ? 4 : 3;
+}
 
 type ScanResult =
   | { method: 'barcode'; success: true }
@@ -141,7 +192,7 @@ function cameraErrorMessage(err: unknown): string {
 }
 
 export function NewEntry() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
   
   const [currentStep, setCurrentStep] = useState(0);
@@ -208,10 +259,13 @@ export function NewEntry() {
   // user types into the fee input we stop overwriting their value.
   const isFeeAppDerivedRef = useRef(true);
 
-  // Load defaults
+  // Load defaults (skipped when ?multiSigner= — handled by dedicated effect below)
   useEffect(() => {
     getSettings().then(settings => {
       setAppSettings(settings);
+      if (new URLSearchParams(window.location.search).has('multiSigner')) {
+        return;
+      }
       form.setValue('locationCity', settings.defaultCity);
       form.setValue('locationState', settings.defaultState);
       // Prefill the initial fee from the default for "Acknowledgment" if any.
@@ -250,23 +304,7 @@ export function NewEntry() {
             if (prefillRaw) {
               sessionStorage.removeItem(MULTI_SIGNER_KEY);
               const prefill = JSON.parse(prefillRaw);
-              // Document fields
-              if (prefill.documentType) form.setValue('documentType', prefill.documentType);
-              if (prefill.documentDate) form.setValue('documentDate', prefill.documentDate);
-              if (prefill.documentDescription) form.setValue('documentDescription', prefill.documentDescription);
-              // Act / fee fields
-              if (prefill.notarialActType) form.setValue('notarialActType', prefill.notarialActType);
-              if (prefill.feeType) form.setValue('feeType', prefill.feeType);
-              if (prefill.feeCharged !== undefined) {
-                form.setValue('feeCharged', prefill.feeCharged / 100); // cents → dollars
-                isFeeAppDerivedRef.current = false;
-              }
-              if (prefill.additionalFee !== undefined) form.setValue('additionalFee', prefill.additionalFee);
-              if (prefill.feeWaived !== undefined) form.setValue('feeWaived', prefill.feeWaived);
-              // Location fields (override settings defaults)
-              if (prefill.locationCity) form.setValue('locationCity', prefill.locationCity);
-              if (prefill.locationState) form.setValue('locationState', prefill.locationState);
-              if (prefill.locationAddress) form.setValue('locationAddress', prefill.locationAddress);
+              applyMultiSignerDocumentPrefill(form, prefill, isFeeAppDerivedRef);
               toast({
                 title: 'Multi-signer mode',
                 description: 'Document and location fields carried over. Fill in the new signer\'s details.',
@@ -331,6 +369,52 @@ export function NewEntry() {
       }
     });
   }, [form, toast]);
+
+  // Add another signer: remount stays on same route — reset signer/ID state and apply document prefill only
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('multiSigner')) return;
+
+    let prefill: Record<string, unknown> | null = null;
+    try {
+      const raw = sessionStorage.getItem(MULTI_SIGNER_KEY);
+      if (raw) {
+        sessionStorage.removeItem(MULTI_SIGNER_KEY);
+        prefill = JSON.parse(raw) as Record<string, unknown>;
+      }
+    } catch {
+      prefill = null;
+    }
+
+    sessionStorage.removeItem(DRAFT_KEY);
+    setCurrentStep(0);
+    setIdFrontImage(undefined);
+    setIdBackImage(undefined);
+    setSignatureImage(undefined);
+    setScanResult(null);
+    setScanMode('idle');
+    setNeedsReview(false);
+    setMrzWarning(null);
+    setLastCompletedId(null);
+    setIsSaving(false);
+    form.reset({ ...EMPTY_SIGNER_WIZARD_DEFAULTS });
+
+    getSettings().then(settings => {
+      setAppSettings(settings);
+      if (prefill) {
+        applyMultiSignerDocumentPrefill(form, prefill, isFeeAppDerivedRef);
+        toast({
+          title: 'Multi-signer mode',
+          description: "Document and location carried over. Enter the new signer's name, address, and ID.",
+        });
+      }
+    });
+
+    params.delete('multiSigner');
+    const qs = params.toString();
+    const next = qs ? `/entry/new?${qs}` : '/entry/new';
+    window.history.replaceState(null, '', next);
+  }, [location, form, toast]);
 
   // When the user picks a different notarial act or fee category, keep the
   // two in sync and re-apply the saved default whenever the fee is still
@@ -815,7 +899,7 @@ export function NewEntry() {
     }
     // Skip signature step (3) when the notary has disabled it
     if (currentStep === 2 && !shouldRequireSignature(appSettings ?? undefined)) {
-      setCurrentStep(4);
+      setCurrentStep(reviewStepIndex(appSettings));
     } else {
       setCurrentStep(prev => Math.min(prev + 1, STEPS.length - 1));
     }
@@ -879,7 +963,7 @@ export function NewEntry() {
         stampCount: Math.max(1, Math.round(Number(data.stampCount) || 1)),
         idFrontImage,
         idBackImage,
-        signatureImage,
+        signatureImage: shouldRequireSignature(appSettings ?? undefined) ? signatureImage : undefined,
         needsReview,
       };
       if (scanResult?.method === 'barcode') {
@@ -960,6 +1044,7 @@ export function NewEntry() {
       } else {
         setLocation(`/entry/${id}`);
       }
+      setIsSaving(false);
     } catch (err) {
       console.error('Save entry failed', err);
       const rawMsg = err instanceof Error ? err.message : String(err);
@@ -1707,7 +1792,7 @@ export function NewEntry() {
         )}
 
         {/* STEP 4: REVIEW */}
-        {currentStep === 4 && (
+        {currentStep === reviewStepIndex(appSettings) && (
           <div className="flex-1 overflow-y-auto pr-2 space-y-6 pb-6">
             <Alert className="bg-primary/10 border-primary/20">
               <Check className="h-4 w-4 text-primary" />
@@ -1791,7 +1876,7 @@ export function NewEntry() {
           {/* Save-as-draft is available from step 1 onward so notaries can
               stash a partially-filled entry (e.g. before scanning the ID)
               and finish it from the entry detail page later. */}
-          {currentStep >= 1 && currentStep < 4 && (
+          {currentStep >= 1 && currentStep < reviewStepIndex(appSettings) && (
             <Button
               variant="secondary"
               onClick={() => saveEntry('draft')}
@@ -1836,13 +1921,13 @@ export function NewEntry() {
             </Button>
           )}
 
-          {currentStep === 3 && (
+          {currentStep === 3 && shouldRequireSignature(appSettings ?? undefined) && (
             <Button onClick={confirmSignature} className="gap-2" disabled={!shouldRequireSignature(appSettings ?? undefined)}>
               Confirm Signature <ChevronRight className="w-4 h-4" />
             </Button>
           )}
 
-          {currentStep === 4 && (
+          {currentStep === reviewStepIndex(appSettings) && (
             <div className="flex gap-3 w-full sm:w-auto">
               <Button variant="secondary" onClick={() => saveEntry('draft')} disabled={isSaving}>
                 Save Draft
@@ -1872,7 +1957,7 @@ export function NewEntry() {
               <Button
                 onClick={() => {
                   setLastCompletedId(null);
-                  setLocation('/entry/new');
+                  setLocation(`/entry/new?multiSigner=${Date.now()}`);
                 }}
                 className="w-full"
               >
