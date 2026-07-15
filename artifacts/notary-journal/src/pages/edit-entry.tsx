@@ -20,6 +20,7 @@ import {
   getSettings,
   shouldRecordSignerDOB,
   shouldRecordSignerIdNumber,
+  shouldRequireSignature,
   type JournalEntry,
   type NotarySettings,
 } from '@/lib/db';
@@ -359,12 +360,12 @@ export function EditEntry() {
 
   const handleComplete = async (data: EditFormValues) => {
     if (!entry) return;
-
-    if (signaturePadRef.current?.isEmpty()) {
+    const signatureRequired = shouldRequireSignature(settings ?? undefined);
+    if (signatureRequired && signaturePadRef.current?.isEmpty()) {
       toast({ title: 'Signature required', description: 'Please have the signer sign before completing.', variant: 'destructive' });
       return;
     }
-    const sigData = signaturePadRef.current?.toDataURL('image/png');
+    const sigData = signatureRequired ? signaturePadRef.current?.toDataURL('image/png') : entry.signatureImage;
 
     setIsSaving(true);
     try {

@@ -19,7 +19,7 @@ import { useToast } from '@/hooks/use-toast';
 import { consumeIntakePrefill } from '@/lib/intake-prefill';
 import { Checkbox } from '@/components/ui/checkbox';
 
-import { createEntry, completeEntry, getSettings, getAllEntries, shouldRecordSignerDOB, shouldRecordSignerIdNumber, type JournalEntry, type NotarySettings } from '@/lib/db';
+import { createEntry, completeEntry, getSettings, getAllEntries, shouldRecordSignerDOB, shouldRecordSignerIdNumber, shouldRequireSignature, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { parseAAMVA } from '@/lib/aamva';
 import { extractLicenseFields } from '@/lib/ocr-license';
 import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
@@ -398,7 +398,7 @@ export function NewEntry() {
 
   // Init SignaturePad when step 3 becomes active
   useEffect(() => {
-    if (currentStep === 3 && sigCanvasRef.current) {
+    if (currentStep === 3 && shouldRequireSignature(appSettings ?? undefined) && sigCanvasRef.current) {
       // Resize canvas to parent
       const canvas = sigCanvasRef.current;
       const parent = canvas.parentElement;
@@ -813,7 +813,12 @@ export function NewEntry() {
       const isValid = await form.trigger(['documentType', 'notarialActType', 'locationCity', 'locationState', 'feeCharged']);
       if (!isValid) return;
     }
-    setCurrentStep(prev => Math.min(prev + 1, STEPS.length - 1));
+    // Skip signature step (3) when the notary has disabled it
+    if (currentStep === 2 && !shouldRequireSignature(appSettings ?? undefined)) {
+      setCurrentStep(4);
+    } else {
+      setCurrentStep(prev => Math.min(prev + 1, STEPS.length - 1));
+    }
   };
 
   const saveEntry = async (status: 'draft' | 'completed') => {
@@ -1680,7 +1685,7 @@ export function NewEntry() {
         )}
 
         {/* STEP 3: SIGNATURE */}
-        {currentStep === 3 && (
+        {currentStep === 3 && shouldRequireSignature(appSettings ?? undefined) && (
           <div className="flex-1 flex flex-col h-full space-y-4">
             <div className="bg-muted/30 p-4 rounded-lg border text-center">
               <h3 className="font-semibold text-lg">Signer Signature Required</h3>
@@ -1832,7 +1837,7 @@ export function NewEntry() {
           )}
 
           {currentStep === 3 && (
-            <Button onClick={confirmSignature} className="gap-2">
+            <Button onClick={confirmSignature} className="gap-2" disabled={!shouldRequireSignature(appSettings ?? undefined)}>
               Confirm Signature <ChevronRight className="w-4 h-4" />
             </Button>
           )}

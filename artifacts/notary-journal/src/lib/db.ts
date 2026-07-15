@@ -134,6 +134,8 @@ export interface NotarySettings {
   stampFeeByState?: Record<string, number>;
   /** When true, require a front-of-ID photo before completing an entry (after barcode scan too). */
   requireIdFrontPhoto?: boolean;
+  /** When false, the signer signature step is skipped and not required for completion. */
+  requireSignerSignature?: boolean;
 }
 
 // ── Storage shapes (encrypted records actually written to IDB) ─────────────
@@ -649,6 +651,7 @@ const DEFAULT_SETTINGS: NotarySettings = {
   darkMode: false,
   recordSignerDOB: true,
   recordSignerIdNumber: true,
+  requireSignerSignature: true,
 };
 
 /**
@@ -662,6 +665,9 @@ export function shouldRecordSignerDOB(s?: Pick<NotarySettings, 'recordSignerDOB'
 }
 export function shouldRecordSignerIdNumber(s?: Pick<NotarySettings, 'recordSignerIdNumber'> | null): boolean {
   return s?.recordSignerIdNumber !== false;
+}
+export function shouldRequireSignature(s?: Pick<NotarySettings, 'requireSignerSignature'> | null): boolean {
+  return s?.requireSignerSignature !== false;
 }
 
 export async function getSettings(): Promise<NotarySettings> {

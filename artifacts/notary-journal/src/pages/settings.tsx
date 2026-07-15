@@ -13,7 +13,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, wipeAllLocalData, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
+import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, wipeAllLocalData, shouldRequireSignature, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
 import {
   isPlatformAuthenticatorAvailable,
   isPrfLikelySupported,
@@ -108,6 +108,7 @@ export function Settings() {
   const [stampFeeDollars, setStampFeeDollars] = useState('');
   const [savingStampFee, setSavingStampFee] = useState(false);
   const [requireIdPhoto, setRequireIdPhoto] = useState(false);
+  const [requireSignature, setRequireSignature] = useState(true);
   const [sealImage, setSealImage] = useState<string | undefined>(undefined);
   const [sealBusy, setSealBusy] = useState(false);
   const sealInputRef = useRef<HTMLInputElement>(null);
@@ -560,6 +561,7 @@ export function Settings() {
     const stampCents = settings.stampFeeCents ?? DEFAULT_STAMP_FEE_CENTS;
     setStampFeeDollars(stampCents > 0 ? (stampCents / 100).toFixed(2) : '');
     setRequireIdPhoto(!!settings.requireIdFrontPhoto);
+    setRequireSignature(settings.requireSignerSignature !== false);
     setSealImage(settings.sealImage);
   }
 
@@ -1179,6 +1181,34 @@ export function Settings() {
                           toast({ title: checked ? 'Recording ID number' : 'ID number hidden', description: 'Compliance preference saved.' });
                         }}
                         data-testid="switch-record-signer-id-number"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="recordSignerIdNumber"
+                render={() => (
+                  <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base font-medium">Require signer signature</FormLabel>
+                      <FormDescription>
+                        When off, the signature step is skipped and entries can be completed without a
+                        signer&apos;s signature. Turn off for states that don&apos;t require a journal
+                        signature (e.g. Pennsylvania).
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={requireSignature}
+                        onCheckedChange={async (checked) => {
+                          setRequireSignature(checked);
+                          const current = await getSettings();
+                          await saveSettings({ ...current, requireSignerSignature: checked } as NotarySettings);
+                          toast({ title: checked ? 'Signature required' : 'Signature optional', description: 'Compliance preference saved.' });
+                        }}
+                        data-testid="switch-require-signature"
                       />
                     </FormControl>
                   </FormItem>
