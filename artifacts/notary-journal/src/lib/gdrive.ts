@@ -83,6 +83,40 @@ export function isGdriveReady(): boolean {
   return !!window.google?.accounts?.oauth2;
 }
 
+let gisLoadPromise: Promise<void> | null = null;
+
+/** Load Google Identity Services on demand (not on every cold start). */
+export function ensureGoogleIdentityLoaded(): Promise<void> {
+  if (isGdriveReady()) return Promise.resolve();
+  if (gisLoadPromise) return gisLoadPromise;
+
+  gisLoadPromise = new Promise((resolve, reject) => {
+    const finish = () => {
+      if (isGdriveReady()) resolve();
+    };
+
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src*="accounts.google.com/gsi/client"]',
+    );
+    if (existing) {
+      existing.addEventListener('load', finish, { once: true });
+      existing.addEventListener('error', () => reject(new Error('Failed to load Google Identity Services')), { once: true });
+      finish();
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = finish;
+    script.onerror = () => reject(new Error('Failed to load Google Identity Services'));
+    document.head.appendChild(script);
+  });
+
+  return gisLoadPromise;
+}
+
 // ── Token management ────────────────────────────────────────────────────────
 
 export function getStoredToken(): string | null {
@@ -137,7 +171,7 @@ export function disconnectGdrive(): void {
  * the mutable pendingResolve/pendingReject refs updated before every request.
  */
 export function signInWithGoogle(): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return ensureGoogleIdentityLoaded().then(() => new Promise((resolve, reject) => {
     if (!isGdriveReady()) {
       reject(new Error('Google Identity Services not loaded yet. Please wait and try again.'));
       return;
@@ -156,7 +190,7 @@ export function signInWithGoogle(): Promise<string> {
       tokenClient = buildTokenClient(clientId);
     }
     tokenClient.requestAccessToken({ prompt: '' });
-  });
+  }));
 }
 
 export async function getValidToken(): Promise<string> {

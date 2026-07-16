@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Download, FileBarChart, Calendar, Wallet } from 'lucide-react';
+import { Download, FileBarChart, Calendar, Wallet, Printer, Database } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -19,6 +19,7 @@ import { useToast } from '@/hooks/use-toast';
 import { getAllEntries, getSettings, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { availableReportYears, MONTH_LABELS, rollupYear, type YearRollup } from '@/lib/fees';
 import { exportYearReportCSV, exportYearReportPDF } from '@/lib/export';
+import { useJournalExport } from '@/hooks/use-journal-export';
 
 function fmtUsd(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -26,6 +27,7 @@ function fmtUsd(cents: number): string {
 
 export function Reports() {
   const { toast } = useToast();
+  const { handleExportPDF: handleJournalPDF, handleExportCSV: handleJournalCSV, handleExportJSON: handleJournalJSON, handlePrintJournal } = useJournalExport();
   const [isLoading, setIsLoading] = useState(true);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [settings, setSettings] = useState<NotarySettings | null>(null);
@@ -80,6 +82,11 @@ export function Reports() {
     [rollup],
   );
 
+  const completedCount = useMemo(
+    () => entries.filter(e => e.status === 'completed' || e.status === 'amended').length,
+    [entries],
+  );
+
   const handleExportPDF = () => {
     if (!settings) return;
     try {
@@ -117,13 +124,48 @@ export function Reports() {
 
   return (
     <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-6 pb-32 md:pb-0">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+          <FileBarChart className="w-7 h-7 text-primary" />
+          Reports & Export
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          Export your journal and view annual fee reports.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="w-5 h-5 text-primary" />
+            Journal Export
+          </CardTitle>
+          <CardDescription>
+            {completedCount} completed {completedCount === 1 ? 'entry' : 'entries'} ready to export or print.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Button variant="outline" className="gap-2 w-full" onClick={handlePrintJournal} data-testid="button-print-journal">
+              <Printer className="w-4 h-4" /> Print Journal
+            </Button>
+            <Button variant="outline" className="gap-2 w-full" onClick={handleJournalPDF} data-testid="button-export-pdf">
+              <Download className="w-4 h-4" /> Export PDF
+            </Button>
+            <Button variant="outline" className="gap-2 w-full" onClick={handleJournalCSV} data-testid="button-export-csv">
+              <Download className="w-4 h-4" /> Export CSV
+            </Button>
+            <Button variant="outline" className="gap-2 w-full" onClick={handleJournalJSON} data-testid="button-export-json">
+              <Download className="w-4 h-4" /> Export JSON
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <FileBarChart className="w-7 h-7 text-primary" />
-            Annual Report
-          </h1>
-          <p className="text-muted-foreground mt-1">
+          <h2 className="text-xl font-semibold tracking-tight">Annual Report</h2>
+          <p className="text-muted-foreground mt-1 text-sm">
             Year-end summary of your notarial acts and fees collected.
           </p>
         </div>

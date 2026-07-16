@@ -1783,6 +1783,15 @@ export function NewEntry() {
                 </div>
 
                 <div className={currentStep === 2 ? 'block' : 'hidden'}>
+                  {parsedDocumentTypes.length > 1 && (
+                    <div className="mb-4 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+                      <p className="font-medium text-foreground">Multiple documents</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Each comma-separated document prints on its own journal line when you complete.
+                        Use the checkbox below to combine them on one line instead.
+                      </p>
+                    </div>
+                  )}
                   <Card>
                     <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField control={form.control} name="notarialActType" render={({ field }) => (

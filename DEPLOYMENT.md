@@ -61,6 +61,42 @@ Zo-only intake (`/api/intake` with SQLite) does not run on Cloudflare Workers or
 - Backups stored on the server (encrypted)
 - Google Drive: see README sections linked above
 
+### Optional: Auto-deploy on Zo when GitHub updates
+
+Zo does **not** auto-deploy from GitHub by itself. After you push to `main`, run a pull + rebuild + restart on your Zo machine.
+
+**One-time setup:**
+
+```bash
+chmod +x scripts/zo-auto-deploy.sh
+```
+
+**Manual deploy after a push:**
+
+```bash
+./scripts/zo-auto-deploy.sh
+```
+
+**Automatic deploy (cron on Zo Computer):**
+
+```bash
+# Edit crontab on Zo — example: check every 30 minutes
+*/30 * * * * /home/workspace/Projects/Notary-log/scripts/zo-auto-deploy.sh >> /tmp/notary-log-deploy.log 2>&1
+```
+
+Environment overrides (optional):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NOTARY_LOG_REPO` | `/home/workspace/Projects/Notary-log` | Repo path on Zo |
+| `NOTARY_LOG_BRANCH` | `main` | Branch to track |
+| `NOTARY_LOG_SERVICE` | `notary-log` | Supervisor program name |
+| `NOTARY_LOG_BUILD` | `build` | Use `build:proxy` if served under `/notary/` |
+
+The script skips rebuild if `git pull` finds no new commits.
+
+**Note:** Cloudflare Workers auto-deploy is separate — use `pnpm run deploy:cloudflare` or your existing Workers Builds connection.
+
 ---
 
 ## Option 2: Cloudflare Workers

@@ -24,11 +24,13 @@ import {
   clearBiometric,
 } from '@/lib/biometric';
 import { THRESHOLD_OPTIONS, DEFAULT_THRESHOLD_DAYS, clearSnooze } from '@/lib/backup-nudge';
+import { loadBackupPanelVisibility, resolveBackupPanelVisibility } from '@/lib/backup-visibility';
 import { DEFAULT_STAMP_FEE_CENTS, FEE_TYPES, type FeeType } from '@/lib/fees';
-import { BACKUP_FORMAT_VERSION, exportAllCSV, exportAllJSON, exportAllPDF, exportJournalTablePDF, parseBackupFile } from '@/lib/export';
+import { BACKUP_FORMAT_VERSION, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
   isGdriveReady,
+  ensureGoogleIdentityLoaded,
   getStoredToken,
   getLastBackupTime,
   signInAndGetEmail,
@@ -44,11 +46,7 @@ import {
   uploadZoBackup,
   type ZoBackupFile,
 } from '@/lib/zo-backup';
-import {
-  loadBackupPanelVisibility,
-  resolveBackupPanelVisibility,
-  saveBackupPanelVisibility,
-} from '@/lib/backup-visibility';
+import { JournalLayoutHelp } from '@/components/journal-layout-help';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -196,8 +194,15 @@ export function Settings() {
     }
   });
 
-  // Poll until GIS library loads (loaded async in index.html)
+  // Load Google Identity Services on demand when Drive backup is configured.
   useEffect(() => {
+    if (!isGdriveConfigured()) return;
+
+    let cancelled = false;
+    void ensureGoogleIdentityLoaded().then(() => {
+      if (!cancelled && isGdriveReady()) setGisReady(true);
+    });
+
     if (isGdriveReady()) {
       setGisReady(true);
       return;
@@ -208,11 +213,15 @@ export function Settings() {
         if (gisCheckRef.current) clearInterval(gisCheckRef.current);
       }
     }, 500);
-    return () => { if (gisCheckRef.current) clearInterval(gisCheckRef.current); };
+    return () => {
+      cancelled = true;
+      if (gisCheckRef.current) clearInterval(gisCheckRef.current);
+    };
   }, []);
 
   useEffect(() => {
     async function loadData() {
+      try {
       const settings = await getSettings();
       form.reset({
         notaryName: settings.notaryName || '',
@@ -268,7 +277,16 @@ export function Settings() {
 
       const entries = await getAllEntries();
       setEntryCount(entries.length);
-      setIsLoading(false);
+      } catch (err) {
+        console.error('Failed to load settings', err);
+        toast({
+          title: 'Could not load settings',
+          description: err instanceof Error ? err.message : 'Unknown error',
+          variant: 'destructive',
+        });
+      } finally {
+        setIsLoading(false);
+      }
     }
     loadData();
 
@@ -639,25 +657,6 @@ export function Settings() {
     }
   };
 
-  const handleExportPDF = async () => {
-    const entries = await getAllEntries();
-    const settings = await getSettings();
-    exportAllPDF(entries, settings);
-  };
-
-  const handleExportCSV = async () => {
-    const entries = await getAllEntries();
-    exportAllCSV(entries, await getSettings());
-  };
-
-  const handleExportJSON = async () => {
-    const entries = await getAllEntries();
-    const settings = await getSettings();
-    exportAllJSON(entries, settings);
-  };
-
-  // ── Zo backup handlers ────────────────────────────────────────────────────
-
   const saveZoConfigFromState = () => {
     const url = zoApiUrl.trim();
     const key = zoBackupKey.trim();
@@ -1015,9 +1014,428 @@ export function Settings() {
           className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline whitespace-nowrap"
           data-testid="link-settings-reports"
         >
-          View Annual Report →
+          Reports & Export →
         </Link>
       </div>
+
+      {/* ── Data & Integrity (top) ─────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle className="flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-primary" />
+              Data & Integrity
+            </CardTitle>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('data-integrity')}>
+              {collapsedSections.has('data-integrity') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </Button>
+          </div>
+          <CardDescription>Verify your journal and export copies for your records</CardDescription>
+        </CardHeader>
+        {!collapsedSections.has('data-integrity') && (
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-4 p-4 border rounded-lg bg-muted/20">
+            <Database className="w-8 h-8 text-primary" />
+            <div>
+              <p className="font-medium text-foreground">Local Storage</p>
+              <p className="text-sm text-muted-foreground">{entryCount} entries saved locally on this device.</p>
+            </div>
+          </div>
+
+          <Button
+            variant="outline"
+            onClick={handleVerifyChain}
+            disabled={verifying}
+            className="gap-2 w-full sm:w-auto"
+            data-testid="button-verify-chain"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            {verifying ? 'Verifying…' : 'Verify entire journal'}
+          </Button>
+
+          {verifyResult && (
+            <Alert
+              variant="default"
+              className={
+                verifyResult.issues.length === 0
+                  ? 'bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900'
+                  : 'bg-destructive/10 text-destructive border-destructive/30'
+              }
+              data-testid="alert-verify-result"
+            >
+              {verifyResult.issues.length === 0 ? (
+                <ShieldCheck className="h-4 w-4" />
+              ) : (
+                <ShieldAlert className="h-4 w-4" />
+              )}
+              <AlertTitle>
+                {verifyResult.issues.length === 0
+                  ? `All ${verifyResult.okCount} entries verified`
+                  : `${verifyResult.issues.length} of ${verifyResult.totalChecked} entries failed verification`}
+              </AlertTitle>
+              {verifyResult.issues.length > 0 && (
+                <AlertDescription>
+                  <ul className="list-disc pl-5 mt-2 space-y-1 text-sm">
+                    {verifyResult.issues.slice(0, 10).map((iss, i) => (
+                      <li key={i}>Entry #{iss.entryNumber}: {iss.reason}</li>
+                    ))}
+                    {verifyResult.issues.length > 10 && (
+                      <li>…and {verifyResult.issues.length - 10} more</li>
+                    )}
+                  </ul>
+                </AlertDescription>
+              )}
+            </Alert>
+          )}
+
+          <Alert variant="default" className="bg-blue-50 text-blue-900 border-blue-200 dark:bg-blue-950/50 dark:text-blue-200 dark:border-blue-900">
+            <AlertTriangle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <AlertTitle>Data Privacy</AlertTitle>
+            <AlertDescription>
+              All journal data is stored locally in your browser. Export regularly from{' '}
+              <Link href="/reports" className="font-medium underline">Reports</Link>.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+        )}
+      </Card>
+
+      {/* ── Backup & Restore (top) ─────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle className="flex items-center gap-2">
+              <Cloud className="w-5 h-5 text-primary" />
+              Backup & Restore
+            </CardTitle>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('backup-restore')}>
+              {collapsedSections.has('backup-restore') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </Button>
+          </div>
+          <CardDescription>Back up your journal or restore from a previous backup</CardDescription>
+        </CardHeader>
+        {!collapsedSections.has('backup-restore') && (
+        <CardContent className="space-y-5">
+          <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
+            <div className="space-y-0.5 pr-4">
+              <p className="text-sm font-medium">Show Google Drive backup</p>
+              <p className="text-xs text-muted-foreground">Cloud backup via Google Drive OAuth.</p>
+            </div>
+            <Switch
+              checked={showGoogleBackup}
+              onCheckedChange={handleGoogleBackupPanelToggle}
+              data-testid="switch-show-google-backup"
+            />
+          </div>
+
+          <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
+            <div className="space-y-0.5 pr-4">
+              <p className="text-sm font-medium">Show Zo backup</p>
+              <p className="text-xs text-muted-foreground">Self-host backup for Zo Computer deployments.</p>
+            </div>
+            <Switch
+              checked={showZoBackup}
+              onCheckedChange={handleZoBackupPanelToggle}
+              data-testid="switch-show-zo-backup"
+            />
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) handleImportJSON(file);
+            }}
+            data-testid="input-import-json"
+          />
+          <Button
+            variant="outline"
+            className="gap-2 w-full"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            data-testid="button-import-json"
+          >
+            <Upload className="w-4 h-4" /> {importing ? 'Importing…' : 'Import from JSON file'}
+          </Button>
+
+          {showZoBackup && (
+          <div className="rounded-lg border">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between p-4 text-left"
+              onClick={() => toggleSection('backup-zo')}
+            >
+              <span className="text-sm font-medium flex items-center gap-2">
+                <CloudUpload className="w-4 h-4 text-primary" />
+                Zo Backup
+              </span>
+              {collapsedSections.has('backup-zo') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </button>
+            {!collapsedSections.has('backup-zo') && (
+            <div className="px-4 pb-4 space-y-5 border-t pt-4">
+              <Alert variant="default" className="bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900">
+                <Cloud className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
+                <AlertTitle>Easy self-host backup</AlertTitle>
+                <AlertDescription>
+                  Create `/api/backup` in Zo Space, then paste the endpoint and backup key here.
+                </AlertDescription>
+              </Alert>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="zoBackupUrl">Zo backup API URL</Label>
+                  <Input
+                    id="zoBackupUrl"
+                    placeholder="https://your-handle.zo.space/api/backup"
+                    value={zoApiUrl}
+                    onChange={e => setZoApiUrl(e.target.value)}
+                    data-testid="input-zo-backup-url"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="zoBackupKey">Backup key</Label>
+                  <Input
+                    id="zoBackupKey"
+                    type="password"
+                    placeholder="Paste the key Zo generated"
+                    value={zoBackupKey}
+                    onChange={e => setZoBackupKey(e.target.value)}
+                    data-testid="input-zo-backup-key"
+                  />
+                </div>
+              </div>
+
+              {zoLastBackup && (
+                <p className="text-sm text-muted-foreground">
+                  Last Zo backup: {formatRelativeTime(zoLastBackup)}
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-3">
+                <Button variant="outline" className="gap-2" onClick={handleSaveZoConfig} disabled={zoBusy} data-testid="button-save-zo-backup">
+                  <Save className="w-4 h-4" /> Save Zo Settings
+                </Button>
+                <Button variant="outline" className="gap-2" onClick={handleTestZoConnection} disabled={zoBusy} data-testid="button-test-zo-backup">
+                  <RefreshCw className={`w-4 h-4 ${zoBusy ? 'animate-spin' : ''}`} /> Test Connection
+                </Button>
+                <Button variant="outline" className="gap-2" onClick={handleZoBackupNow} disabled={zoBusy} data-testid="button-backup-zo-now">
+                  <CloudUpload className="w-4 h-4" /> Backup to Zo
+                </Button>
+                <Button variant="outline" className="gap-2" onClick={handleShowZoRestoreList} disabled={isZoLoadingFiles || zoBusy} data-testid="button-restore-zo">
+                  <RotateCcw className={`w-4 h-4 ${isZoLoadingFiles ? 'animate-spin' : ''}`} />
+                  {isZoLoadingFiles ? 'Loading...' : showZoRestoreList ? 'Hide Zo Backups' : 'Restore from Zo'}
+                </Button>
+              </div>
+
+              {showZoRestoreList && !isZoLoadingFiles && (
+                <div className="border rounded-lg divide-y animate-in slide-in-from-top-2">
+                  {zoBackupFiles.length === 0 ? (
+                    <p className="p-4 text-sm text-muted-foreground">No Zo backup files found.</p>
+                  ) : (
+                    zoBackupFiles.map(file => (
+                      <div key={file.name} className="p-3 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{file.name}</p>
+                          {file.modifiedTime && (
+                            <p className="text-xs text-muted-foreground">{formatRelativeTime(file.modifiedTime)}</p>
+                          )}
+                        </div>
+                        <Button size="sm" variant="outline" onClick={() => setSelectedZoFile(file)} data-testid={`button-restore-zo-file-${file.name}`}>
+                          Restore
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {selectedZoFile && (
+                <div className="p-4 border border-amber-300 rounded-lg bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 space-y-3 animate-in slide-in-from-top-2">
+                  <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                    Restore from "{selectedZoFile.name}"?
+                  </p>
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    Entries in the backup will be merged with your existing journal. Duplicate entry numbers will be skipped.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={handleConfirmZoRestore} disabled={isZoRestoring} data-testid="button-confirm-zo-restore">
+                      {isZoRestoring ? 'Restoring...' : 'Confirm Restore'}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setSelectedZoFile(null)}>Cancel</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+            )}
+          </div>
+          )}
+
+          {showGoogleBackup && (
+          <div className="rounded-lg border">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between p-4 text-left"
+              onClick={() => toggleSection('backup-google')}
+            >
+              <span className="text-sm font-medium flex items-center gap-2">
+                <Cloud className="w-4 h-4 text-primary" />
+                Cloud Backup (Google Drive)
+              </span>
+              {collapsedSections.has('backup-google') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </button>
+            {!collapsedSections.has('backup-google') && (
+            <div className="px-4 pb-4 space-y-5 border-t pt-4">
+              {!configured && (
+                <p className="text-sm text-muted-foreground">
+                  Google Drive backup is not enabled. Contact the app administrator to set it up.
+                </p>
+              )}
+
+              {configured && (
+                <>
+                  <div className="space-y-3 rounded-lg border p-4 shadow-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <p className="text-sm font-medium">Remind me to back up</p>
+                        <p className="text-xs text-muted-foreground">Show a banner on the dashboard if my last backup is older than this.</p>
+                      </div>
+                      <Select value={String(backupReminderDays)} onValueChange={handleBackupReminderChange} disabled={manualBackupOnly}>
+                        <SelectTrigger className="w-40" data-testid="select-backup-reminder-days">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {THRESHOLD_OPTIONS.map(d => (
+                            <SelectItem key={d} value={String(d)} data-testid={`select-backup-reminder-${d}`}>
+                              Every {d} days
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex flex-row items-start justify-between gap-4 pt-3 border-t">
+                      <div className="space-y-0.5">
+                        <p className="text-sm font-medium">I'll handle backups manually</p>
+                        <p className="text-xs text-muted-foreground">Suppresses the dashboard reminder.</p>
+                      </div>
+                      <Switch checked={manualBackupOnly} onCheckedChange={handleManualBackupOnlyToggle} data-testid="switch-manual-backup-only" />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div className="flex items-center gap-3">
+                      {isConnected
+                        ? <CheckCircle2 className="w-5 h-5 text-green-600" />
+                        : <CloudOff className="w-5 h-5 text-muted-foreground" />
+                      }
+                      <div>
+                        <p className="font-medium text-sm">{isConnected ? 'Google Drive connected' : 'Not connected'}</p>
+                        {isConnected && googleEmail && (
+                          <p className="text-xs text-muted-foreground">{googleEmail}</p>
+                        )}
+                        {isConnected && lastBackup && (
+                          <p className="text-xs text-muted-foreground">Last backup: {formatRelativeTime(lastBackup)}</p>
+                        )}
+                        {isConnected && !lastBackup && (
+                          <p className="text-xs text-muted-foreground">No backup yet</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      {!isConnected ? (
+                        <Button size="sm" onClick={handleConnect} disabled={!gisReady} data-testid="button-connect-gdrive">
+                          {gisReady ? 'Connect Google Drive' : 'Loading...'}
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="outline" onClick={handleDisconnect} data-testid="button-disconnect-gdrive">
+                          Disconnect
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isConnected && (
+                    <>
+                      <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
+                        <div className="space-y-0.5">
+                          <p className="text-sm font-medium flex items-center gap-2">
+                            <CloudUpload className="w-4 h-4 text-primary" />
+                            Auto-backup
+                          </p>
+                          <p className="text-xs text-muted-foreground">How often to back up to Drive</p>
+                        </div>
+                        <Select value={backupFrequency} onValueChange={handleBackupFrequencyChange} data-testid="select-backup-frequency">
+                          <SelectTrigger className="w-[160px] h-8">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="off">Off</SelectItem>
+                            <SelectItem value="after-entry">After each entry</SelectItem>
+                            <SelectItem value="daily">Daily</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="flex flex-wrap gap-3">
+                        <Button variant="outline" className="gap-2" onClick={handleBackupNow} disabled={isBackingUp} data-testid="button-backup-now">
+                          <CloudUpload className="w-4 h-4" />
+                          {isBackingUp ? 'Backing up…' : 'Backup now'}
+                        </Button>
+                        <Button variant="outline" className="gap-2" onClick={handleShowRestoreList} disabled={isLoadingFiles} data-testid="button-restore-gdrive">
+                          <RotateCcw className={`w-4 h-4 ${isLoadingFiles ? 'animate-spin' : ''}`} />
+                          {isLoadingFiles ? 'Loading...' : showRestoreList ? 'Hide Backups' : 'Restore from Drive'}
+                        </Button>
+                      </div>
+
+                      {showRestoreList && !isLoadingFiles && (
+                        <div className="border rounded-lg divide-y animate-in slide-in-from-top-2">
+                          {backupFiles.length === 0 ? (
+                            <p className="p-4 text-sm text-muted-foreground">No backup files found.</p>
+                          ) : (
+                            backupFiles.map(file => (
+                              <div key={file.id} className="p-3 flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium truncate">{file.name}</p>
+                                  <p className="text-xs text-muted-foreground">{formatRelativeTime(file.modifiedTime)}</p>
+                                </div>
+                                <Button size="sm" variant="outline" onClick={() => handleRestore(file)} data-testid={`button-restore-file-${file.id}`}>
+                                  Restore
+                                </Button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+
+                      {selectedFile && (
+                        <div className="p-4 border border-amber-300 rounded-lg bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 space-y-3 animate-in slide-in-from-top-2">
+                          <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                            Restore from "{selectedFile.name}"?
+                          </p>
+                          <p className="text-xs text-amber-800 dark:text-amber-300">
+                            Entries in the backup will be merged with your existing journal. Duplicate entry numbers will be skipped.
+                          </p>
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={handleConfirmRestore} disabled={isRestoring} data-testid="button-confirm-restore">
+                              {isRestoring ? 'Restoring...' : 'Confirm Restore'}
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setSelectedFile(null)}>Cancel</Button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+            )}
+          </div>
+          )}
+        </CardContent>
+        )}
+      </Card>
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
@@ -1246,9 +1664,9 @@ export function Settings() {
                 <div className="space-y-0.5">
                   <p className="text-base font-medium">Default: combine co-signers on one journal line</p>
                   <p className="text-sm text-muted-foreground">
-                    When on, shared-certificate signings start with &quot;one line with all names&quot; checked
-                    (signer #1, #2, #3 on entry #1). Off by default — turn on for PA-style combined lines.
-                    You can still change it per signing.
+                    When on, shared-certificate signings start with &quot;combine co-signers&quot; checked
+                    (one entry with signer #1, #2, #3). Off by default — turn on if you usually want one line for co-signers.
+                    You can still change it per signing on the Documents step.
                   </p>
                 </div>
                 <Switch
@@ -1294,6 +1712,7 @@ export function Settings() {
                   data-testid="switch-journal-split-documents"
                 />
               </div>
+              <JournalLayoutHelp />
             </CardContent>
             )}
           </Card>
@@ -1741,516 +2160,6 @@ export function Settings() {
         )}
       </Card>
 
-      {/* ── Backup Visibility Card ──────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Cloud className="w-5 h-5 text-primary" />
-            Backup & Restore
-          </CardTitle>
-          <CardDescription>
-            Choose which backup setup panels to show. JSON export/import is always available below.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
-            <div className="space-y-0.5 pr-4">
-              <p className="text-sm font-medium">Show Google Drive backup</p>
-              <p className="text-xs text-muted-foreground">
-                Main cloud backup option for users who set up Google Drive OAuth.
-              </p>
-            </div>
-            <Switch
-              checked={showGoogleBackup}
-              onCheckedChange={handleGoogleBackupPanelToggle}
-              data-testid="switch-show-google-backup"
-            />
-          </div>
-
-          <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
-            <div className="space-y-0.5 pr-4">
-              <p className="text-sm font-medium">Show Zo backup</p>
-              <p className="text-xs text-muted-foreground">
-                Self-host backup for Zo Space API deployments.
-              </p>
-            </div>
-            <Switch
-              checked={showZoBackup}
-              onCheckedChange={handleZoBackupPanelToggle}
-              data-testid="switch-show-zo-backup"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Zo Backup Card ─────────────────────────────────────────────── */}
-      {showZoBackup && (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <CloudUpload className="w-5 h-5 text-primary" />
-            Zo Backup
-          </CardTitle>
-          <CardDescription>
-            Back up to your own Zo Space API. No Google Cloud, OAuth, or third-party connector required.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <Alert variant="default" className="bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900">
-            <Cloud className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
-            <AlertTitle>Easy self-host backup</AlertTitle>
-            <AlertDescription>
-              Create `/api/backup` in Zo Space, then paste the endpoint and backup key here. Google Drive backup is still available below if you prefer direct Drive OAuth.
-            </AlertDescription>
-          </Alert>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="zoBackupUrl">Zo backup API URL</Label>
-              <Input
-                id="zoBackupUrl"
-                placeholder="https://your-handle.zo.space/api/backup"
-                value={zoApiUrl}
-                onChange={e => setZoApiUrl(e.target.value)}
-                data-testid="input-zo-backup-url"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="zoBackupKey">Backup key</Label>
-              <Input
-                id="zoBackupKey"
-                type="password"
-                placeholder="Paste the key Zo generated"
-                value={zoBackupKey}
-                onChange={e => setZoBackupKey(e.target.value)}
-                data-testid="input-zo-backup-key"
-              />
-            </div>
-          </div>
-
-          {zoLastBackup && (
-            <p className="text-sm text-muted-foreground">
-              Last Zo backup: {formatRelativeTime(zoLastBackup)}
-            </p>
-          )}
-
-          <div className="flex flex-wrap gap-3">
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={handleSaveZoConfig}
-              disabled={zoBusy}
-              data-testid="button-save-zo-backup"
-            >
-              <Save className="w-4 h-4" />
-              Save Zo Settings
-            </Button>
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={handleTestZoConnection}
-              disabled={zoBusy}
-              data-testid="button-test-zo-backup"
-            >
-              <RefreshCw className={`w-4 h-4 ${zoBusy ? 'animate-spin' : ''}`} />
-              Test Connection
-            </Button>
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={handleZoBackupNow}
-              disabled={zoBusy}
-              data-testid="button-backup-zo-now"
-            >
-              <CloudUpload className="w-4 h-4" />
-              Backup to Zo
-            </Button>
-            <Button
-              variant="outline"
-              className="gap-2"
-              onClick={handleShowZoRestoreList}
-              disabled={isZoLoadingFiles || zoBusy}
-              data-testid="button-restore-zo"
-            >
-              <RotateCcw className={`w-4 h-4 ${isZoLoadingFiles ? 'animate-spin' : ''}`} />
-              {isZoLoadingFiles ? 'Loading...' : showZoRestoreList ? 'Hide Zo Backups' : 'Restore from Zo'}
-            </Button>
-          </div>
-
-          {showZoRestoreList && !isZoLoadingFiles && (
-            <div className="border rounded-lg divide-y animate-in slide-in-from-top-2">
-              {zoBackupFiles.length === 0 ? (
-                <p className="p-4 text-sm text-muted-foreground">No Zo backup files found.</p>
-              ) : (
-                zoBackupFiles.map(file => (
-                  <div key={file.name} className="p-3 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{file.name}</p>
-                      {file.modifiedTime && (
-                        <p className="text-xs text-muted-foreground">{formatRelativeTime(file.modifiedTime)}</p>
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setSelectedZoFile(file)}
-                      data-testid={`button-restore-zo-file-${file.name}`}
-                    >
-                      Restore
-                    </Button>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {selectedZoFile && (
-            <div className="p-4 border border-amber-300 rounded-lg bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 space-y-3 animate-in slide-in-from-top-2">
-              <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                Restore from "{selectedZoFile.name}"?
-              </p>
-              <p className="text-xs text-amber-800 dark:text-amber-300">
-                Entries in the backup will be merged with your existing journal. Duplicate entry numbers will be skipped. Your current entries will not be deleted.
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={handleConfirmZoRestore}
-                  disabled={isZoRestoring}
-                  data-testid="button-confirm-zo-restore"
-                >
-                  {isZoRestoring ? 'Restoring...' : 'Confirm Restore'}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setSelectedZoFile(null)}>Cancel</Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      )}
-
-      {/* ── Cloud Backup Card ─────────────────────────────────────────── */}
-      {showGoogleBackup && (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Cloud className="w-5 h-5 text-primary" />
-            Cloud Backup
-          </CardTitle>
-          <CardDescription>Back up your journal to Google Drive automatically</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-
-          {/* Not configured: show admin note */}
-          {!configured && (
-            <p className="text-sm text-muted-foreground">
-              Google Drive backup is not enabled. Contact the app administrator to set it up.
-            </p>
-          )}
-
-          {/* Backup-staleness reminder controls (always shown when Drive is configured) */}
-          {configured && (
-            <div className="space-y-3 rounded-lg border p-4 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium">Remind me to back up</p>
-                  <p className="text-xs text-muted-foreground">Show a banner on the dashboard if my last backup is older than this.</p>
-                </div>
-                <Select
-                  value={String(backupReminderDays)}
-                  onValueChange={handleBackupReminderChange}
-                  disabled={manualBackupOnly}
-                >
-                  <SelectTrigger className="w-40" data-testid="select-backup-reminder-days">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {THRESHOLD_OPTIONS.map(d => (
-                      <SelectItem key={d} value={String(d)} data-testid={`select-backup-reminder-${d}`}>
-                        Every {d} days
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-row items-start justify-between gap-4 pt-3 border-t">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium">I'll handle backups manually</p>
-                  <p className="text-xs text-muted-foreground">
-                    Suppresses the dashboard reminder. Use this if you back up via JSON export instead of Drive.
-                  </p>
-                </div>
-                <Switch
-                  checked={manualBackupOnly}
-                  onCheckedChange={handleManualBackupOnlyToggle}
-                  data-testid="switch-manual-backup-only"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Configured: show connection status */}
-          {configured && (
-            <>
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  {isConnected
-                    ? <CheckCircle2 className="w-5 h-5 text-green-600" />
-                    : <CloudOff className="w-5 h-5 text-muted-foreground" />
-                  }
-                  <div>
-                    <p className="font-medium text-sm">{isConnected ? 'Google Drive connected' : 'Not connected'}</p>
-                    {isConnected && googleEmail && (
-                      <p className="text-xs text-muted-foreground">{googleEmail}</p>
-                    )}
-                    {isConnected && lastBackup && (
-                      <p className="text-xs text-muted-foreground">Last backup: {formatRelativeTime(lastBackup)}</p>
-                    )}
-                    {isConnected && !lastBackup && (
-                      <p className="text-xs text-muted-foreground">No backup yet</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  {!isConnected ? (
-                    <Button size="sm" onClick={handleConnect} disabled={!gisReady} data-testid="button-connect-gdrive">
-                      {gisReady ? 'Connect Google Drive' : 'Loading...'}
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="outline" onClick={handleDisconnect} data-testid="button-disconnect-gdrive">
-                      Disconnect
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {isConnected && (
-                <>
-                  {/* Backup frequency selector */}
-                  <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
-                    <div className="space-y-0.5">
-                      <p className="text-sm font-medium flex items-center gap-2">
-                        <CloudUpload className="w-4 h-4 text-primary" />
-                        Auto-backup
-                      </p>
-                      <p className="text-xs text-muted-foreground">How often to back up to Drive</p>
-                    </div>
-                    <Select value={backupFrequency} onValueChange={handleBackupFrequencyChange} data-testid="select-backup-frequency">
-                      <SelectTrigger className="w-[160px] h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="off">Off</SelectItem>
-                        <SelectItem value="after-entry">After each entry</SelectItem>
-                        <SelectItem value="daily">Daily</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Manual backup + restore */}
-                  <div className="flex flex-wrap gap-3">
-                    <Button
-                      variant="outline"
-                      className="gap-2"
-                      onClick={handleBackupNow}
-                      disabled={isBackingUp}
-                      data-testid="button-backup-now"
-                    >
-                      <RefreshCw className={`w-4 h-4 ${isBackingUp ? 'animate-spin' : ''}`} />
-                      {isBackingUp ? 'Backing up...' : 'Backup Now'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="gap-2"
-                      onClick={handleShowRestoreList}
-                      disabled={isLoadingFiles}
-                      data-testid="button-restore-drive"
-                    >
-                      <RotateCcw className={`w-4 h-4 ${isLoadingFiles ? 'animate-spin' : ''}`} />
-                      {isLoadingFiles ? 'Loading...' : showRestoreList ? 'Hide Backups' : 'Restore from Drive'}
-                    </Button>
-                  </div>
-
-                  {/* Restore file list */}
-                  {showRestoreList && !isLoadingFiles && (
-                    <div className="border rounded-lg divide-y animate-in slide-in-from-top-2">
-                      {backupFiles.length === 0 ? (
-                        <p className="p-4 text-sm text-muted-foreground">No backup files found in your Drive.</p>
-                      ) : (
-                        backupFiles.map(file => (
-                          <div key={file.id} className="p-3 flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium truncate">{file.name}</p>
-                              <p className="text-xs text-muted-foreground">{formatRelativeTime(file.modifiedTime)}</p>
-                            </div>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleRestore(file)}
-                              data-testid={`button-restore-file-${file.id}`}
-                            >
-                              Restore
-                            </Button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-
-                  {/* Restore confirmation */}
-                  {selectedFile && (
-                    <div className="p-4 border border-amber-300 rounded-lg bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 space-y-3 animate-in slide-in-from-top-2">
-                      <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                        Restore from "{selectedFile.name}"?
-                      </p>
-                      <p className="text-xs text-amber-800 dark:text-amber-300">
-                        Entries in the backup will be merged with your existing journal. Duplicate entry numbers will be skipped. Your current entries will not be deleted.
-                      </p>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={handleConfirmRestore}
-                          disabled={isRestoring}
-                          data-testid="button-confirm-restore"
-                        >
-                          {isRestoring ? 'Restoring...' : 'Confirm Restore'}
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => setSelectedFile(null)}>Cancel</Button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-      )}
-
-      {/* ── Data & Export Card ────────────────────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Data & Export</CardTitle>
-          <CardDescription>Manage your journal data</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex items-center gap-4 p-4 border rounded-lg bg-muted/20">
-            <Database className="w-8 h-8 text-primary" />
-            <div>
-              <p className="font-medium text-foreground">Local Storage</p>
-              <p className="text-sm text-muted-foreground">{entryCount} entries saved locally on this device.</p>
-            </div>
-          </div>
-
-          <Alert variant="default" className="bg-blue-50 text-blue-900 border-blue-200 dark:bg-blue-950/50 dark:text-blue-200 dark:border-blue-900">
-            <AlertTriangle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-            <AlertTitle>Data Privacy</AlertTitle>
-            <AlertDescription>
-              All journal data is stored locally in your browser. Clearing your browser data will delete your journal. Please export regularly for backup.
-            </AlertDescription>
-          </Alert>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <Button variant="outline" className="gap-2 w-full" onClick={handleExportPDF} data-testid="button-export-pdf">
-              <Download className="w-4 h-4" /> Export PDF
-            </Button>
-            <Button variant="outline" className="gap-2 w-full" onClick={handleExportCSV} data-testid="button-export-csv">
-              <Download className="w-4 h-4" /> Export CSV
-            </Button>
-            <Button variant="outline" className="gap-2 w-full" onClick={handleExportJSON} data-testid="button-export-json">
-              <Download className="w-4 h-4" /> Export JSON
-            </Button>
-            <Button variant="outline" className="gap-2 w-full" onClick={async () => {
-              const entries = await getAllEntries();
-              const settings = await getSettings();
-              const completed = entries.filter(e => e.status === 'completed' || e.status === 'amended');
-              if (completed.length === 0) {
-                toast({ title: 'No entries', description: 'No completed entries to print.', variant: 'destructive' });
-                return;
-              }
-              exportJournalTablePDF(completed, settings);
-            }} data-testid="button-print-journal">
-              <Download className="w-4 h-4" /> Print Journal
-            </Button>
-          </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/json,.json"
-            className="hidden"
-            onChange={e => {
-              const file = e.target.files?.[0];
-              if (file) handleImportJSON(file);
-            }}
-            data-testid="input-import-json"
-          />
-          <Button
-            variant="outline"
-            className="gap-2 w-full"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            data-testid="button-import-json"
-          >
-            <Upload className="w-4 h-4" /> {importing ? 'Importing…' : 'Import from JSON file'}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* ── Tamper-evident chain verification ─────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Journal Integrity</CardTitle>
-          <CardDescription>Verify the tamper-evident hash chain for all completed entries</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Button
-            variant="outline"
-            onClick={handleVerifyChain}
-            disabled={verifying}
-            className="gap-2"
-            data-testid="button-verify-chain"
-          >
-            <ShieldCheck className="w-4 h-4" />
-            {verifying ? 'Verifying…' : 'Verify entire journal'}
-          </Button>
-
-          {verifyResult && (
-            <Alert
-              variant="default"
-              className={
-                verifyResult.issues.length === 0
-                  ? 'bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900'
-                  : 'bg-destructive/10 text-destructive border-destructive/30'
-              }
-              data-testid="alert-verify-result"
-            >
-              {verifyResult.issues.length === 0 ? (
-                <ShieldCheck className="h-4 w-4" />
-              ) : (
-                <ShieldAlert className="h-4 w-4" />
-              )}
-              <AlertTitle>
-                {verifyResult.issues.length === 0
-                  ? `All ${verifyResult.okCount} entries verified`
-                  : `${verifyResult.issues.length} of ${verifyResult.totalChecked} entries failed verification`}
-              </AlertTitle>
-              {verifyResult.issues.length > 0 && (
-                <AlertDescription>
-                  <ul className="list-disc pl-5 mt-2 space-y-1 text-sm">
-                    {verifyResult.issues.slice(0, 10).map((iss, i) => (
-                      <li key={i}>Entry #{iss.entryNumber}: {iss.reason}</li>
-                    ))}
-                    {verifyResult.issues.length > 10 && (
-                      <li>…and {verifyResult.issues.length - 10} more</li>
-                    )}
-                  </ul>
-                </AlertDescription>
-              )}
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
 
       {/* ── Danger zone ───────────────────────────────────────────────── */}
       <Card className="border-destructive/40">

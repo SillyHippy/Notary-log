@@ -276,4 +276,20 @@ describe('sanitizePayloadForDraft', () => {
     const expanded = expandAppointmentToEntries(sanitized, { defaultState: 'OK', stampFeeCents: 500 });
     expect(expanded.length).toBeGreaterThan(0);
   });
+
+  it('draft expansion works from step-0 planning payload (empty location/docs)', () => {
+    const s1 = generateSlotId('signer');
+    const sanitized = sanitizePayloadForDraft({
+      appointmentId: 'appt-step0',
+      appointmentLabel: 'Western Sierra',
+      locationCity: '',
+      locationState: '',
+      roster: [{ slotId: s1, signerFullName: '', signerAddress: '', signerCity: '', signerState: '', idType: 'driver_license', signerIndexInAppointment: 1 }],
+      documents: [],
+    });
+    expect(() => expandAppointmentToEntries(sanitized, { defaultState: 'OK', stampFeeCents: 500 })).not.toThrow();
+    const expanded = expandAppointmentToEntries(sanitized, { defaultState: 'OK', stampFeeCents: 500 });
+    expect(expanded).toHaveLength(1);
+    expect(expanded[0].draft.documentType).toContain('TBD');
+  });
 });

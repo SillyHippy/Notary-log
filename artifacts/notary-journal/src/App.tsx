@@ -25,6 +25,7 @@ const ClientRequests = lazy(() => import("@/pages/client-requests").then(m => ({
 import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked, getSettings, saveSettings } from "@/lib/db";
 import { isZoHost } from "@/lib/intake-api";
 import { apiPath, isPublicAppPath } from "@/lib/app-path";
+import { dismissSplash } from "@/lib/splash";
 
 const queryClient = new QueryClient();
 
@@ -91,6 +92,11 @@ function App() {
   const isPublic = useIsPublicRoute();
 
   useEffect(() => {
+    const finishInit = (next: AppMode) => {
+      dismissSplash();
+      setMode(next);
+    };
+
     (async () => {
       try {
         // Theme — read from localStorage so it works pre-unlock
@@ -103,7 +109,7 @@ function App() {
           // the PIN screen. The cache is bound to the tab's lifetime and
           // expires after a sliding idle timeout — see `db.ts`.
           const restored = await tryRestoreFromSessionCache();
-          setMode(restored ? 'unlocked' : 'locked');
+          finishInit(restored ? 'unlocked' : 'locked');
         } else {
           // Look at legacy plaintext data to tailor the setup copy
           const legacy = await inspectLegacy();
@@ -113,12 +119,12 @@ function App() {
           }
           setHasLegacyData(legacy.entryCount > 0);
           setLegacyPinHash(legacy.hadPinHash);
-          setMode('setup');
+          finishInit('setup');
         }
       } catch (err) {
         console.error("Failed to initialize app", err);
         // Fail open to setup so the user is never locked out of a fresh install
-        setMode('setup');
+        finishInit('setup');
       }
     })();
   }, []);
@@ -184,12 +190,9 @@ function App() {
     })();
   }, [mode]);
 
+  // Keep the static HTML splash visible until finishInit() removes it.
   if (mode === 'loading') {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
-      </div>
-    );
+    return null;
   }
 
   // Public intake form — accessible without any PIN or setup

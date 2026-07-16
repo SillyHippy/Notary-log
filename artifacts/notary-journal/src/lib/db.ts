@@ -1006,7 +1006,7 @@ export async function createDraftSigningAppointment(
   settings?: NotarySettings,
 ): Promise<number[]> {
   const sanitized = sanitizePayloadForDraft(payload);
-  const existing = await getEntriesByAppointmentId(payload.appointmentId);
+  const existing = await getEntriesByAppointmentId(sanitized.appointmentId);
   for (const entry of existing) {
     if (entry.status === 'draft' && entry.id != null) {
       await deleteEntry(entry.id);

@@ -528,22 +528,25 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
     }
   };
 
-  const handleSaveDraft = async (opts?: { continueAfter?: boolean }) => {
+  const handleSaveDraft = async (opts?: { continueAfter?: boolean; stayOnPage?: boolean }) => {
     setIsSaving(true);
     try {
       persistWizardSnapshot();
       const payload = buildPayload();
       const ids = await createDraftSigningAppointment(payload, settings ?? undefined);
+      const planningOnly = step <= 1 && !appointmentLabel.trim() && roster.every(s => !s.signerFullName.trim());
       toast({
         title: 'Saved as draft',
         description: opts?.continueAfter
           ? 'You can fill in missing details later.'
-          : `${ids.length} draft ${ids.length === 1 ? 'entry' : 'entries'} saved. Finish from Journal → Drafts.`,
+          : planningOnly
+            ? 'Planning draft saved. Reopen Signing Appointment anytime to continue where you left off.'
+            : `${ids.length} draft ${ids.length === 1 ? 'entry' : 'entries'} in Journal → Drafts. Reopen Signing Appointment to keep editing this visit.`,
       });
       hapticSuccess();
       if (opts?.continueAfter) {
         setStep(s => Math.min(s + 1, APPT_STEPS.length - 1));
-      } else {
+      } else if (!opts?.stayOnPage) {
         setLocation('/journal');
       }
     } catch (e) {
@@ -598,7 +601,7 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
         <div>
           <h1 className="text-2xl font-bold">Signing Appointment</h1>
           <p className="text-sm text-muted-foreground">
-            Multiple signers · ID once per person · shared cert = one journal line (PA) or separate lines (OK)
+            Multiple signers · ID once per person · combine co-signers = one entry with signer #1, #2, #3
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={onBack}>← Single entry</Button>
@@ -857,8 +860,8 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
             <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
               <p className="font-medium text-foreground">Multiple signers on a document?</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Check <strong>Combine co-signers on one journal line</strong> on each document before completing
-                if they share one certificate (signer #1, #2, #3 on entry #1). Settings can default this on for you.
+                Check <strong>Combine co-signers on one journal line</strong> on each document before you complete
+                if they share one certificate — one entry with signer #1, #2, #3. Settings can default this on for you.
               </p>
             </div>
           )}
@@ -1021,7 +1024,7 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
                       <Label htmlFor={`shared-${doc.slotId}`} className="text-sm font-normal leading-snug">
                         <span className="font-medium text-foreground">Combine co-signers on one journal line</span>
                         <span className="block text-xs text-muted-foreground mt-1">
-                          One stamp / one act — all signer names on entry #1 (Ken/PA style). Unchecked = separate print line per signer.
+                          One stamp / one act — one entry with signer #1, #2, #3. Unchecked = separate print line per signer.
                         </span>
                       </Label>
                     </div>
@@ -1111,11 +1114,11 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
         {step < APPT_STEPS.length - 1 && (
           <Button
             variant="secondary"
-            onClick={() => handleSaveDraft()}
+            onClick={() => handleSaveDraft({ stayOnPage: step <= 1 })}
             disabled={isSaving}
             data-testid="button-save-appointment-draft"
           >
-            {isSaving ? 'Saving…' : 'Save as Draft'}
+            {isSaving ? 'Saving…' : step <= 1 ? 'Save planning draft' : 'Save as Draft'}
           </Button>
         )}
 
