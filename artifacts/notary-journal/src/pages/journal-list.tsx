@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { getAllEntries, searchEntries, deleteEntry, getSettings, shouldRecordSignerIdNumber, type JournalEntry, type NotarySettings } from '@/lib/db';
 import { exportJournalTablePDF, exportSigningGroupPDF } from '@/lib/export';
 import { buildJournalDisplayRows, groupLabel } from '@/lib/signing-group';
+import { getEntryNotarizationIso } from '@/lib/journal-datetime';
 import { useToast } from '@/hooks/use-toast';
 
 type SortField = 'date' | 'name' | 'entry';
@@ -96,7 +97,7 @@ export function JournalList() {
       if (needsIdScanFilter) {
         if (entry.status !== 'draft' || entry.idFrontImage) return false;
       }
-      const entryDate = new Date(entry.createdAt);
+      const entryDate = new Date(getEntryNotarizationIso(entry));
       if (dateFrom) {
         const from = new Date(dateFrom);
         if (entryDate < from) return false;
@@ -111,7 +112,7 @@ export function JournalList() {
     .sort((a, b) => {
       let cmp = 0;
       if (sortField === 'date') {
-        cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        cmp = new Date(getEntryNotarizationIso(a)).getTime() - new Date(getEntryNotarizationIso(b)).getTime();
       } else if (sortField === 'name') {
         cmp = (a.signerFullName || '').localeCompare(b.signerFullName || '');
       } else if (sortField === 'entry') {
@@ -175,7 +176,10 @@ export function JournalList() {
         )}
       </td>
       <td className="px-4 py-3 whitespace-nowrap">
-        {format(new Date(entry.createdAt), 'MMM d, yyyy')}
+        <span className="block">{format(new Date(getEntryNotarizationIso(entry)), 'MMM d, yyyy')}</span>
+        <span className="block text-xs text-muted-foreground">
+          {format(new Date(getEntryNotarizationIso(entry)), 'h:mm a')}
+        </span>
       </td>
       <td className="px-4 py-3 font-medium">
         {entry.signerFullName || <span className="text-muted-foreground italic">None</span>}
@@ -453,7 +457,10 @@ export function JournalList() {
                             <span>{entryRange}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap">{format(header.date, 'MMM d, yyyy')}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="block">{format(header.date, 'MMM d, yyyy')}</span>
+                          <span className="block text-xs text-muted-foreground">{format(header.date, 'h:mm a')}</span>
+                        </td>
                         <td className="px-4 py-3 font-medium">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span>{row.label}</span>
@@ -545,7 +552,8 @@ export function JournalList() {
                         </div>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        {format(header.date, 'MMM d, yyyy')}
+                        <span className="block">{format(header.date, 'MMM d, yyyy')}</span>
+                        <span className="block text-xs text-muted-foreground">{format(header.date, 'h:mm a')}</span>
                       </td>
                       <td className="px-4 py-3 font-medium">
                         <div className="flex items-center gap-2 flex-wrap">

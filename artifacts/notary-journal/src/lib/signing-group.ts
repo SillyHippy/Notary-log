@@ -1,6 +1,7 @@
 import type { JournalEntry } from './db';
 import { ACT_TYPE_LABELS } from './fees';
 import { formatEntrySignerNames } from './entry-signers';
+import { getEntryNotarizationIso } from './journal-datetime';
 
 export type GroupJournalHeader = {
   signerName: string;
@@ -68,7 +69,7 @@ export function buildGroupJournalHeader(members: JournalEntry[]): GroupJournalHe
   const { totalCents, allWaived } = sumGroupFeeCents(members);
   return {
     signerName: formatEntrySignerNames(first) || 'Unknown signer',
-    date: new Date(first.createdAt),
+    date: new Date(getEntryNotarizationIso(first)),
     entryNumberStart: first.entryNumber ?? 0,
     entryNumberEnd: last.entryNumber ?? first.entryNumber ?? 0,
     actCount: members.length,
@@ -166,7 +167,7 @@ export function buildAppointmentJournalHeader(
   const { totalCents, allWaived } = sumGroupFeeCents(members);
   return {
     label,
-    date: new Date(first.createdAt),
+    date: new Date(getEntryNotarizationIso(first)),
     entryNumberStart: first.entryNumber ?? 0,
     entryNumberEnd: last.entryNumber ?? first.entryNumber ?? 0,
     signerCount: signerGroups.length,

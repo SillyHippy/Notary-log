@@ -8,6 +8,7 @@ import {
   CheckCircle2, Users
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -18,11 +19,14 @@ import {
   getEntry, updateEntry, deleteEntry, generateEntryHash, getSettings, getAllEntries,
   getEntriesBySigningGroup,
   recomputeChainFrom, verifyChainPure, shouldRecordSignerDOB, shouldRecordSignerIdNumber,
+  updateEntryNotarizationDateTime,
   type JournalEntry, type NotarySettings,
 } from '@/lib/db';
 import { exportEntryPDF, exportEntryCSV, exportEntryJSON, exportSigningGroupPDF } from '@/lib/export';
 import { generateSigningGroupId } from '@/lib/signing-session';
 import { groupLabel } from '@/lib/signing-group';
+import { formatJournalDateTime, splitNotarizationDateTime, combineLocalDateAndTime, getEntryNotarizationIso } from '@/lib/journal-datetime';
+import { NotarizationTimeInput } from '@/components/notarization-time-input';
 import { formatEntrySignerList } from '@/lib/entry-signers';
 
 export function EntryDetail() {
@@ -38,6 +42,10 @@ export function EntryDetail() {
   
   const [isAmending, setIsAmending] = useState(false);
   const [amendmentText, setAmendmentText] = useState('');
+  const [isEditingNotarization, setIsEditingNotarization] = useState(false);
+  const [editNotarizationDate, setEditNotarizationDate] = useState('');
+  const [editNotarizationTime, setEditNotarizationTime] = useState('');
+  const [isSavingNotarization, setIsSavingNotarization] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [groupSiblings, setGroupSiblings] = useState<JournalEntry[]>([]);
 
@@ -140,6 +148,38 @@ export function EntryDetail() {
     setIsAmending(false);
     setAmendmentText('');
     toast({ title: 'Amendment added', description: 'The entry has been successfully amended.' });
+  };
+
+  const startEditNotarization = () => {
+    if (!entry) return;
+    const { date, time } = splitNotarizationDateTime(getEntryNotarizationIso(entry));
+    setEditNotarizationDate(date);
+    setEditNotarizationTime(time);
+    setIsEditingNotarization(true);
+  };
+
+  const handleSaveNotarizationDateTime = async () => {
+    if (!entry) return;
+    const iso = combineLocalDateAndTime(editNotarizationDate, editNotarizationTime);
+    if (!iso) {
+      toast({ title: 'Invalid date or time', description: 'Check notarization date and time.', variant: 'destructive' });
+      return;
+    }
+    setIsSavingNotarization(true);
+    try {
+      const updated = await updateEntryNotarizationDateTime(id, iso);
+      setEntry(updated);
+      setIsEditingNotarization(false);
+      toast({ title: 'Notarization time updated', description: 'Journal date/time saved and chain restamped.' });
+    } catch (err) {
+      toast({
+        title: 'Failed to update',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSavingNotarization(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -301,9 +341,52 @@ export function EntryDetail() {
             <h1 className="text-3xl font-bold tracking-tight">Entry #{entry.entryNumber}</h1>
             {getStatusBadge(entry.status)}
           </div>
-          <p className="text-muted-foreground flex items-center gap-2">
-            <Clock className="w-4 h-4" />
-            {format(new Date(entry.createdAt), 'MMMM d, yyyy h:mm a')}
+          <p className="text-muted-foreground flex items-center gap-2 flex-wrap">
+            <Clock className="w-4 h-4 shrink-0" />
+            {isEditingNotarization ? (
+              <span className="flex flex-col sm:flex-row sm:items-end gap-2 w-full">
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-muted-foreground">Notarization Date</span>
+                  <Input
+                    type="date"
+                    value={editNotarizationDate}
+                    onChange={e => setEditNotarizationDate(e.target.value)}
+                    data-testid="input-detail-notarization-date"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+                  <span className="text-xs font-medium text-muted-foreground">Notarization Time</span>
+                  <NotarizationTimeInput
+                    value={editNotarizationTime}
+                    onChange={setEditNotarizationTime}
+                    data-testid="input-detail-notarization-time"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={handleSaveNotarizationDateTime} disabled={isSavingNotarization}>
+                    Save
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setIsEditingNotarization(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </span>
+            ) : (
+              <>
+                <span>{formatJournalDateTime(entry)}</span>
+                {(entry.status === 'completed' || entry.status === 'amended') && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={startEditNotarization}
+                    data-testid="button-edit-notarization-datetime"
+                  >
+                    <Edit3 className="w-3 h-3 mr-1" /> Edit
+                  </Button>
+                )}
+              </>
+            )}
           </p>
         </div>
         
@@ -381,7 +464,7 @@ export function EntryDetail() {
                   date as part of the standard "what kind of ID did you
                   check" record. Only the full ID# is sensitive. */}
               <DetailItem label="Issuing State" value={entry.idIssuingState} />
-              <DetailItem label="Expiration Date" value={entry.idExpirationDate} />
+                <DetailItem label="ID Expiration Date" value={entry.idExpirationDate} />
               
               {(entry.idFrontImage || entry.idBackImage) && (
                 <div className="col-span-2 mt-2 pt-4 border-t">
@@ -432,6 +515,7 @@ export function EntryDetail() {
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-y-6 gap-x-4">
               <DetailItem label="Act Type" value={<span className="capitalize">{entry.notarialActType.replace('_', ' ')}</span>} />
+              <DetailItem label="Notarization Date & Time" value={formatJournalDateTime(entry)} />
               <DetailItem label="Document Type" value={entry.documentType} />
               <DetailItem label="Document Date" value={entry.documentDate} />
               <DetailItem label="Fee Charged" value={entry.feeWaived ? 'Waived' : entry.feeCharged === 0 ? '$0.00' : `$${(entry.feeCharged / 100).toFixed(2)}`} />

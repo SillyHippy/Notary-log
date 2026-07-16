@@ -33,6 +33,13 @@ import {
   type NotarySettings,
 } from '@/lib/db';
 import { shouldDefaultSplitDocuments } from '@/lib/fee-rules';
+import { NotarizationTimeInput } from '@/components/notarization-time-input';
+import {
+  getDefaultNotarizationDate,
+  getDefaultNotarizationTime,
+  resolveNotarizationDateTimeAtComplete,
+  splitNotarizationDateTime,
+} from '@/lib/journal-datetime';
 import { detectDeviceLocation } from '@/lib/geolocation';
 import { generateSigningGroupId, parseDocumentTypesFromInput } from '@/lib/signing-session';
 import { parseAAMVA } from '@/lib/aamva';
@@ -66,6 +73,8 @@ const entrySchema = z
     idExpirationDate: z.string().optional().default(''),
     documentType: z.string().min(1, 'Document type is required'),
     documentDate: z.string().optional(),
+    notarizationDate: z.string().optional().default(''),
+    notarizationTime: z.string().optional().default(''),
     documentDescription: z.string().optional(),
     notarialActType: z.enum(['acknowledgment', 'jurat', 'copy_certification', 'signature_witnessing', 'other']),
     feeType: z.enum(FEE_TYPES),
@@ -117,6 +126,8 @@ const EMPTY_SIGNER_WIZARD_DEFAULTS: EntryFormValues = {
   idExpirationDate: '',
   documentType: '',
   documentDate: new Date().toISOString().split('T')[0],
+  notarizationDate: getDefaultNotarizationDate(),
+  notarizationTime: getDefaultNotarizationTime(),
   notarialActType: 'acknowledgment',
   feeType: 'Acknowledgment',
   stampCount: 1,
@@ -147,6 +158,11 @@ function applyMultiSignerDocumentPrefill(
   if (prefill.locationCity) form.setValue('locationCity', prefill.locationCity as string);
   if (prefill.locationState) form.setValue('locationState', prefill.locationState as string);
   if (prefill.locationAddress) form.setValue('locationAddress', prefill.locationAddress as string);
+  if (prefill.notarizationDateTime) {
+    const { date, time } = splitNotarizationDateTime(prefill.notarizationDateTime as string);
+    form.setValue('notarizationDate', date);
+    form.setValue('notarizationTime', time);
+  }
 }
 
 const STEPS = ['Scan ID', 'Signer', 'Notarial Act', 'Signature', 'Review'];
@@ -251,6 +267,8 @@ export function NewEntry() {
       idExpirationDate: '',
       documentType: '',
       documentDate: new Date().toISOString().split('T')[0],
+      notarizationDate: getDefaultNotarizationDate(),
+      notarizationTime: getDefaultNotarizationTime(),
       notarialActType: 'acknowledgment',
       feeType: 'Acknowledgment',
       stampCount: 1,
@@ -270,6 +288,17 @@ export function NewEntry() {
   // user types into the fee input we stop overwriting their value.
   const isFeeAppDerivedRef = useRef(true);
   const signingGroupIdRef = useRef<string | null>(null);
+  const notarizationDateEditedRef = useRef(false);
+  const notarizationTimeEditedRef = useRef(false);
+
+  const snapNotarizationDateTimeIfAuto = () => {
+    if (!notarizationTimeEditedRef.current) {
+      form.setValue('notarizationTime', getDefaultNotarizationTime());
+    }
+    if (!notarizationDateEditedRef.current) {
+      form.setValue('notarizationDate', getDefaultNotarizationDate());
+    }
+  };
   const signingGroupLabelRef = useRef<string | undefined>(undefined);
 
   const watchedDocumentType = form.watch('documentType');
@@ -942,6 +971,7 @@ export function NewEntry() {
 
   const confirmSignature = () => {
     if (signaturePadRef.current && !signaturePadRef.current.isEmpty()) {
+      snapNotarizationDateTimeIfAuto();
       setSignatureImage(signaturePadRef.current.toDataURL('image/png'));
       setCurrentStep(4);
     } else {
@@ -1018,35 +1048,51 @@ export function NewEntry() {
       // Only the full ID# is gated; expiration is always recorded.
       if (!recordId) scrubbed.idNumber = '';
 
-      const docTypes = parseDocumentTypesFromInput(scrubbed.documentType);
+      const notarizationIso = status === 'completed'
+        ? resolveNotarizationDateTimeAtComplete(
+            scrubbed.notarizationDate,
+            scrubbed.notarizationTime,
+            {
+              dateManuallyEdited: notarizationDateEditedRef.current,
+              timeManuallyEdited: notarizationTimeEditedRef.current,
+            },
+          )
+        : resolveNotarizationDateTimeAtComplete(
+            scrubbed.notarizationDate,
+            scrubbed.notarizationTime,
+            { dateManuallyEdited: true, timeManuallyEdited: true },
+          );
+      const { notarizationDate: _nd, notarizationTime: _nt, ...entryFormFields } = scrubbed;
+
+      const docTypes = parseDocumentTypesFromInput(entryFormFields.documentType);
       const splitIntoSession = status === 'completed' && multiDocumentSplit && docTypes.length > 1;
 
       if (splitIntoSession) {
         const groupId = signingGroupIdRef.current ?? generateSigningGroupId();
         signingGroupIdRef.current = groupId;
-        const perActFeeCents = scrubbed.feeWaived
+        const perActFeeCents = entryFormFields.feeWaived
           ? 0
-          : getStampFeeCents(appSettings ?? undefined, scrubbed.locationState);
+          : getStampFeeCents(appSettings ?? undefined, entryFormFields.locationState);
 
         const shared = {
-          signerFullName: scrubbed.signerFullName,
-          signerAddress: scrubbed.signerAddress ?? '',
-          signerCity: scrubbed.signerCity ?? '',
-          signerState: scrubbed.signerState ?? '',
-          signerDOB: scrubbed.signerDOB,
-          signerPhone: scrubbed.signerPhone,
-          idType: scrubbed.idType,
-          idNumber: scrubbed.idNumber,
-          idIssuingState: scrubbed.idIssuingState,
-          idExpirationDate: scrubbed.idExpirationDate,
+          signerFullName: entryFormFields.signerFullName,
+          signerAddress: entryFormFields.signerAddress ?? '',
+          signerCity: entryFormFields.signerCity ?? '',
+          signerState: entryFormFields.signerState ?? '',
+          signerDOB: entryFormFields.signerDOB,
+          signerPhone: entryFormFields.signerPhone,
+          idType: entryFormFields.idType,
+          idNumber: entryFormFields.idNumber,
+          idIssuingState: entryFormFields.idIssuingState,
+          idExpirationDate: entryFormFields.idExpirationDate,
           idFrontImage,
           idBackImage,
           signatureImage: shouldRequireSignature(appSettings ?? undefined) ? signatureImage : undefined,
-          locationCity: scrubbed.locationCity,
-          locationState: scrubbed.locationState,
-          locationAddress: scrubbed.locationAddress,
-          completedAt: new Date().toISOString(),
-          notes: scrubbed.notes,
+          locationCity: entryFormFields.locationCity,
+          locationState: entryFormFields.locationState,
+          locationAddress: entryFormFields.locationAddress,
+          completedAt: notarizationIso,
+          notes: entryFormFields.notes,
           needsReview,
           extractedRawText: scanResult?.method === 'mrz' || scanResult?.method === 'ocr' ? scanResult.text : undefined,
           extractionMethod:
@@ -1059,19 +1105,19 @@ export function NewEntry() {
 
         const ids = await createAndCompleteSigningSession({
           signingGroupId: groupId,
-          signingGroupLabel: scrubbed.signerFullName?.trim() || undefined,
+          signingGroupLabel: entryFormFields.signerFullName?.trim() || undefined,
           shared,
           acts: docTypes.map((doc, i) => {
             const actType = resolveActTypeForDocument(i);
             return {
               documentType: doc,
-              documentDescription: scrubbed.documentDescription,
-              documentDate: scrubbed.documentDate,
+              documentDescription: entryFormFields.documentDescription,
+              documentDate: entryFormFields.documentDate,
               notarialActType: actType,
               feeType: ACT_TYPE_TO_FEE_TYPE[actType],
               feeChargedCents: perActFeeCents,
               stampCount: 1,
-              feeWaived: scrubbed.feeWaived,
+              feeWaived: entryFormFields.feeWaived,
             };
           }),
         });
@@ -1111,7 +1157,8 @@ export function NewEntry() {
       // they don't apply (don't write `undefined` into the encrypted blob).
       const baseEntry: Omit<JournalEntry, 'id' | 'entryNumber' | 'createdAt' | 'updatedAt'> = {
         status,
-        ...scrubbed,
+        ...entryFormFields,
+        notarizationDateTime: notarizationIso,
         feeCharged: feeCents,
         stampCount: Math.max(1, Math.round(Number(data.stampCount) || 1)),
         idFrontImage,
@@ -1131,7 +1178,7 @@ export function NewEntry() {
         baseEntry.extractionConfidence = scanResult.confidence;
       }
       if (status === 'completed') {
-        baseEntry.completedAt = new Date().toISOString();
+        baseEntry.completedAt = notarizationIso;
       }
 
       let groupId = signingGroupIdRef.current;
@@ -1725,7 +1772,7 @@ export function NewEntry() {
                       {true && (
                         <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Expiration Date *</FormLabel>
+                            <FormLabel>ID Expiration Date *</FormLabel>
                             <FormControl><Input type="date" {...field} /></FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1853,6 +1900,44 @@ export function NewEntry() {
                           <FormMessage />
                         </FormItem>
                       )} />
+                      <div className="md:col-span-2 grid grid-cols-2 gap-4">
+                        <FormField control={form.control} name="notarizationDate" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Notarization Date</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="date"
+                                {...field}
+                                data-testid="input-notarization-date"
+                                onChange={e => {
+                                  notarizationDateEditedRef.current = true;
+                                  field.onChange(e);
+                                }}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+                        <FormField control={form.control} name="notarizationTime" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Notarization Time</FormLabel>
+                            <FormControl>
+                              <NotarizationTimeInput
+                                value={field.value || getDefaultNotarizationTime()}
+                                onChange={v => {
+                                  notarizationTimeEditedRef.current = true;
+                                  field.onChange(v);
+                                }}
+                                data-testid="input-notarization-time"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+                      </div>
+                      <p className="md:col-span-2 text-xs text-muted-foreground -mt-2">
+                        When you performed the notarial act — shown on your printed journal. Use 12-hour time (AM/PM). Leave as-is to use the time when you sign or complete.
+                      </p>
                       
                       <div className="md:col-span-2 border-y py-4 my-2">
                         <div className="flex items-center justify-between mb-1">
@@ -2126,7 +2211,8 @@ export function NewEntry() {
                         </p>
                       </div>
                       <div>
-                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Date:</span> <span className="col-span-2">{form.getValues('documentDate')}</span></div>
+                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Notarization:</span> <span className="col-span-2">{form.getValues('notarizationDate')} {form.getValues('notarizationTime')}</span></div>
+                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Document date:</span> <span className="col-span-2">{form.getValues('documentDate')}</span></div>
                       </div>
                       <div>
                         <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Location:</span> <span className="col-span-2">{form.getValues('locationCity')}, {form.getValues('locationState')}</span></div>
@@ -2156,7 +2242,8 @@ export function NewEntry() {
                       <div>
                         <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Act Type:</span> <span className="col-span-2 font-medium capitalize">{form.getValues('notarialActType').replace('_', ' ')}</span></div>
                         <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Document:</span> <span className="col-span-2">{form.getValues('documentType')}</span></div>
-                        <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Date:</span> <span className="col-span-2">{form.getValues('documentDate')}</span></div>
+                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Notarization:</span> <span className="col-span-2">{form.getValues('notarizationDate')} {form.getValues('notarizationTime')}</span></div>
+                        <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Document date:</span> <span className="col-span-2">{form.getValues('documentDate')}</span></div>
                       </div>
                       <div>
                         <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Location:</span> <span className="col-span-2">{form.getValues('locationCity')}, {form.getValues('locationState')}</span></div>

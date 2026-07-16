@@ -30,6 +30,13 @@ import { FEE_TYPES, feeDollarsToCents, resolveFeeType } from '@/lib/fees';
 import { hapticSuccess } from '@/lib/haptic';
 import { getMissingCompletionFields } from '@/lib/completion';
 import { IdScanCard } from '@/components/id-scan-card';
+import { NotarizationTimeInput } from '@/components/notarization-time-input';
+import {
+  getDefaultNotarizationDate,
+  getDefaultNotarizationTime,
+  resolveNotarizationDateTimeAtComplete,
+  splitNotarizationDateTime,
+} from '@/lib/journal-datetime';
 
 // Schema is intentionally lenient on the optional-by-policy fields
 // (signerDOB, idNumber, idExpirationDate). Whether they're enforced is
@@ -47,6 +54,8 @@ const editSchema = z.object({
   idExpirationDate: z.string().optional().default(''),
   documentType: z.string().min(1, 'Document type is required'),
   documentDate: z.string().optional(),
+  notarizationDate: z.string().optional().default(''),
+  notarizationTime: z.string().optional().default(''),
   documentDescription: z.string().optional(),
   notarialActType: z.enum(['acknowledgment', 'jurat', 'copy_certification', 'signature_witnessing', 'other']),
   feeType: z.enum(FEE_TYPES),
@@ -78,6 +87,8 @@ export function EditEntry() {
   const [scanMethod, setScanMethod] = useState<'barcode' | 'mrz' | 'ocr' | 'manual' | undefined>();
   const [scanRawText, setScanRawText] = useState<string | undefined>();
   const [scanConfidence, setScanConfidence] = useState<number | undefined>();
+  const notarizationDateEditedRef = useRef(false);
+  const notarizationTimeEditedRef = useRef(false);
   // Derived from URL: ?scan=1 auto-expands the scan card. Wired up in
   // entry-detail.tsx's "Scan ID Now" button so the user lands directly on
   // the scan UI without scrolling.
@@ -145,6 +156,11 @@ export function EditEntry() {
       setScanMethod(e.extractionMethod);
       setScanRawText(e.extractedRawText);
       setScanConfidence(e.extractionConfidence);
+      const { date: notarizationDate, time: notarizationTime } = splitNotarizationDateTime(
+        e.notarizationDateTime ?? e.completedAt,
+      );
+      notarizationDateEditedRef.current = false;
+      notarizationTimeEditedRef.current = false;
       form.reset({
         signerFullName: e.signerFullName,
         signerAddress: e.signerAddress,
@@ -158,6 +174,8 @@ export function EditEntry() {
         idExpirationDate: e.idExpirationDate || '',
         documentType: e.documentType,
         documentDate: e.documentDate || '',
+        notarizationDate,
+        notarizationTime,
         documentDescription: e.documentDescription || '',
         notarialActType: e.notarialActType,
         feeType: resolveFeeType(e),
@@ -279,8 +297,15 @@ export function EditEntry() {
       if (!wantsDOB) scrubbed.signerDOB = '';
       // Only the full ID# is gated; expiration is always allowed.
       if (!wantsIdNumber) scrubbed.idNumber = '';
+      const { notarizationDate, notarizationTime, ...entryFields } = scrubbed;
+      const notarizationIso = resolveNotarizationDateTimeAtComplete(
+        notarizationDate,
+        notarizationTime,
+        { dateManuallyEdited: true, timeManuallyEdited: true },
+      );
       await updateEntry(id, {
-        ...scrubbed,
+        ...entryFields,
+        notarizationDateTime: notarizationIso,
         feeCharged: feeCents,
         idFrontImage,
         idBackImage,
@@ -367,16 +392,34 @@ export function EditEntry() {
     }
     const sigData = signatureRequired ? signaturePadRef.current?.toDataURL('image/png') : entry.signatureImage;
 
+    if (!notarizationTimeEditedRef.current) {
+      form.setValue('notarizationTime', getDefaultNotarizationTime());
+    }
+    if (!notarizationDateEditedRef.current) {
+      form.setValue('notarizationDate', getDefaultNotarizationDate());
+    }
+
     setIsSaving(true);
     try {
       const feeCents = feeDollarsToCents(data.feeCharged);
       const scrubbed: EditFormValues = { ...data };
       if (!wantsDOB) scrubbed.signerDOB = '';
       if (!wantsIdNumber) scrubbed.idNumber = '';
+      const { notarizationDate, notarizationTime, ...entryFields } = scrubbed;
+      const notarizationIso = resolveNotarizationDateTimeAtComplete(
+        notarizationDate,
+        notarizationTime,
+        {
+          dateManuallyEdited: notarizationDateEditedRef.current,
+          timeManuallyEdited: notarizationTimeEditedRef.current,
+        },
+      );
       // Persist the latest form values + signature image first, then call
       // completeEntry() which stamps the chain hash.
       await updateEntry(id, {
-        ...scrubbed,
+        ...entryFields,
+        notarizationDateTime: notarizationIso,
+        completedAt: notarizationIso,
         feeCharged: feeCents,
         idFrontImage,
         idBackImage,
@@ -547,7 +590,7 @@ export function EditEntry() {
               {/* Expiration is always shown — never gated by the ID# toggle. */}
               <FormField control={form.control} name="idExpirationDate" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Expiration Date</FormLabel>
+                  <FormLabel>ID Expiration Date</FormLabel>
                   <FormControl><Input type="date" {...field} data-testid="input-id-expiration" /></FormControl>
                   <FormMessage />
                 </FormItem>
@@ -574,6 +617,44 @@ export function EditEntry() {
                   <FormMessage />
                 </FormItem>
               )} />
+              <div className="md:col-span-2 grid grid-cols-2 gap-4">
+                <FormField control={form.control} name="notarizationDate" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notarization Date</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="date"
+                        {...field}
+                        data-testid="input-edit-notarization-date"
+                        onChange={e => {
+                          notarizationDateEditedRef.current = true;
+                          field.onChange(e);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="notarizationTime" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notarization Time</FormLabel>
+                    <FormControl>
+                      <NotarizationTimeInput
+                        value={field.value || getDefaultNotarizationTime()}
+                        onChange={v => {
+                          notarizationTimeEditedRef.current = true;
+                          field.onChange(v);
+                        }}
+                        data-testid="input-edit-notarization-time"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
+              <p className="md:col-span-2 text-xs text-muted-foreground -mt-2">
+                When you performed the notarial act — shown on your printed journal. Use 12-hour time (AM/PM).
+              </p>
               <FormField control={form.control} name="notarialActType" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Act Type</FormLabel>

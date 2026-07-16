@@ -8,6 +8,7 @@ import {
   MONTH_LABELS,
   type YearRollup,
 } from './fees';
+import { formatJournalDateTime, getEntryNotarizationIso } from './journal-datetime';
 
 // ── PDF helpers ────────────────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): v
   doc.setFontSize(12);
   doc.text(`Entry #${entry.entryNumber}`, 20, 55);
   doc.text(`Status: ${entry.status}`, 20, 62);
-  doc.text(`Date: ${new Date(entry.createdAt).toLocaleString()}`, 20, 69);
+  doc.text(`Notarization: ${formatJournalDateTime(entry)}`, 20, 69);
 
   // Cursor-based layout so disabled-by-compliance rows don't leave gaps.
   let y = 85;
@@ -177,6 +178,7 @@ const CSV_HEADERS = [
   'Created At',
   'Updated At',
   'Completed At',
+  'Notarization Date Time',
   'Signer Full Name',
   'Signer Address',
   'Signer City',
@@ -228,6 +230,7 @@ export function generateCSVRow(entry: JournalEntry, settings?: NotarySettings | 
     entry.createdAt,
     entry.updatedAt,
     entry.completedAt ?? '',
+    getEntryNotarizationIso(entry),
     entry.signerFullName,
     entry.signerAddress,
     entry.signerCity,
@@ -410,7 +413,7 @@ export function exportAllPDF(entries: JournalEntry[], settings: NotarySettings):
     const fee = entry.feeWaived ? 'Waived' : `$${(entry.feeCharged / 100).toFixed(2)}`;
     doc.setFontSize(10);
     doc.text(
-      `#${entry.entryNumber} | ${new Date(entry.createdAt).toLocaleDateString()} | ${entry.signerFullName} | ${entry.notarialActType} | ${resolveFeeType(entry)} | ${fee}`,
+      `#${entry.entryNumber} | ${formatJournalDateTime(entry)} | ${entry.signerFullName} | ${entry.notarialActType} | ${resolveFeeType(entry)} | ${fee}`,
       20, y,
     );
     y += 10;
@@ -511,7 +514,7 @@ export function exportJournalTablePDF(
   // Column definitions: [label, x-position, width, align]
   const cols: Array<[string, number, number, 'left' | 'right' | 'center']> = [
     ['#',         10,  12, 'center'],
-    ['Date',      22,  24, 'left'],
+    ['Date/Time', 22,  24, 'left'],
     ['Signer',    46,  38, 'left'],
     ['Address',   84,  44, 'left'],
     ['ID Type',   128, 22, 'left'],
@@ -585,7 +588,7 @@ export function exportJournalTablePDF(
     const fee = entry.feeWaived
       ? 'Waived'
       : `$${(entry.feeCharged / 100).toFixed(2)}`;
-    const date = new Date(entry.createdAt).toLocaleDateString();
+    const date = formatJournalDateTime(entry, true);
     const act = entry.notarialActType.replace('_', ' ');
 
     drawJournalTableCell(doc, String(entry.entryNumber), cols[0][1], y, cols[0][2], rowH, cols[0][3]);

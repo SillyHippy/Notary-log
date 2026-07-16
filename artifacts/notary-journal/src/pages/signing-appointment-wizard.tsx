@@ -22,6 +22,7 @@ import {
   type NotarySettings,
 } from '@/lib/db';
 import { IdScanCard } from '@/components/id-scan-card';
+import { NotarizationTimeInput } from '@/components/notarization-time-input';
 import { detectDeviceLocation } from '@/lib/geolocation';
 import { parseDocumentTypesFromInput } from '@/lib/signing-session';
 import { getStampFeeCents } from '@/lib/fees';
@@ -37,6 +38,11 @@ import {
   type SigningAppointmentPayload,
 } from '@/lib/signing-appointment';
 import { resolveFeeScheduleState, defaultSharedCertificateStyle, type CertificateStyle } from '@/lib/fee-rules';
+import {
+  getDefaultNotarizationDate,
+  getDefaultNotarizationTime,
+  resolveNotarizationDateTimeAtComplete,
+} from '@/lib/journal-datetime';
 import { hapticSuccess, hapticWarning } from '@/lib/haptic';
 
 const APPT_STEPS = ['Appointment', 'Signers', 'Documents', 'Signatures', 'Review'];
@@ -50,6 +56,8 @@ interface AppointmentWizardSnapshot {
   locationState: string;
   locationAddress: string;
   notes: string;
+  notarizationDate: string;
+  notarizationTime: string;
   roster: SignerRosterEntry[];
   documents: DocumentActSlot[];
   bulkDocumentInput: string;
@@ -107,10 +115,23 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
   const [locationState, setLocationState] = useState('');
   const [locationAddress, setLocationAddress] = useState('');
   const [notes, setNotes] = useState('');
+  const [notarizationDate, setNotarizationDate] = useState(getDefaultNotarizationDate);
+  const [notarizationTime, setNotarizationTime] = useState(getDefaultNotarizationTime);
   const [isLocating, setIsLocating] = useState(false);
   const [locationDetected, setLocationDetected] = useState(false);
   const locationAutoTried = useRef(false);
   const draftRestored = useRef(false);
+  const notarizationDateEditedRef = useRef(false);
+  const notarizationTimeEditedRef = useRef(false);
+
+  const snapNotarizationDateTimeIfAuto = () => {
+    if (!notarizationTimeEditedRef.current) {
+      setNotarizationTime(getDefaultNotarizationTime());
+    }
+    if (!notarizationDateEditedRef.current) {
+      setNotarizationDate(getDefaultNotarizationDate());
+    }
+  };
 
   const [roster, setRoster] = useState<SignerRosterEntry[]>([emptySigner(1)]);
   const [documents, setDocuments] = useState<DocumentActSlot[]>([]);
@@ -132,6 +153,8 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
       locationState,
       locationAddress,
       notes,
+      notarizationDate,
+      notarizationTime,
       roster,
       documents,
       bulkDocumentInput,
@@ -151,6 +174,8 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
     locationState,
     locationAddress,
     notes,
+    notarizationDate,
+    notarizationTime,
     roster,
     documents,
     bulkDocumentInput,
@@ -190,6 +215,8 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
       setLocationState(snap.locationState ?? '');
       setLocationAddress(snap.locationAddress ?? '');
       setNotes(snap.notes ?? '');
+      setNotarizationDate(snap.notarizationDate ?? getDefaultNotarizationDate());
+      setNotarizationTime(snap.notarizationTime ?? getDefaultNotarizationTime());
       if (snap.roster?.length) setRoster(snap.roster);
       if (snap.documents?.length) setDocuments(snap.documents);
       setBulkDocumentInput(snap.bulkDocumentInput ?? joinDocumentTypesForBulkInput(snap.documents ?? []));
@@ -387,7 +414,7 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
     );
   };
 
-  const buildPayload = (): SigningAppointmentPayload => {
+  const buildPayload = (opts?: { forComplete?: boolean }): SigningAppointmentPayload => {
     const sigRequired = shouldRequireSignature(settings ?? undefined);
     const rosterWithSigs = roster.map(s => {
       if (!sigRequired) return s;
@@ -395,6 +422,15 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
       const data = pad && !pad.isEmpty() ? pad.toDataURL('image/png') : s.signatureImage;
       return { ...s, signatureImage: data };
     });
+    const completedAt = opts?.forComplete
+      ? resolveNotarizationDateTimeAtComplete(notarizationDate, notarizationTime, {
+          dateManuallyEdited: notarizationDateEditedRef.current,
+          timeManuallyEdited: notarizationTimeEditedRef.current,
+        })
+      : resolveNotarizationDateTimeAtComplete(notarizationDate, notarizationTime, {
+          dateManuallyEdited: true,
+          timeManuallyEdited: true,
+        });
     return {
       appointmentId,
       appointmentLabel: appointmentLabel.trim() || undefined,
@@ -404,7 +440,7 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
       notes: notes || undefined,
       roster: rosterWithSigs,
       documents,
-      completedAt: new Date().toISOString(),
+      completedAt,
     };
   };
 
@@ -447,8 +483,10 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
       return;
     }
     if (step === 2 && !shouldRequireSignature(settings ?? undefined)) {
+      snapNotarizationDateTimeIfAuto();
       setStep(4);
     } else {
+      if (step === 3) snapNotarizationDateTimeIfAuto();
       setStep(s => Math.min(s + 1, APPT_STEPS.length - 1));
     }
   };
@@ -490,7 +528,7 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
     }
     setIsSaving(true);
     try {
-      const payload = buildPayload();
+      const payload = buildPayload({ forComplete: true });
       const ids = await createAndCompleteSigningAppointment(payload, settings ?? undefined);
       clearWizardSnapshot();
       toast({
@@ -598,6 +636,36 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
                 onChange={e => setLocationAddress(e.target.value)}
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Notarization Date</Label>
+                <Input
+                  type="date"
+                  value={notarizationDate}
+                  onChange={e => {
+                    notarizationDateEditedRef.current = true;
+                    setNotarizationDate(e.target.value);
+                  }}
+                  data-testid="input-appt-notarization-date"
+                />
+              </div>
+              <div>
+                <Label>Notarization Time</Label>
+                <div className="mt-1">
+                  <NotarizationTimeInput
+                    value={notarizationTime}
+                    onChange={v => {
+                      notarizationTimeEditedRef.current = true;
+                      setNotarizationTime(v);
+                    }}
+                    data-testid="input-appt-notarization-time"
+                  />
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              When the notarial acts are performed — shown on your printed journal. Use 12-hour time (AM/PM). Leave as-is to use the time when you complete.
+            </p>
           </CardContent>
         </Card>
       )}
@@ -957,6 +1025,7 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
           <CardHeader><CardTitle>Review</CardTitle></CardHeader>
           <CardContent className="space-y-3 text-sm">
             {appointmentLabel && <p><span className="text-muted-foreground">Appointment:</span> {appointmentLabel}</p>}
+            <p><span className="text-muted-foreground">Notarization:</span> {notarizationDate} {notarizationTime}</p>
             <p><span className="text-muted-foreground">Location:</span> {locationCity}, {locationState}</p>
             <p><span className="text-muted-foreground">Signers:</span> {roster.length}</p>
             <p><span className="text-muted-foreground">Documents:</span> {documents.length}</p>

@@ -273,6 +273,7 @@ function buildDraftFromSigner(
     locationAddress: payload.locationAddress,
     notes: payload.notes,
     completedAt,
+    notarizationDateTime: completedAt,
   };
 }
 

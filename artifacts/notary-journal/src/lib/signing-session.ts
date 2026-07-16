@@ -151,5 +151,6 @@ export function buildDraftEntriesFromSession(
     needsReview: payload.shared.needsReview,
     notes: payload.shared.notes,
     completedAt,
+    notarizationDateTime: completedAt,
   }));
 }

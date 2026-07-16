@@ -18,6 +18,7 @@ import {
   ScanLine
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatJournalDateTime } from '@/lib/journal-datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -338,7 +339,7 @@ export function Dashboard() {
                         <span className="hidden sm:inline text-border">•</span>
                         <span className="flex items-center gap-1">
                           <Clock className="w-3.5 h-3.5" />
-                          {format(new Date(entry.createdAt), 'MMM d, yyyy h:mm a')}
+                          {formatJournalDateTime(entry)}
                         </span>
                       </div>
                     </div>

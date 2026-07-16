@@ -87,6 +87,8 @@ export interface JournalEntry {
   createdAt: string; // ISO
   updatedAt: string; // ISO
   completedAt?: string;
+  /** Date/time the notarial act was performed (ISO). Shown on journal print. */
+  notarizationDateTime?: string;
 
   // Amendments
   amendments?: Array<{ note: string; date: string }>;
@@ -814,6 +816,29 @@ const IMMUTABLE_FIELDS: Array<keyof JournalEntry> = [
   'idFrontImage', 'idBackImage', 'signatureImage',
 ];
 
+/**
+ * Update notarization date/time on a completed or amended entry and restamp
+ * the hash chain from this entry forward.
+ */
+export async function updateEntryNotarizationDateTime(
+  id: number,
+  notarizationIso: string,
+): Promise<JournalEntry> {
+  const existing = await getEntry(id);
+  if (!existing) throw new Error(`Entry ${id} not found`);
+  if (existing.status !== 'completed' && existing.status !== 'amended') {
+    throw new Error('Notarization date/time can only be edited on completed entries.');
+  }
+  await updateEntry(id, {
+    notarizationDateTime: notarizationIso,
+    completedAt: notarizationIso,
+  });
+  await recomputeChainFrom(existing.entryNumber);
+  const updated = await getEntry(id);
+  if (!updated) throw new Error(`Entry ${id} not found after update`);
+  return updated;
+}
+
 export async function updateEntry(id: number, updates: Partial<JournalEntry>): Promise<void> {
   const existing = await getEntry(id);
   if (!existing) throw new Error(`Entry ${id} not found`);
@@ -908,10 +933,10 @@ export async function completeEntry(id: number): Promise<JournalEntry> {
     .filter(e => e.entryNumber < entry.entryNumber && e.hash)
     .sort((a, b) => b.entryNumber - a.entryNumber)[0];
   const previousEntryHash = prior?.hash ?? '';
-  const completedAt = entry.completedAt ?? new Date().toISOString();
-  const draft: JournalEntry = { ...entry, status: 'completed', completedAt, previousEntryHash };
+  const completedAt = entry.notarizationDateTime ?? entry.completedAt ?? new Date().toISOString();
+  const draft: JournalEntry = { ...entry, status: 'completed', completedAt, notarizationDateTime: completedAt, previousEntryHash };
   const hash = await generateEntryHash(draft);
-  await updateEntry(id, { status: 'completed', completedAt, previousEntryHash, hash });
+  await updateEntry(id, { status: 'completed', completedAt, notarizationDateTime: completedAt, previousEntryHash, hash });
   return { ...draft, hash };
 }
 
