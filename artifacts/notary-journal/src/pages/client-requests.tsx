@@ -102,7 +102,8 @@ export function ClientRequests() {
       stashIntakePrefill(full);
       await deleteSubmission(sub.name);
       setSubmissions(prev => prev.filter(s => s.name !== sub.name));
-      window.location.href = '/entry/new';
+      const { appPath } = await import('@/lib/app-path');
+      window.location.href = appPath('/entry/new');
     } catch (err) {
       toast({
         title: 'Failed to accept request',

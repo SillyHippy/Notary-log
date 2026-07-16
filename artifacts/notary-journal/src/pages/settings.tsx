@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { appOriginPath } from '@/lib/app-path';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -992,7 +993,8 @@ export function Settings() {
   };
 
   const handleCopyIntakeLink = async () => {
-    const url = `${window.location.origin}/intake?key=${activeIntakeKey}`;
+    const { appOriginPath } = await import('@/lib/app-path');
+    const url = `${appOriginPath('/intake')}?key=${activeIntakeKey}`;
     try {
       await navigator.clipboard.writeText(url);
       toast({ title: 'Link copied', description: 'Share this link with your clients.' });
@@ -1578,7 +1580,7 @@ export function Settings() {
               <p className="text-xs text-muted-foreground mb-1">
                 Intake link ({zoComputerToken.trim() ? 'Zo Computer' : 'Web3Forms'}):
               </p>
-              <p className="text-sm font-mono break-all">{window.location.origin}/intake?key={activeIntakeKey}</p>
+              <p className="text-sm font-mono break-all">{appOriginPath('/intake')}?key={activeIntakeKey}</p>
             </div>
           )}
         </CardContent>

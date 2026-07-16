@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUploadZone } from '@/components/file-upload-zone';
 import { compressImageToDataUrl } from '@/lib/image-compress';
 import { isZoHost, isZoIntakeToken } from '@/lib/intake-api';
+import { apiPath } from '@/lib/app-path';
 
 const STEPS = [
   'Notarization',
@@ -294,7 +295,7 @@ export function ClientIntake() {
           for (const file of form.signer2IdBackFiles) fd.append('signer2IdBackFiles', file);
         }
 
-        const zoRes = await fetch('/api/intake', { method: 'POST', body: fd });
+        const zoRes = await fetch(apiPath('/api/intake'), { method: 'POST', body: fd });
         if (zoRes.ok) {
           setSubmitted(true);
           setSubmitting(false);
@@ -341,7 +342,7 @@ export function ClientIntake() {
         payload.signer2IdBackFiles = await Promise.all(form.signer2IdBackFiles.map(fileToBase64));
       }
 
-      const appRes = await fetch('/api/intake-webhook', {
+      const appRes = await fetch(apiPath('/api/intake-webhook'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, key: urlKey }),

@@ -6,8 +6,11 @@
  */
 
 import { getSettings } from '@/lib/db';
+import { apiPath } from '@/lib/app-path';
 
-const INTAKE_BASE = '/api/intake';
+function intakeApiBase(): string {
+  return apiPath('/api/intake');
+}
 
 export type IntakeMode = 'zo' | 'web3forms';
 
@@ -118,7 +121,7 @@ export interface IntakeRequest {
 }
 
 export async function listSubmissions(): Promise<IntakeSubmission[]> {
-  const url = await getIntakeUrl(INTAKE_BASE);
+  const url = await getIntakeUrl(intakeApiBase());
   const res = await fetch(url);
   if (!res.ok) {
     const mode = await getIntakeMode().catch(() => 'web3forms' as IntakeMode);
@@ -136,7 +139,7 @@ export async function listSubmissions(): Promise<IntakeSubmission[]> {
 }
 
 export async function getSubmission(fileName: string): Promise<IntakeRequest> {
-  const url = await getIntakeUrl(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}`);
+  const url = await getIntakeUrl(`${intakeApiBase()}?file=${encodeURIComponent(fileName)}`);
   const res = await fetch(url);
   if (!res.ok) {
     const mode = await getIntakeMode().catch(() => 'web3forms' as IntakeMode);
@@ -164,7 +167,7 @@ export async function markSubmissionRead(fileName: string): Promise<void> {
 }
 
 export async function deleteSubmission(fileName: string): Promise<void> {
-  const url = await getIntakeUrl(`${INTAKE_BASE}?file=${encodeURIComponent(fileName)}`);
+  const url = await getIntakeUrl(`${intakeApiBase()}?file=${encodeURIComponent(fileName)}`);
   const res = await fetch(url, { method: 'DELETE' });
   if (!res.ok) {
     const mode = await getIntakeMode().catch(() => 'web3forms' as IntakeMode);
@@ -250,7 +253,7 @@ function normalizeSubmission(raw: Record<string, unknown>, fileName: string): In
 export async function testIntakeConnection(): Promise<{ ok: boolean; message: string }> {
   try {
     const mode = await getIntakeMode();
-    const url = await getIntakeUrl(INTAKE_BASE);
+    const url = await getIntakeUrl(intakeApiBase());
     const res = await fetch(url);
     if (res.ok) {
       return {
@@ -281,7 +284,7 @@ export async function isZoIntakeToken(urlKey: string): Promise<boolean> {
   if (!isZoHost() || !urlKey) return false;
   try {
     const res = await fetch(
-      `${INTAKE_BASE}?key=${encodeURIComponent(urlKey)}&probe=1`,
+      `${intakeApiBase()}?key=${encodeURIComponent(urlKey)}&probe=1`,
     );
     if (!res.ok) return false;
     const data = (await res.json()) as { valid?: boolean; mode?: string };

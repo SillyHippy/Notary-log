@@ -641,6 +641,15 @@ function handleHealth() {
   });
 }
 
+async function handleBootstrap() {
+  const tokenFile = Bun.file(INTAKE_TOKEN_FILE);
+  if (!(await tokenFile.exists())) {
+    return json({ intakeToken: null });
+  }
+  const intakeToken = (await tokenFile.text()).trim() || null;
+  return json({ intakeToken });
+}
+
 /* ── Server ─────────────────────────────────────────────────────── */
 
 await mkdir(JOURNAL_DIR, { recursive: true });
@@ -686,6 +695,10 @@ const server = Bun.serve({
 
     if (path === "/api/health") {
       return handleHealth();
+    }
+
+    if (path === "/api/bootstrap") {
+      return handleBootstrap();
     }
 
     if (path === "/api/backup") {

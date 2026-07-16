@@ -34,6 +34,7 @@
     "preinstall-disabled": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "dev": "bun run --cwd artifacts/notary-journal dev",
     "build": "bun run --cwd artifacts/notary-journal build",
+    "build:proxy": "BASE_PATH=/notary/ bun run --cwd artifacts/notary-journal build",
     "build:pnpm": "pnpm run typecheck && pnpm -r --if-present run build",
     "prod": "bun run server.ts",
     "deploy:cloudflare": "node scripts/cloudflare-deploy.mjs",

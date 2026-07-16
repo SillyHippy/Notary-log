@@ -86,3 +86,17 @@ export function getMissingSigningActFields(
   if (acts.length === 0) missing.push('At least one document/act');
   return missing;
 }
+
+/** Validate one roster signer against compliance toggles (appointment wizard). */
+export function getMissingRosterEntryFields(
+  data: CompletionFields,
+  settings: NotarySettings | null | undefined,
+  signerLabel = 'Signer',
+): string[] {
+  return getMissingCompletionFields(
+    { ...data, documentType: 'placeholder', locationCity: 'x', locationState: 'x' },
+    settings,
+  )
+    .filter(label => !['Document type', 'Location city', 'Location state'].includes(label))
+    .map(label => `${signerLabel}: ${label}`);
+}

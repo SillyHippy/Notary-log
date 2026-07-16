@@ -986,7 +986,7 @@ export async function createAndCompleteSigningAppointment(
   payload: SigningAppointmentPayload,
   settings?: NotarySettings,
 ): Promise<number[]> {
-  const errors = validateSigningAppointmentPayload(payload);
+  const errors = validateSigningAppointmentForComplete(payload, settings);
   if (errors.length) {
     throw new Error(errors.join('; '));
   }

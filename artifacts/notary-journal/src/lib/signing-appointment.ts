@@ -1,4 +1,5 @@
-import type { JournalEntry } from './db';
+import type { JournalEntry, NotarySettings } from './db';
+import { getMissingRosterEntryFields } from './completion';
 import { ACT_TYPE_TO_FEE_TYPE } from './fees';
 import {
   computeSignerFeesForDocument,
@@ -92,6 +93,34 @@ export function validateSigningAppointmentPayload(payload: SigningAppointmentPay
     });
   });
 
+  return errors;
+}
+
+/** Full compliance validation before completing an appointment (matches single-entry rules). */
+export function validateSigningAppointmentForComplete(
+  payload: SigningAppointmentPayload,
+  settings?: NotarySettings | null,
+): string[] {
+  const errors = validateSigningAppointmentPayload(payload);
+  payload.roster?.forEach((s, i) => {
+    const label = s.signerFullName?.trim() || `Signer ${i + 1}`;
+    const missing = getMissingRosterEntryFields(
+      {
+        signerFullName: s.signerFullName,
+        signerAddress: s.signerAddress,
+        signerCity: s.signerCity,
+        signerState: s.signerState,
+        signerDOB: s.signerDOB,
+        idType: s.idType,
+        idNumber: s.idNumber,
+        idExpirationDate: s.idExpirationDate,
+        idFrontImage: s.idFrontImage,
+      },
+      settings,
+      label,
+    );
+    errors.push(...missing);
+  });
   return errors;
 }
 

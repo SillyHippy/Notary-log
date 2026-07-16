@@ -1,5 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from "react";
-import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
+import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -22,7 +22,9 @@ const TermsOfUse = lazy(() => import("@/pages/terms-of-use").then(m => ({ defaul
 const NotFound = lazy(() => import("@/pages/not-found"));
 const ClientIntake = lazy(() => import("@/pages/client-intake").then(m => ({ default: m.ClientIntake })));
 const ClientRequests = lazy(() => import("@/pages/client-requests").then(m => ({ default: m.ClientRequests })));
-import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked } from "@/lib/db";
+import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked, getSettings, saveSettings } from "@/lib/db";
+import { isZoHost } from "@/lib/intake-api";
+import { apiPath, isPublicAppPath } from "@/lib/app-path";
 
 const queryClient = new QueryClient();
 
@@ -77,8 +79,7 @@ function Router() {
  * This ensures clients can access the intake form without any PIN.
  */
 function useIsPublicRoute(): boolean {
-  const [location] = useLocation();
-  return location.startsWith('/intake');
+  return isPublicAppPath();
 }
 
 type AppMode = 'loading' | 'setup' | 'locked' | 'unlocked';
@@ -162,6 +163,25 @@ function App() {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
+  }, [mode]);
+
+  // On Zo deploys, auto-fill intake token from server when Settings has none yet.
+  useEffect(() => {
+    if (mode !== 'unlocked' || !isZoHost()) return;
+    void (async () => {
+      try {
+        const settings = await getSettings();
+        if (settings.zoComputerToken?.trim()) return;
+        const res = await fetch(apiPath('/api/bootstrap'));
+        if (!res.ok) return;
+        const data = (await res.json()) as { intakeToken?: string | null };
+        if (data.intakeToken?.trim()) {
+          await saveSettings({ ...settings, zoComputerToken: data.intakeToken.trim() });
+        }
+      } catch {
+        // Non-fatal — user can paste token manually in Settings.
+      }
+    })();
   }, [mode]);
 
   if (mode === 'loading') {

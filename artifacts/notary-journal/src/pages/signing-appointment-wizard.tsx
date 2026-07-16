@@ -23,6 +23,7 @@ import {
 } from '@/lib/db';
 import { IdScanCard } from '@/components/id-scan-card';
 import { NotarizationTimeInput } from '@/components/notarization-time-input';
+import { getMissingRosterEntryFields } from '@/lib/completion';
 import { detectDeviceLocation } from '@/lib/geolocation';
 import { parseDocumentTypesFromInput } from '@/lib/signing-session';
 import { getStampFeeCents } from '@/lib/fees';
@@ -475,6 +476,42 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
     return null;
   };
 
+  const validateForComplete = (): string | null => {
+    if (!locationCity.trim() || !locationState.trim()) return 'Location city and state are required.';
+    if (!documents.length) return 'Add at least one document.';
+    for (let i = 0; i < roster.length; i++) {
+      const s = roster[i];
+      const missing = getMissingRosterEntryFields(
+        {
+          signerFullName: s.signerFullName,
+          signerAddress: s.signerAddress,
+          signerCity: s.signerCity,
+          signerState: s.signerState,
+          signerDOB: s.signerDOB,
+          idType: s.idType,
+          idNumber: s.idNumber,
+          idExpirationDate: s.idExpirationDate,
+          idFrontImage: s.idFrontImage,
+        },
+        settings,
+        `Signer ${i + 1}`,
+      );
+      if (missing.length) return missing[0];
+    }
+    for (let i = 0; i < documents.length; i++) {
+      const d = documents[i];
+      if (!d.documentType.trim()) return `Document ${i + 1}: type is required.`;
+      if (!d.signerSlotIds.length) return `Document ${i + 1}: select at least one signer.`;
+    }
+    if (shouldRequireSignature(settings ?? undefined)) {
+      for (const s of roster) {
+        const pad = padRefs.current.get(s.slotId);
+        if (!pad || pad.isEmpty()) return `Capture signature for ${s.signerFullName || 'signer'}.`;
+      }
+    }
+    return null;
+  };
+
   const nextStep = () => {
     const err = validateStep();
     if (err) {
@@ -521,7 +558,7 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
   };
 
   const handleComplete = async () => {
-    const err = validateStep();
+    const err = validateForComplete();
     if (err) {
       toast({ title: 'Required', description: err, variant: 'destructive' });
       return;
@@ -816,6 +853,15 @@ export function SigningAppointmentWizard({ onBack }: SigningAppointmentWizardPro
 
       {step === 2 && (
         <div className="space-y-4">
+          {roster.length > 1 && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+              <p className="font-medium text-foreground">Multiple signers on a document?</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Check <strong>Combine co-signers on one journal line</strong> on each document before completing
+                if they share one certificate (signer #1, #2, #3 on entry #1). Settings can default this on for you.
+              </p>
+            </div>
+          )}
           <p className="text-sm text-muted-foreground">
             Fee schedule: <strong>{feeState}</strong> — shared acknowledgment = one stamp; individual = per signer.
           </p>
