@@ -45,6 +45,23 @@ export interface SigningSessionPayload {
   acts: SigningActRow[];
 }
 
+/**
+ * Split a document-type field into separate documents.
+ * Commas, semicolons, and newlines each start a new journal line when
+ * multi-document mode is enabled in the new-entry wizard.
+ */
+export function parseDocumentTypesFromInput(raw: string): string[] {
+  if (!raw?.trim()) return [];
+  return raw
+    .split(/[,;\n]+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+export function isMultiDocumentSession(raw: string): boolean {
+  return parseDocumentTypesFromInput(raw).length > 1;
+}
+
 export function generateSigningGroupId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();

@@ -13,6 +13,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
+import { resolveJournalSharedCertMode } from '@/lib/fee-rules';
 import { getSettings, saveSettings, getAllEntries, changePin, lock, verifyChain, importEntry, recomputeChainFrom, wipeAllLocalData, shouldRequireSignature, type NotarySettings, type ChainVerificationResult, type JournalEntry } from '@/lib/db';
 import {
   isPlatformAuthenticatorAvailable,
@@ -109,6 +110,8 @@ export function Settings() {
   const [savingStampFee, setSavingStampFee] = useState(false);
   const [requireIdPhoto, setRequireIdPhoto] = useState(false);
   const [requireSignature, setRequireSignature] = useState(true);
+  const [journalCombinedLine, setJournalCombinedLine] = useState(false);
+  const [journalSplitDocuments, setJournalSplitDocuments] = useState(true);
   const [sealImage, setSealImage] = useState<string | undefined>(undefined);
   const [sealBusy, setSealBusy] = useState(false);
   const sealInputRef = useRef<HTMLInputElement>(null);
@@ -562,6 +565,8 @@ export function Settings() {
     setStampFeeDollars(stampCents > 0 ? (stampCents / 100).toFixed(2) : '');
     setRequireIdPhoto(!!settings.requireIdFrontPhoto);
     setRequireSignature(settings.requireSignerSignature !== false);
+    setJournalCombinedLine(resolveJournalSharedCertMode(settings) === 'combined_line');
+    setJournalSplitDocuments(settings.journalSplitDocumentsDefault !== false);
     setSealImage(settings.sealImage);
   }
 
@@ -1095,6 +1100,9 @@ export function Settings() {
                       <FormControl>
                         <Input placeholder="IL" maxLength={2} {...field} data-testid="input-default-state" />
                       </FormControl>
+                      <FormDescription>
+                        Used for fee rules in signing appointments (OK: $5/act; PA ack: $5 + $2 per additional name on shared cert).
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -1230,6 +1238,58 @@ export function Settings() {
                     toast({ title: checked ? 'ID photo required' : 'ID photo optional', description: 'Preference saved.' });
                   }}
                   data-testid="switch-require-id-photo"
+                />
+              </div>
+              <div className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
+                <div className="space-y-0.5">
+                  <p className="text-base font-medium">Default: combine co-signers on one journal line</p>
+                  <p className="text-sm text-muted-foreground">
+                    When on, shared-certificate signings start with &quot;one line with all names&quot; checked
+                    (signer #1, #2, #3 on entry #1). Off by default — turn on for PA-style combined lines.
+                    You can still change it per signing.
+                  </p>
+                </div>
+                <Switch
+                  checked={journalCombinedLine}
+                  onCheckedChange={async (checked) => {
+                    setJournalCombinedLine(checked);
+                    const current = await getSettings();
+                    await saveSettings({
+                      ...current,
+                      journalSharedCertMode: checked ? 'combined_line' : 'separate_lines',
+                    } as NotarySettings);
+                    toast({
+                      title: checked ? 'Combined line default' : 'Separate lines default',
+                      description: 'Journal layout preference saved.',
+                    });
+                  }}
+                  data-testid="switch-journal-combined-line"
+                />
+              </div>
+              <div className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
+                <div className="space-y-0.5">
+                  <p className="text-base font-medium">Default: one journal line per document</p>
+                  <p className="text-sm text-muted-foreground">
+                    When you type comma-separated document types (deed, affidavit, will), this controls
+                    whether each document gets its own journal line by default. You can still toggle it
+                    on each entry.
+                  </p>
+                </div>
+                <Switch
+                  checked={journalSplitDocuments}
+                  onCheckedChange={async (checked) => {
+                    setJournalSplitDocuments(checked);
+                    const current = await getSettings();
+                    await saveSettings({
+                      ...current,
+                      journalSplitDocumentsDefault: checked,
+                    } as NotarySettings);
+                    toast({
+                      title: checked ? 'Split documents by default' : 'Single line by default',
+                      description: 'Journal layout preference saved.',
+                    });
+                  }}
+                  data-testid="switch-journal-split-documents"
                 />
               </div>
             </CardContent>

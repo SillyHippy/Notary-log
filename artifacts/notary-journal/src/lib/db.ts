@@ -18,6 +18,12 @@ import {
   validateSigningSessionPayload,
   type SigningSessionPayload,
 } from './signing-session';
+import {
+  expandAppointmentToEntries,
+  validateSigningAppointmentPayload,
+  sanitizePayloadForDraft,
+  type SigningAppointmentPayload,
+} from './signing-appointment';
 
 export interface JournalEntry {
   id?: number;
@@ -95,6 +101,18 @@ export interface JournalEntry {
   signingGroupLabel?: string;
   actIndexInGroup?: number;
   actCountInGroup?: number;
+
+  /** Multi-signer appointment metadata (v1: not included in hash). */
+  appointmentId?: string;
+  appointmentLabel?: string;
+  signerSlotId?: string;
+  signerIndexInAppointment?: number;
+  documentSlotId?: string;
+  coSignerNames?: string[];
+  /** Full details for signers #2+ on a combined PA-style journal line. */
+  additionalSigners?: import('./entry-signers').AdditionalSignerRecord[];
+  feeAllocation?: 'primary' | 'split' | 'waived';
+  certificateStyle?: 'shared' | 'individual';
 }
 
 export interface NotarySettings {
@@ -147,6 +165,16 @@ export interface NotarySettings {
   requireIdFrontPhoto?: boolean;
   /** When false, the signer signature step is skipped and not required for completion. */
   requireSignerSignature?: boolean;
+  /**
+   * Shared-certificate journal layout: PA-style one line with all signers vs separate lines.
+   * When unset, PA defaults to combined_line; other states default to separate_lines.
+   */
+  journalSharedCertMode?: 'combined_line' | 'separate_lines';
+  /**
+   * When true (default), comma-separated document types in the new-entry wizard split into
+   * one journal line per document. When false, all documents stay on a single line.
+   */
+  journalSplitDocumentsDefault?: boolean;
 }
 
 // ── Storage shapes (encrypted records actually written to IDB) ─────────────
@@ -721,7 +749,11 @@ export async function searchEntries(query: string): Promise<JournalEntry[]> {
   const all = await getAllEntries();
   const lower = query.toLowerCase();
   return all.filter(e =>
-    e.signerFullName.toLowerCase().includes(lower) || e.entryNumber.toString().includes(lower),
+    e.signerFullName.toLowerCase().includes(lower)
+    || e.entryNumber.toString().includes(lower)
+    || (e.appointmentLabel?.toLowerCase().includes(lower) ?? false)
+    || (e.signingGroupLabel?.toLowerCase().includes(lower) ?? false)
+    || (e.documentType?.toLowerCase().includes(lower) ?? false),
   );
 }
 
@@ -848,6 +880,14 @@ export async function generateEntryHash(entry: JournalEntry): Promise<string> {
     signingGroupLabel,
     actIndexInGroup,
     actCountInGroup,
+    appointmentId,
+    appointmentLabel,
+    signerSlotId,
+    signerIndexInAppointment,
+    documentSlotId,
+    coSignerNames,
+    feeAllocation,
+    certificateStyle,
     ...signed
   } = entry;
   return sha256Hex(canonicalJson({
@@ -900,12 +940,60 @@ export async function createAndCompleteSigningSession(
 export async function getEntriesBySigningGroup(groupId: string): Promise<JournalEntry[]> {
   const all = await getAllEntries();
   return all
-    .filter(e => e.signingGroupId === groupId)
+    .filter(e => e.signingGroupId === groupId || e.appointmentId === groupId)
     .sort((a, b) => {
       const ai = a.actIndexInGroup ?? a.entryNumber;
       const bi = b.actIndexInGroup ?? b.entryNumber;
       return ai - bi || a.entryNumber - b.entryNumber;
     });
+}
+
+/** Alias for appointment-scoped queries (appointmentId === signingGroupId). */
+export async function getEntriesByAppointmentId(appointmentId: string): Promise<JournalEntry[]> {
+  return getEntriesBySigningGroup(appointmentId);
+}
+
+/**
+ * Create and complete journal entries for an appointment matrix.
+ * PA shared cert: one line with all signers; OK/default: separate lines per signer.
+ */
+export async function createAndCompleteSigningAppointment(
+  payload: SigningAppointmentPayload,
+  settings?: NotarySettings,
+): Promise<number[]> {
+  const errors = validateSigningAppointmentPayload(payload);
+  if (errors.length) {
+    throw new Error(errors.join('; '));
+  }
+  const expanded = expandAppointmentToEntries(payload, settings ?? null);
+  const ids: number[] = [];
+  for (const { draft } of expanded) {
+    const id = await createEntry(draft);
+    await completeEntry(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/** Save appointment matrix as draft journal rows (planning ahead — not completed). */
+export async function createDraftSigningAppointment(
+  payload: SigningAppointmentPayload,
+  settings?: NotarySettings,
+): Promise<number[]> {
+  const sanitized = sanitizePayloadForDraft(payload);
+  const existing = await getEntriesByAppointmentId(payload.appointmentId);
+  for (const entry of existing) {
+    if (entry.status === 'draft' && entry.id != null) {
+      await deleteEntry(entry.id);
+    }
+  }
+  const expanded = expandAppointmentToEntries(sanitized, settings ?? null);
+  const ids: number[] = [];
+  for (const { draft } of expanded) {
+    const id = await createEntry({ ...draft, status: 'draft' });
+    ids.push(id);
+  }
+  return ids;
 }
 
 export interface ChainVerificationIssue {

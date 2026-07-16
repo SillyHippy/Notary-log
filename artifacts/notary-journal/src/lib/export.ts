@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import type { JournalEntry, NotarySettings } from './db';
 import { shouldRecordSignerDOB, shouldRecordSignerIdNumber } from './db';
+import { formatEntrySignerLines, formatEntryAddressLines, formatEntryIdTypeLines } from './entry-signers';
 import {
   resolveFeeType,
   rollupYear,
@@ -74,11 +75,22 @@ export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): v
   doc.setFontSize(14);
   doc.text('Signer Information', 20, y); y += 10;
   doc.setFontSize(12);
-  doc.text(`Name: ${entry.signerFullName}`, 20, y); y += 7;
+  doc.text(`#1 Name: ${entry.signerFullName}`, 20, y); y += 7;
   doc.text(`Address: ${entry.signerAddress}`, 20, y); y += 7;
   doc.text(`City, State: ${entry.signerCity}, ${entry.signerState}`, 20, y); y += 7;
   if (recordDOB && entry.signerDOB) {
     doc.text(`Date of Birth: ${entry.signerDOB}`, 20, y); y += 7;
+  }
+  if (entry.additionalSigners?.length) {
+    for (const s of entry.additionalSigners) {
+      y += 4;
+      doc.text(`#${s.signerIndex} Name: ${s.signerFullName}`, 20, y); y += 7;
+      doc.text(`Address: ${s.signerAddress}`, 20, y); y += 7;
+      doc.text(`City, State: ${s.signerCity}, ${s.signerState}`, 20, y); y += 7;
+      if (recordId && s.idNumber) {
+        doc.text(`ID (${s.idType}): ${s.idNumber}`, 20, y); y += 7;
+      }
+    }
   }
   y += 9;
 
@@ -410,6 +422,73 @@ export function exportAllPDF(entries: JournalEntry[], settings: NotarySettings):
 
 // ── Print-ready journal table ──────────────────────────────────────────────
 
+const JOURNAL_TABLE_FONT_SIZE = 7;
+const JOURNAL_TABLE_LINE_MM = 3.2;
+const JOURNAL_TABLE_MIN_ROW_MM = 16;
+const JOURNAL_TABLE_CELL_PAD_MM = 2;
+
+function journalTableLineCount(doc: jsPDF, text: string, widthMm: number): number {
+  if (!text.trim()) return 1;
+  doc.setFontSize(JOURNAL_TABLE_FONT_SIZE);
+  return text.split('\n').reduce((sum, paragraph) => {
+    const wrapped = doc.splitTextToSize(paragraph.trim() || '—', Math.max(4, widthMm - 2));
+    return sum + wrapped.length;
+  }, 0);
+}
+
+function formatJournalSignerCell(entry: JournalEntry): string {
+  return formatEntrySignerLines(entry);
+}
+
+function formatJournalAddressCell(entry: JournalEntry): string {
+  return formatEntryAddressLines(entry);
+}
+
+function formatJournalIdTypeCell(entry: JournalEntry, settings: NotarySettings): string {
+  return formatEntryIdTypeLines(entry, shouldRecordSignerIdNumber(settings));
+}
+
+function computeJournalTableRowHeight(
+  doc: jsPDF,
+  entry: JournalEntry,
+  cols: Array<[string, number, number, 'left' | 'right' | 'center']>,
+  settings: NotarySettings,
+): number {
+  const signerLines = journalTableLineCount(doc, formatJournalSignerCell(entry), cols[2][2]);
+  const addressLines = journalTableLineCount(doc, formatJournalAddressCell(entry), cols[3][2]);
+  const idLines = journalTableLineCount(doc, formatJournalIdTypeCell(entry, settings), cols[4][2]);
+  const documentLines = journalTableLineCount(doc, entry.documentType || '', cols[5][2]);
+  const maxLines = Math.max(1, signerLines, addressLines, idLines, documentLines);
+  return Math.max(
+    JOURNAL_TABLE_MIN_ROW_MM,
+    maxLines * JOURNAL_TABLE_LINE_MM + JOURNAL_TABLE_CELL_PAD_MM * 2,
+  );
+}
+
+function drawJournalTableCell(
+  doc: jsPDF,
+  text: string,
+  x: number,
+  y: number,
+  w: number,
+  rowH: number,
+  align: 'left' | 'right' | 'center',
+): void {
+  doc.setFontSize(JOURNAL_TABLE_FONT_SIZE);
+  const allLines: string[] = [];
+  for (const paragraph of (text || '—').split('\n')) {
+    allLines.push(...doc.splitTextToSize(paragraph.trim() || '—', Math.max(4, w - 2)));
+  }
+  const textBlockH = allLines.length * JOURNAL_TABLE_LINE_MM;
+  const startY = y + (rowH - textBlockH) / 2 + JOURNAL_TABLE_LINE_MM - 0.4;
+  allLines.forEach((line, i) => {
+    const tx = align === 'right' ? x + w - 1 : align === 'center' ? x + w / 2 : x + 1;
+    doc.text(line, tx, startY + i * JOURNAL_TABLE_LINE_MM, {
+      align: align === 'left' ? 'left' : align,
+    });
+  });
+}
+
 /**
  * Generate a print-ready journal PDF with a proper columnar table layout
  * matching the traditional NNA-style paper notary journal. Landscape
@@ -417,8 +496,8 @@ export function exportAllPDF(entries: JournalEntry[], settings: NotarySettings):
  *
  * Columns: Entry# | Date | Signer Name | Address | ID Type | Document | Act Type | Fee | Signature
  *
- * Rows are tall enough (16mm) to fit a small signature thumbnail when
- * available. Entries without a captured signature show "—".
+ * Row height grows automatically when a line lists multiple signers or long
+ * document names (PA combined-line entries, multi-name rows).
  */
 export function exportJournalTablePDF(
   entries: JournalEntry[],
@@ -437,22 +516,21 @@ export function exportJournalTablePDF(
     ['Address',   84,  44, 'left'],
     ['ID Type',   128, 22, 'left'],
     ['Document',  150, 32, 'left'],
-    ['Act Type',  182, 28, 'left'],
+    ['Act Type',  182,  28, 'left'],
     ['Fee',       210, 18, 'right'],
     ['Signature', 228, 52, 'center'],
   ];
 
-  const rowH = 16; // tall enough for a signature thumbnail
   const headerY = 52;
   const startY = headerY + 10; // header row is 9mm
   const maxY = pageH - 20; // leave room for footer
 
-  // Signature thumbnail size (fits inside the 16mm row)
+  // Signature thumbnail size (fits inside the minimum row)
   const sigW = 40;
   const sigH = 12;
 
   // ── Page header ──────────────────────────────────────────────────────
-  const drawHeader = (pageNum: number, totalPages: number) => {
+  const drawHeader = (pageNum?: number) => {
     doc.setFontSize(16);
     doc.text('Official Notary Journal', pageW / 2, 16, { align: 'center' });
     doc.setFontSize(9);
@@ -462,10 +540,11 @@ export function exportJournalTablePDF(
       doc.text(`Expires: ${settings.commissionExpiration}`, 10, 38);
     }
     doc.text(`Printed: ${new Date().toLocaleString()}`, pageW - 10, 26, { align: 'right' });
-    doc.text(
-      `Entries: ${entries.length} | Page ${pageNum} of ${totalPages}`,
-      pageW - 10, 32, { align: 'right' },
-    );
+    if (pageNum) {
+      doc.text(`Entries: ${entries.length} | Page ${pageNum}`, pageW - 10, 32, { align: 'right' });
+    } else {
+      doc.text(`Entries: ${entries.length}`, pageW - 10, 32, { align: 'right' });
+    }
 
     // Column headers
     doc.setFillColor(30, 58, 95); // dark navy
@@ -479,20 +558,17 @@ export function exportJournalTablePDF(
     doc.setTextColor(0, 0, 0);
   };
 
-  // ── Pre-calculate pages ──────────────────────────────────────────────
-  const rowsPerPage = Math.floor((maxY - startY) / rowH);
-  const totalPages = Math.max(1, Math.ceil(entries.length / rowsPerPage));
-
-  // ── Draw each entry ──────────────────────────────────────────────────
+  // ── Draw each entry (variable row height) ────────────────────────────
   let page = 1;
-  drawHeader(page, totalPages);
+  drawHeader(page);
   let y = startY;
 
   entries.forEach((entry, idx) => {
+    const rowH = computeJournalTableRowHeight(doc, entry, cols, settings);
     if (y + rowH > maxY) {
       doc.addPage();
       page++;
-      drawHeader(page, totalPages);
+      drawHeader(page);
       y = startY;
     }
 
@@ -506,52 +582,35 @@ export function exportJournalTablePDF(
     doc.setDrawColor(220, 220, 220);
     doc.line(10, y + rowH, pageW - 10, y + rowH);
 
-    doc.setFontSize(7);
     const fee = entry.feeWaived
       ? 'Waived'
       : `$${(entry.feeCharged / 100).toFixed(2)}`;
     const date = new Date(entry.createdAt).toLocaleDateString();
-    const idType = entry.idType.replace('_', ' ');
     const act = entry.notarialActType.replace('_', ' ');
 
-    // Truncate long text to fit columns
-    const truncate = (s: string, maxChars: number) =>
-      s.length > maxChars ? s.slice(0, maxChars - 1) + '…' : s;
-
-    // Text data for all columns except signature (handled separately)
-    const textData: Array<[string, number, number, 'left' | 'right' | 'center']> = [
-      [String(entry.entryNumber), cols[0][1], cols[0][2], cols[0][3]],
-      [date, cols[1][1], cols[1][2], cols[1][3]],
-      [truncate(entry.signerFullName || '', 24), cols[2][1], cols[2][2], cols[2][3]],
-      [truncate(`${entry.signerCity || ''}, ${entry.signerState || ''}`, 28), cols[3][1], cols[3][2], cols[3][3]],
-      [idType, cols[4][1], cols[4][2], cols[4][3]],
-      [truncate(entry.documentType || '', 20), cols[5][1], cols[5][2], cols[5][3]],
-      [act, cols[6][1], cols[6][2], cols[6][3]],
-      [fee, cols[7][1], cols[7][2], cols[7][3]],
-    ];
-
-    // Center text vertically in the taller row
-    const textY = y + rowH / 2 + 1.5;
-
-    for (const [text, x, w, align] of textData) {
-      const tx = align === 'right' ? x + w - 1 : align === 'center' ? x + w / 2 : x + 1;
-      doc.text(text, tx, textY, { align: align === 'left' ? 'left' : align });
-    }
+    drawJournalTableCell(doc, String(entry.entryNumber), cols[0][1], y, cols[0][2], rowH, cols[0][3]);
+    drawJournalTableCell(doc, date, cols[1][1], y, cols[1][2], rowH, cols[1][3]);
+    drawJournalTableCell(doc, formatJournalSignerCell(entry), cols[2][1], y, cols[2][2], rowH, cols[2][3]);
+    drawJournalTableCell(doc, formatJournalAddressCell(entry), cols[3][1], y, cols[3][2], rowH, cols[3][3]);
+    drawJournalTableCell(doc, formatJournalIdTypeCell(entry, settings), cols[4][1], y, cols[4][2], rowH, cols[4][3]);
+    drawJournalTableCell(doc, entry.documentType || '', cols[5][1], y, cols[5][2], rowH, cols[5][3]);
+    drawJournalTableCell(doc, act, cols[6][1], y, cols[6][2], rowH, cols[6][3]);
+    drawJournalTableCell(doc, fee, cols[7][1], y, cols[7][2], rowH, cols[7][3]);
 
     // Signature thumbnail or placeholder
     const sigCol = cols[8];
-    const sigX = sigCol[1] + (sigCol[2] - sigW) / 2; // center in column
-    const sigY = y + (rowH - sigH) / 2; // center vertically
+    const sigX = sigCol[1] + (sigCol[2] - sigW) / 2;
+    const sigY = y + (rowH - sigH) / 2;
+    const sigTextY = y + rowH / 2 + 1.5;
     if (entry.signatureImage) {
       try {
         doc.addImage(entry.signatureImage, 'PNG', sigX, sigY, sigW, sigH);
       } catch {
-        // If the image data is corrupt, fall back to text
-        doc.text('(sig)', sigCol[1] + sigCol[2] / 2, textY, { align: 'center' });
+        doc.text('(sig)', sigCol[1] + sigCol[2] / 2, sigTextY, { align: 'center' });
       }
     } else {
       doc.setTextColor(160, 160, 160);
-      doc.text('—', sigCol[1] + sigCol[2] / 2, textY, { align: 'center' });
+      doc.text('—', sigCol[1] + sigCol[2] / 2, sigTextY, { align: 'center' });
       doc.setTextColor(0, 0, 0);
     }
 
@@ -624,9 +683,22 @@ export function exportSigningGroupPDF(
   if (completed.length === 0) {
     throw new Error('No completed entries in this signing group.');
   }
-  const label = groupLabel || completed[0].signingGroupLabel || completed[0].signerFullName || 'signing';
+  const label = groupLabel
+    || completed[0].appointmentLabel
+    || completed[0].signingGroupLabel
+    || completed[0].signerFullName
+    || 'signing';
   const safeLabel = label.replace(/[^a-z0-9-_]+/gi, '-').slice(0, 40);
   exportJournalTablePDF(completed, settings, `notary-signing-${safeLabel}-${Date.now()}.pdf`);
+}
+
+/** Alias for multi-signer appointment export — same one-line-per-act PDF. */
+export function exportAppointmentPDF(
+  entries: JournalEntry[],
+  settings: NotarySettings,
+  appointmentLabel?: string,
+): void {
+  exportSigningGroupPDF(entries, settings, appointmentLabel);
 }
 
 // ── Annual report exports ──────────────────────────────────────────────────

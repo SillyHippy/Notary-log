@@ -22,6 +22,8 @@ import {
 } from '@/lib/db';
 import { exportEntryPDF, exportEntryCSV, exportEntryJSON, exportSigningGroupPDF } from '@/lib/export';
 import { generateSigningGroupId } from '@/lib/signing-session';
+import { groupLabel } from '@/lib/signing-group';
+import { formatEntrySignerList } from '@/lib/entry-signers';
 
 export function EntryDetail() {
   const [, setLocation] = useLocation();
@@ -247,7 +249,7 @@ export function EntryDetail() {
                     const bi = b.actIndexInGroup ?? b.entryNumber;
                     return ai - bi || a.entryNumber - b.entryNumber;
                   });
-                  exportSigningGroupPDF(allInGroup, settings, entry.signingGroupLabel);
+                  exportSigningGroupPDF(allInGroup, settings, groupLabel(entry, allInGroup.length));
                   toast({ title: 'PDF generated', description: `${allInGroup.length} journal lines exported.` });
                 } catch (err) {
                   toast({ title: 'Export failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
@@ -279,7 +281,7 @@ export function EntryDetail() {
                     locationState: entry.locationState,
                     locationAddress: entry.locationAddress,
                     signingGroupId: groupId,
-                    signingGroupLabel: entry.signingGroupLabel || entry.documentType,
+                    signingGroupLabel: entry.signingGroupLabel || entry.signerFullName?.trim() || undefined,
                   }));
                 } catch { /* ignore */ }
                 setLocation(`/entry/new?multiSigner=${Date.now()}`);
@@ -333,7 +335,7 @@ export function EntryDetail() {
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-y-6 gap-x-4">
               <div className="col-span-2">
-                <DetailItem label="Full Name" value={entry.signerFullName} />
+                <DetailItem label="Signer #1 — Full Name" value={entry.signerFullName} />
               </div>
               <div className="col-span-2">
                 <DetailItem label="Address" value={`${entry.signerAddress}, ${entry.signerCity}, ${entry.signerState}`} />
@@ -342,6 +344,24 @@ export function EntryDetail() {
                 <DetailItem label="Date of Birth" value={entry.signerDOB} />
               )}
               <DetailItem label="Phone" value={entry.signerPhone} />
+              {entry.additionalSigners?.map(s => (
+                <div key={s.signerIndex} className="col-span-2 pt-4 border-t space-y-4">
+                  <DetailItem label={`Signer #${s.signerIndex} — Full Name`} value={s.signerFullName} />
+                  <DetailItem
+                    label="Address"
+                    value={`${s.signerAddress}, ${s.signerCity}, ${s.signerState}`}
+                  />
+                  {shouldRecordSignerDOB(settings) && s.signerDOB && (
+                    <DetailItem label="Date of Birth" value={s.signerDOB} />
+                  )}
+                  {shouldRecordSignerIdNumber(settings) && s.idNumber && (
+                    <DetailItem label="ID Number" value={s.idNumber} />
+                  )}
+                </div>
+              ))}
+              {entry.additionalSigners?.length ? (
+                <p className="col-span-2 text-xs text-muted-foreground">{formatEntrySignerList(entry)}</p>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -452,17 +472,25 @@ export function EntryDetail() {
         </div>
       </div>
 
-      {(entry.signingGroupId && (groupSiblings.length > 0 || entry.signingGroupLabel)) && (
+      {(entry.signingGroupId && (groupSiblings.length > 0 || entry.signingGroupLabel || entry.appointmentLabel)) && (
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-lg flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" />
-              {entry.signingGroupLabel || 'Linked signing'}
+              {entry.appointmentLabel || groupLabel(entry, (entry.actCountInGroup ?? groupSiblings.length + 1))}
             </CardTitle>
             <CardDescription>
+              {entry.appointmentLabel && entry.signerFullName
+                ? `${entry.signerFullName} · `
+                : ''}
               {entry.actIndexInGroup && entry.actCountInGroup
                 ? `Act ${entry.actIndexInGroup} of ${entry.actCountInGroup} in this signing`
                 : `${groupSiblings.length + 1} linked entries`}
+              {entry.additionalSigners?.length
+                ? ` · Signers: ${formatEntrySignerList(entry)}`
+                : entry.coSignerNames?.length
+                  ? ` · Co-signers on cert: ${entry.coSignerNames.join(', ')}`
+                  : ''}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">

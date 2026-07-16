@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDraftEntriesFromSession,
   generateSigningGroupId,
+  isMultiDocumentSession,
+  parseDocumentTypesFromInput,
   validateSigningSessionPayload,
   type SigningSessionPayload,
 } from './signing-session';
@@ -34,6 +36,29 @@ function samplePayload(actsCount = 3): SigningSessionPayload {
     })),
   };
 }
+
+describe('parseDocumentTypesFromInput', () => {
+  it('splits on commas', () => {
+    expect(parseDocumentTypesFromInput('Warranty Deed, Affidavit, Will')).toEqual([
+      'Warranty Deed',
+      'Affidavit',
+      'Will',
+    ]);
+  });
+
+  it('treats a single document as one item', () => {
+    expect(parseDocumentTypesFromInput('Warranty Deed')).toEqual(['Warranty Deed']);
+  });
+
+  it('ignores empty segments', () => {
+    expect(parseDocumentTypesFromInput('Deed,, Affidavit ,')).toEqual(['Deed', 'Affidavit']);
+  });
+
+  it('detects multi-document sessions', () => {
+    expect(isMultiDocumentSession('Deed, Affidavit')).toBe(true);
+    expect(isMultiDocumentSession('Deed')).toBe(false);
+  });
+});
 
 describe('signing session validation', () => {
   it('accepts a valid payload', () => {

@@ -1,5 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from "react";
-import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,7 +13,6 @@ import { useGlobalShortcuts } from "@/hooks/use-shortcuts";
 const Dashboard = lazy(() => import("@/pages/dashboard").then(m => ({ default: m.Dashboard })));
 const JournalList = lazy(() => import("@/pages/journal-list").then(m => ({ default: m.JournalList })));
 const NewEntry = lazy(() => import("@/pages/new-entry").then(m => ({ default: m.NewEntry })));
-const SigningSession = lazy(() => import("@/pages/signing-session").then(m => ({ default: m.SigningSession })));
 const EntryDetail = lazy(() => import("@/pages/entry-detail").then(m => ({ default: m.EntryDetail })));
 const EditEntry = lazy(() => import("@/pages/edit-entry").then(m => ({ default: m.EditEntry })));
 const Settings = lazy(() => import("@/pages/settings").then(m => ({ default: m.Settings })));
@@ -56,7 +55,9 @@ function Router() {
           <Route path="/" component={Dashboard} />
           <Route path="/journal" component={JournalList} />
           <Route path="/entry/new" component={NewEntry} />
-          <Route path="/entry/new/session" component={SigningSession} />
+          <Route path="/entry/new/session">
+            <Redirect to="/entry/new" />
+          </Route>
           <Route path="/entry/:id/edit" component={EditEntry} />
           <Route path="/entry/:id" component={EntryDetail} />
           <Route path="/requests" component={ClientRequests} />

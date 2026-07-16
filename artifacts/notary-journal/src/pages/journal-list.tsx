@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'wouter';
 import { format } from 'date-fns';
-import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine, ScanLine, Printer, ChevronDown, Link2, FileStack } from 'lucide-react';
+import { Search, Filter, FileText, ChevronRight, AlertCircle, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Trash2, X, Check, PenLine, ScanLine, Printer, ChevronDown, Link2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +34,7 @@ export function JournalList() {
   const [needsIdScanFilter, setNeedsIdScanFilter] = useState(false);
   const [settings, setSettings] = useState<NotarySettings | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [collapsedSignerGroups, setCollapsedSignerGroups] = useState<Set<string>>(new Set());
   // Compliance: when this notary's state forbids storing the ID number, hide
   // the entire ID Number column (header + cell + masking control) so it never
   // appears on screen — even masked — for entries that may have been written
@@ -126,6 +127,15 @@ export function JournalList() {
       const next = new Set(prev);
       if (next.has(groupId)) next.delete(groupId);
       else next.add(groupId);
+      return next;
+    });
+  };
+
+  const toggleSignerGroup = (key: string) => {
+    setCollapsedSignerGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
@@ -275,15 +285,6 @@ export function JournalList() {
         </form>
         <div className="flex gap-2 shrink-0">
           <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            data-testid="button-new-signing-session"
-            onClick={() => setLocation('/entry/new/session')}
-          >
-            <FileStack className="w-4 h-4" /> Signing Session
-          </Button>
-          <Button
           variant="outline"
           size="sm"
           className="gap-2"
@@ -430,24 +431,49 @@ export function JournalList() {
                   if (row.kind === 'solo') {
                     return [renderEntryRow(row.entry, false)];
                   }
-                  const collapsed = collapsedGroups.has(row.groupId);
-                  const header = (
-                    <tr
-                      key={`group-${row.groupId}`}
-                      className="bg-muted/40 hover:bg-muted/60 cursor-pointer"
-                      onClick={() => toggleGroup(row.groupId)}
-                      data-testid={`row-group-${row.groupId}`}
-                    >
-                      <td colSpan={showIdColumn ? 8 : 7} className="px-4 py-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 font-medium">
-                            {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                            <Link2 className="w-4 h-4 text-primary" />
+
+                  if (row.kind === 'appointment') {
+                    const collapsed = collapsedGroups.has(row.appointmentId);
+                    const { header } = row;
+                    const entryRange =
+                      header.entryNumberStart === header.entryNumberEnd
+                        ? `#${header.entryNumberStart}`
+                        : `#${header.entryNumberStart}–${header.entryNumberEnd}`;
+                    const apptHeader = (
+                      <tr
+                        key={`appt-${row.appointmentId}`}
+                        className="bg-primary/5 hover:bg-primary/10 cursor-pointer"
+                        onClick={() => toggleGroup(row.appointmentId)}
+                        data-testid={`row-appointment-${row.appointmentId}`}
+                      >
+                        <td className="px-4 py-3 font-medium whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            {collapsed ? <ChevronRight className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
+                            <Link2 className="w-4 h-4 text-primary shrink-0" />
+                            <span>{entryRange}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">{format(header.date, 'MMM d, yyyy')}</td>
+                        <td className="px-4 py-3 font-medium">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span>{row.label}</span>
-                            <Badge variant="secondary" className="text-xs">
-                              {row.entries.length} act{row.entries.length === 1 ? '' : 's'}
+                            <Badge variant="secondary" className="text-xs font-normal">
+                              {header.signerCount} signer{header.signerCount === 1 ? '' : 's'}
+                            </Badge>
+                            <Badge variant="outline" className="text-xs font-normal">
+                              {header.totalActCount} acts
                             </Badge>
                           </div>
+                        </td>
+                        {showIdColumn && <td className="px-4 py-3 text-muted-foreground text-xs">—</td>}
+                        <td className="px-4 py-3 capitalize text-sm">{header.actTypeSummary}</td>
+                        <td className="px-4 py-3 text-right font-medium">
+                          {header.allFeesWaived ? 'Waived' : `$${(header.totalFeeCents / 100).toFixed(2)}`}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Badge variant="outline" className="text-xs capitalize">completed</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                           <Button
                             variant="ghost"
                             size="sm"
@@ -463,14 +489,115 @@ export function JournalList() {
                               }
                             }}
                           >
-                            <Printer className="w-3.5 h-3.5" /> Print group
+                            <Printer className="w-3.5 h-3.5" /> Print
                           </Button>
+                        </td>
+                      </tr>
+                    );
+                    if (collapsed) return [apptHeader];
+                    const signerRows = row.signerGroups.flatMap(sg => {
+                      const sgKey = `${row.appointmentId}-${sg.signerSlotId}`;
+                      const sgCollapsed = collapsedSignerGroups.has(sgKey);
+                      const sgHeader = (
+                        <tr
+                          key={sgKey}
+                          className="bg-muted/30 hover:bg-muted/50 cursor-pointer"
+                          onClick={() => toggleSignerGroup(sgKey)}
+                        >
+                          <td className="px-4 py-2 pl-8 text-sm text-muted-foreground">
+                            {sgCollapsed ? <ChevronRight className="w-3.5 h-3.5 inline" /> : <ChevronDown className="w-3.5 h-3.5 inline" />}
+                          </td>
+                          <td className="px-4 py-2 text-sm" colSpan={showIdColumn ? 6 : 5}>
+                            <span className="font-medium">{sg.signerName}</span>
+                            {sg.idNumber && showIdColumn && (
+                              <span className="text-xs text-muted-foreground ml-2 font-mono">{maskIdNumber(sg.idNumber)}</span>
+                            )}
+                            <Badge variant="outline" className="ml-2 text-[10px]">{sg.actCount} act{sg.actCount === 1 ? '' : 's'}</Badge>
+                            <span className="text-xs text-muted-foreground ml-2">${(sg.totalFeeCents / 100).toFixed(2)}</span>
+                          </td>
+                          <td />
+                        </tr>
+                      );
+                      if (sgCollapsed) return [sgHeader];
+                      return [sgHeader, ...sg.entries.map(e => renderEntryRow(e, true))];
+                    });
+                    return [apptHeader, ...signerRows];
+                  }
+
+                  const collapsed = collapsedGroups.has(row.groupId);
+                  const { header } = row;
+                  const entryRange =
+                    header.entryNumberStart === header.entryNumberEnd
+                      ? `#${header.entryNumberStart}`
+                      : `#${header.entryNumberStart}–${header.entryNumberEnd}`;
+                  const groupHeader = (
+                    <tr
+                      key={`group-${row.groupId}`}
+                      className="bg-muted/40 hover:bg-muted/60 cursor-pointer"
+                      onClick={() => toggleGroup(row.groupId)}
+                      data-testid={`row-group-${row.groupId}`}
+                    >
+                      <td className="px-4 py-3 font-medium whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          {collapsed ? <ChevronRight className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
+                          <Link2 className="w-4 h-4 text-primary shrink-0" />
+                          <span>{entryRange}</span>
                         </div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {format(header.date, 'MMM d, yyyy')}
+                      </td>
+                      <td className="px-4 py-3 font-medium">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span>{header.signerName}</span>
+                          <Badge variant="secondary" className="text-xs font-normal">
+                            {header.actCount} act{header.actCount === 1 ? '' : 's'}
+                          </Badge>
+                        </div>
+                      </td>
+                      {showIdColumn && (
+                        <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                          {maskIdNumber(header.idNumber)}
+                        </td>
+                      )}
+                      <td className="px-4 py-3 capitalize text-sm">
+                        {header.actTypeSummary}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium">
+                        {header.allFeesWaived
+                          ? 'Waived'
+                          : header.totalFeeCents === 0
+                            ? '$0.00'
+                            : `$${(header.totalFeeCents / 100).toFixed(2)}`}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <Badge variant="outline" className="text-xs capitalize">
+                          {row.entries.every(e => e.status === 'completed') ? 'completed' : 'mixed'}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1 text-xs"
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (!settings) return;
+                            try {
+                              exportSigningGroupPDF(row.entries, settings, row.label);
+                              toast({ title: 'PDF generated', description: `${row.entries.length} lines exported.` });
+                            } catch (err) {
+                              toast({ title: 'Export failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+                            }
+                          }}
+                        >
+                          <Printer className="w-3.5 h-3.5" /> Print
+                        </Button>
                       </td>
                     </tr>
                   );
-                  if (collapsed) return [header];
-                  return [header, ...row.entries.map(e => renderEntryRow(e, true))];
+                  if (collapsed) return [groupHeader];
+                  return [groupHeader, ...row.entries.map(e => renderEntryRow(e, true))];
                 })}
               </tbody>
             </table>

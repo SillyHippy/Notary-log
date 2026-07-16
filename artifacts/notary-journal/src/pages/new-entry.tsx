@@ -19,8 +19,22 @@ import { useToast } from '@/hooks/use-toast';
 import { consumeIntakePrefill } from '@/lib/intake-prefill';
 import { Checkbox } from '@/components/ui/checkbox';
 
-import { createEntry, completeEntry, getSettings, getAllEntries, getEntriesBySigningGroup, shouldRecordSignerDOB, shouldRecordSignerIdNumber, shouldRequireSignature, type JournalEntry, type NotarySettings } from '@/lib/db';
-import { generateSigningGroupId } from '@/lib/signing-session';
+import {
+  createEntry,
+  completeEntry,
+  createAndCompleteSigningSession,
+  getSettings,
+  getAllEntries,
+  getEntriesBySigningGroup,
+  shouldRecordSignerDOB,
+  shouldRecordSignerIdNumber,
+  shouldRequireSignature,
+  type JournalEntry,
+  type NotarySettings,
+} from '@/lib/db';
+import { shouldDefaultSplitDocuments } from '@/lib/fee-rules';
+import { detectDeviceLocation } from '@/lib/geolocation';
+import { generateSigningGroupId, parseDocumentTypesFromInput } from '@/lib/signing-session';
 import { parseAAMVA } from '@/lib/aamva';
 import { extractLicenseFields } from '@/lib/ocr-license';
 import { parseMRZ, mrzToSignerFields, type MrzPassport } from '@/lib/mrz';
@@ -29,6 +43,7 @@ import { ACT_TYPE_TO_FEE_TYPE, FEE_TYPES, computeStampFeeCents, feeDollarsToCent
 import { hapticSuccess, hapticWarning } from '@/lib/haptic';
 import { getMissingCompletionFields, getSignerStepFieldsToCheck } from '@/lib/completion';
 import { compressImageToDataUrl } from '@/lib/image-compress';
+import { SigningAppointmentWizard } from '@/pages/signing-appointment-wizard';
 
 const entrySchema = z
   .object({
@@ -146,19 +161,6 @@ type ScanResult =
   | { method: 'ocr'; text: string; confidence: number }
   | { method: 'mrz'; text: string; confidence: number; passport: MrzPassport };
 
-const STATE_ABBR: Record<string, string> = {
-  'Alabama':'AL','Alaska':'AK','Arizona':'AZ','Arkansas':'AR','California':'CA',
-  'Colorado':'CO','Connecticut':'CT','Delaware':'DE','Florida':'FL','Georgia':'GA',
-  'Hawaii':'HI','Idaho':'ID','Illinois':'IL','Indiana':'IN','Iowa':'IA',
-  'Kansas':'KS','Kentucky':'KY','Louisiana':'LA','Maine':'ME','Maryland':'MD',
-  'Massachusetts':'MA','Michigan':'MI','Minnesota':'MN','Mississippi':'MS','Missouri':'MO',
-  'Montana':'MT','Nebraska':'NE','Nevada':'NV','New Hampshire':'NH','New Jersey':'NJ',
-  'New Mexico':'NM','New York':'NY','North Carolina':'NC','North Dakota':'ND','Ohio':'OH',
-  'Oklahoma':'OK','Oregon':'OR','Pennsylvania':'PA','Rhode Island':'RI','South Carolina':'SC',
-  'South Dakota':'SD','Tennessee':'TN','Texas':'TX','Utah':'UT','Vermont':'VT',
-  'Virginia':'VA','Washington':'WA','West Virginia':'WV','Wisconsin':'WI','Wyoming':'WY',
-  'District of Columbia':'DC',
-};
 
 /**
  * Short, mobile-friendly label for an ID type. Used in narrow review cells
@@ -214,8 +216,16 @@ export function NewEntry() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [locationDetected, setLocationDetected] = useState(false);
+  const locationAutoTried = useRef(false);
   // After completing an entry, offer to add another signer on the same document.
   const [lastCompletedId, setLastCompletedId] = useState<number | null>(null);
+  const [lastCompletedCount, setLastCompletedCount] = useState(1);
+  /** When on, comma-separated document types create one journal line per document. */
+  const [multiDocumentSplit, setMultiDocumentSplit] = useState(true);
+  const [customActPerDocument, setCustomActPerDocument] = useState(false);
+  const [perDocumentActTypes, setPerDocumentActTypes] = useState<JournalEntry['notarialActType'][]>([]);
+  /** Single signer entry vs multi-signer signing appointment (same + button). */
+  const [wizardMode, setWizardMode] = useState<'single' | 'appointment'>('single');
 
   const liveVideoRef = useRef<HTMLVideoElement>(null);
   const photoVideoRef = useRef<HTMLVideoElement>(null);
@@ -262,10 +272,60 @@ export function NewEntry() {
   const signingGroupIdRef = useRef<string | null>(null);
   const signingGroupLabelRef = useRef<string | undefined>(undefined);
 
+  const watchedDocumentType = form.watch('documentType');
+  const parsedDocumentTypes = parseDocumentTypesFromInput(watchedDocumentType ?? '');
+  const willSplitDocuments = multiDocumentSplit && parsedDocumentTypes.length > 1;
+
+  const NOTARIAL_ACT_OPTIONS: { value: JournalEntry['notarialActType']; label: string }[] = [
+    { value: 'acknowledgment', label: 'Acknowledgment' },
+    { value: 'jurat', label: 'Jurat' },
+    { value: 'copy_certification', label: 'Copy Certification' },
+    { value: 'signature_witnessing', label: 'Signature Witnessing' },
+    { value: 'other', label: 'Other' },
+  ];
+
+  const resolveActTypeForDocument = (index: number): JournalEntry['notarialActType'] => {
+    if (customActPerDocument && perDocumentActTypes[index]) {
+      return perDocumentActTypes[index];
+    }
+    return form.getValues('notarialActType');
+  };
+
+  const perActFeeDollars = willSplitDocuments
+    ? getStampFeeCents(appSettings ?? undefined) / 100
+    : null;
+
+  // Keep per-document act type array in sync when document list changes.
+  useEffect(() => {
+    const defaultAct = form.getValues('notarialActType');
+    setPerDocumentActTypes(prev =>
+      parsedDocumentTypes.map((_, i) => prev[i] ?? defaultAct),
+    );
+  }, [parsedDocumentTypes.join('|'), form]);
+
+  // Multi-document: stamp count = number of acts; total fee = per-stamp × count + additional.
+  useEffect(() => {
+    if (!appSettings || !willSplitDocuments) return;
+    if (!isFeeAppDerivedRef.current || form.getValues('feeWaived')) return;
+    const count = parsedDocumentTypes.length;
+    form.setValue('stampCount', count);
+    const stampCents = computeStampFeeCents(count, appSettings);
+    const addFee = Number(form.getValues('additionalFee')) || 0;
+    form.setValue('feeCharged', stampCents / 100 + addFee);
+  }, [willSplitDocuments, parsedDocumentTypes.length, appSettings, form]);
+
+  // Auto-enable split mode when the notary lists multiple documents with commas.
+  useEffect(() => {
+    if (parseDocumentTypesFromInput(form.getValues('documentType')).length > 1) {
+      setMultiDocumentSplit(true);
+    }
+  }, [watchedDocumentType, form]);
+
   // Load defaults (skipped when ?multiSigner= — handled by dedicated effect below)
   useEffect(() => {
     getSettings().then(settings => {
       setAppSettings(settings);
+      setMultiDocumentSplit(shouldDefaultSplitDocuments(settings));
       if (new URLSearchParams(window.location.search).has('multiSigner')) {
         return;
       }
@@ -634,44 +694,39 @@ export function NewEntry() {
     }
   }, [scanMode]);
 
-  const detectLocation = () => {
-    if (!navigator.geolocation) {
-      toast({ title: 'Not supported', description: 'Your browser does not support location detection.', variant: 'destructive' });
-      return;
-    }
+  const detectLocation = async (quiet = false) => {
     setIsLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const { latitude, longitude } = pos.coords;
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
-            { headers: { 'User-Agent': 'NotaryJournal/1.0' } }
-          );
-          if (!res.ok) throw new Error(`Geocode failed: ${res.status}`);
-          const data = await res.json();
-          const addr = data.address ?? {};
-          const city = addr.city || addr.town || addr.village || addr.county || '';
-          const stateRaw: string = addr.state || '';
-          const stateAbbr = STATE_ABBR[stateRaw] || stateRaw.substring(0, 2).toUpperCase();
-          if (city) form.setValue('locationCity', city);
-          if (stateAbbr) form.setValue('locationState', stateAbbr);
-          setLocationDetected(true);
-          setTimeout(() => setLocationDetected(false), 4000);
-          toast({ title: 'Location detected', description: `${city}, ${stateAbbr}` });
-        } catch {
-          toast({ title: 'Location lookup failed', description: 'Could not determine city — please enter manually.', variant: 'destructive' });
-        } finally {
-          setIsLocating(false);
-        }
-      },
-      () => {
-        setIsLocating(false);
-        toast({ title: 'Location unavailable', description: 'Permission denied or GPS unavailable — please enter manually.', variant: 'destructive' });
-      },
-      { timeout: 10000, maximumAge: 60000 }
-    );
+    const result = await detectDeviceLocation();
+    setIsLocating(false);
+    if (result.ok) {
+      const { city, state, address } = result.location;
+      if (city) form.setValue('locationCity', city);
+      if (state) form.setValue('locationState', state);
+      if (address) form.setValue('locationAddress', address);
+      setLocationDetected(true);
+      setTimeout(() => setLocationDetected(false), 4000);
+      if (!quiet) {
+        const parts = [address, city, state].filter(Boolean);
+        toast({ title: 'Location detected', description: parts.join(', ') });
+      }
+    } else if (!quiet) {
+      const messages: Record<string, string> = {
+        unsupported: 'Your browser does not support location detection.',
+        denied: 'Permission denied or GPS unavailable — please enter manually.',
+        timeout: 'GPS timed out — try again or enter manually.',
+        lookup_failed: 'Could not determine city — please enter manually.',
+      };
+      toast({ title: 'Location unavailable', description: messages[result.reason], variant: 'destructive' });
+    }
   };
+
+  useEffect(() => {
+    if (currentStep === 2 && !locationAutoTried.current) {
+      locationAutoTried.current = true;
+      detectLocation(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep]);
 
   const applyExtractedFields = (
     fields: Record<string, string>,
@@ -963,6 +1018,95 @@ export function NewEntry() {
       // Only the full ID# is gated; expiration is always recorded.
       if (!recordId) scrubbed.idNumber = '';
 
+      const docTypes = parseDocumentTypesFromInput(scrubbed.documentType);
+      const splitIntoSession = status === 'completed' && multiDocumentSplit && docTypes.length > 1;
+
+      if (splitIntoSession) {
+        const groupId = signingGroupIdRef.current ?? generateSigningGroupId();
+        signingGroupIdRef.current = groupId;
+        const perActFeeCents = scrubbed.feeWaived
+          ? 0
+          : getStampFeeCents(appSettings ?? undefined, scrubbed.locationState);
+
+        const shared = {
+          signerFullName: scrubbed.signerFullName,
+          signerAddress: scrubbed.signerAddress ?? '',
+          signerCity: scrubbed.signerCity ?? '',
+          signerState: scrubbed.signerState ?? '',
+          signerDOB: scrubbed.signerDOB,
+          signerPhone: scrubbed.signerPhone,
+          idType: scrubbed.idType,
+          idNumber: scrubbed.idNumber,
+          idIssuingState: scrubbed.idIssuingState,
+          idExpirationDate: scrubbed.idExpirationDate,
+          idFrontImage,
+          idBackImage,
+          signatureImage: shouldRequireSignature(appSettings ?? undefined) ? signatureImage : undefined,
+          locationCity: scrubbed.locationCity,
+          locationState: scrubbed.locationState,
+          locationAddress: scrubbed.locationAddress,
+          completedAt: new Date().toISOString(),
+          notes: scrubbed.notes,
+          needsReview,
+          extractedRawText: scanResult?.method === 'mrz' || scanResult?.method === 'ocr' ? scanResult.text : undefined,
+          extractionMethod:
+            scanResult?.method === 'barcode' ? 'barcode' as const
+            : scanResult?.method === 'mrz' ? 'mrz' as const
+            : scanResult?.method === 'ocr' ? 'ocr' as const
+            : undefined,
+          extractionConfidence: scanResult?.confidence,
+        };
+
+        const ids = await createAndCompleteSigningSession({
+          signingGroupId: groupId,
+          signingGroupLabel: scrubbed.signerFullName?.trim() || undefined,
+          shared,
+          acts: docTypes.map((doc, i) => {
+            const actType = resolveActTypeForDocument(i);
+            return {
+              documentType: doc,
+              documentDescription: scrubbed.documentDescription,
+              documentDate: scrubbed.documentDate,
+              notarialActType: actType,
+              feeType: ACT_TYPE_TO_FEE_TYPE[actType],
+              feeChargedCents: perActFeeCents,
+              stampCount: 1,
+              feeWaived: scrubbed.feeWaived,
+            };
+          }),
+        });
+
+        try {
+          sessionStorage.removeItem(DRAFT_KEY);
+        } catch {
+          // ignore
+        }
+
+        toast({
+          title: 'Success',
+          description: `${ids.length} journal entries saved.`,
+        });
+        hapticSuccess();
+
+        (async () => {
+          try {
+            const settings = await getSettings();
+            const shouldBackup = settings.backupFrequency === 'after-entry' || settings.backupFrequency === 'daily';
+            if (shouldBackup && getStoredToken()) {
+              const allEntries = await getAllEntries();
+              await backupToDrive(allEntries, settings);
+            }
+          } catch {
+            // Silent failure for auto-backup
+          }
+        })();
+
+        setLastCompletedId(ids[0] ?? null);
+        setLastCompletedCount(ids.length);
+        setIsSaving(false);
+        return;
+      }
+
       // Build the entry, omitting optional scan-only fields entirely when
       // they don't apply (don't write `undefined` into the encrypted blob).
       const baseEntry: Omit<JournalEntry, 'id' | 'entryNumber' | 'createdAt' | 'updatedAt'> = {
@@ -999,7 +1143,7 @@ export function NewEntry() {
         const siblings = await getEntriesBySigningGroup(groupId);
         const d = form.getValues();
         baseEntry.signingGroupId = groupId;
-        baseEntry.signingGroupLabel = signingGroupLabelRef.current || d.documentDescription || d.documentType;
+        baseEntry.signingGroupLabel = signingGroupLabelRef.current || d.signerFullName?.trim() || undefined;
         baseEntry.actIndexInGroup = siblings.length + 1;
       }
 
@@ -1056,7 +1200,7 @@ export function NewEntry() {
             locationState: d.locationState,
             locationAddress: d.locationAddress,
             signingGroupId: signingGroupIdRef.current,
-            signingGroupLabel: signingGroupLabelRef.current || d.documentDescription || d.documentType,
+            signingGroupLabel: signingGroupLabelRef.current || d.signerFullName?.trim() || undefined,
           }));
         } catch { /* ignore */ }
       }
@@ -1065,6 +1209,7 @@ export function NewEntry() {
       // of auto-redirecting. For drafts, go straight to the entry.
       if (status === 'completed') {
         setLastCompletedId(id);
+        setLastCompletedCount(1);
       } else {
         setLocation(`/entry/${id}`);
       }
@@ -1105,6 +1250,17 @@ export function NewEntry() {
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto h-full flex flex-col pb-24 md:pb-8">
+      {wizardMode === 'appointment' ? (
+        <SigningAppointmentWizard onBack={() => setWizardMode('single')} />
+      ) : (
+      <>
+      {/* Mode toggle — same + flow */}
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Button variant="default" size="sm" disabled>Single signer</Button>
+        <Button variant="outline" size="sm" onClick={() => setWizardMode('appointment')} data-testid="btn-appointment-mode">
+          Signing appointment (multiple signers)
+        </Button>
+      </div>
       {/* Progress Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold mb-6 tracking-tight">New Journal Entry</h1>
@@ -1601,9 +1757,92 @@ export function NewEntry() {
                         </FormItem>
                       )} />
                       <FormField control={form.control} name="documentType" render={({ field }) => (
-                        <FormItem>
+                        <FormItem className="md:col-span-2">
                           <FormLabel>Document Type *</FormLabel>
-                          <FormControl><Input placeholder="e.g. Warranty Deed" {...field} /></FormControl>
+                          <FormControl>
+                            <Input
+                              placeholder="e.g. Warranty Deed — or Deed, Affidavit, Will for multiple"
+                              {...field}
+                              onChange={(e) => {
+                                field.onChange(e);
+                                if (parseDocumentTypesFromInput(e.target.value).length > 1) {
+                                  setMultiDocumentSplit(true);
+                                }
+                              }}
+                            />
+                          </FormControl>
+                          <FormDescription className="text-xs">
+                            Separate multiple documents with commas — each gets its own journal line when you complete.
+                          </FormDescription>
+                          {parsedDocumentTypes.length > 1 && (
+                            <div className="mt-2 rounded-md border bg-muted/40 px-3 py-2 text-xs space-y-2">
+                              <p className="font-medium text-foreground">
+                                {parsedDocumentTypes.length} journal lines on complete:
+                              </p>
+                              <ul className="space-y-2">
+                                {parsedDocumentTypes.map((doc, i) => (
+                                  <li key={`${doc}-${i}`} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                                    <span className="text-muted-foreground shrink-0">{i + 1}.</span>
+                                    <span className="font-medium text-foreground flex-1">{doc}</span>
+                                    {customActPerDocument && (
+                                      <Select
+                                        value={perDocumentActTypes[i] ?? form.getValues('notarialActType')}
+                                        onValueChange={(v) => {
+                                          setPerDocumentActTypes(prev => {
+                                            const next = [...prev];
+                                            next[i] = v as JournalEntry['notarialActType'];
+                                            return next;
+                                          });
+                                        }}
+                                      >
+                                        <SelectTrigger className="h-8 text-xs w-full sm:w-[10rem]">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {NOTARIAL_ACT_OPTIONS.map(opt => (
+                                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                              <div className="flex items-start gap-2 pt-1">
+                                <Checkbox
+                                  id="custom-act-per-document"
+                                  checked={customActPerDocument}
+                                  onCheckedChange={(checked) => setCustomActPerDocument(checked === true)}
+                                  data-testid="checkbox-custom-act-per-document"
+                                />
+                                <label htmlFor="custom-act-per-document" className="text-xs leading-snug text-muted-foreground cursor-pointer">
+                                  Different act type per document (e.g. some acknowledgments, some jurats)
+                                </label>
+                              </div>
+                              {perActFeeDollars !== null && !form.watch('feeWaived') && (
+                                <p className="text-muted-foreground">
+                                  ${perActFeeDollars.toFixed(2)} per act × {parsedDocumentTypes.length} ={' '}
+                                  <span className="font-medium text-foreground">
+                                    ${(perActFeeDollars * parsedDocumentTypes.length).toFixed(2)}
+                                  </span>
+                                  {(Number(form.watch('additionalFee')) || 0) > 0 && (
+                                    <> + ${Number(form.watch('additionalFee')).toFixed(2)} additional</>
+                                  )}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex items-start gap-2 mt-2">
+                            <Checkbox
+                              id="multi-document-split"
+                              checked={multiDocumentSplit}
+                              onCheckedChange={(checked) => setMultiDocumentSplit(checked === true)}
+                              data-testid="checkbox-multi-document-split"
+                            />
+                            <label htmlFor="multi-document-split" className="text-xs leading-snug text-muted-foreground cursor-pointer">
+                              One journal line per document (turn off to keep everything on a single line)
+                            </label>
+                          </div>
                           <FormMessage />
                         </FormItem>
                       )} />
@@ -1628,7 +1867,7 @@ export function NewEntry() {
                               variant="outline"
                               size="sm"
                               className="gap-2 text-xs"
-                              onClick={detectLocation}
+                              onClick={() => detectLocation(false)}
                               disabled={isLocating}
                             >
                               {isLocating
@@ -1638,7 +1877,7 @@ export function NewEntry() {
                             </Button>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground mb-3">Or detect automatically using your device's GPS</p>
+                        <p className="text-xs text-muted-foreground mb-3">Auto-detects on this step, or tap to refresh. Fills street address when GPS is precise enough.</p>
                         <div className="grid grid-cols-2 gap-4">
                           <FormField control={form.control} name="locationCity" render={({ field }) => (
                             <FormItem>
@@ -1676,7 +1915,8 @@ export function NewEntry() {
                       )} />
 
                       <div className="space-y-3 md:col-span-2">
-                        {/* Stamp count input */}
+                        {/* Stamp count — auto-set when splitting multiple documents */}
+                        {!willSplitDocuments && (
                         <FormField control={form.control} name="stampCount" render={({ field }) => (
                           <FormItem>
                             <FormLabel># of Stamps (Notarial Acts)</FormLabel>
@@ -1695,6 +1935,7 @@ export function NewEntry() {
                             <FormMessage />
                           </FormItem>
                         )} />
+                        )}
 
                         {/* Additional fees — travel, mobile, etc. */}
                         <FormField control={form.control} name="additionalFee" render={({ field }) => (
@@ -1856,29 +2097,84 @@ export function NewEntry() {
 
               <Card className="md:col-span-2">
                 <CardHeader className="py-3 bg-muted/50 border-b">
-                  <CardTitle className="text-sm font-medium">Notarial Act</CardTitle>
+                  <CardTitle className="text-sm font-medium">
+                    {willSplitDocuments ? `Notarial Acts (${parsedDocumentTypes.length})` : 'Notarial Act'}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="py-4 text-sm space-y-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Act Type:</span> <span className="col-span-2 font-medium capitalize">{form.getValues('notarialActType').replace('_', ' ')}</span></div>
-                    <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Document:</span> <span className="col-span-2">{form.getValues('documentType')}</span></div>
-                    <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Date:</span> <span className="col-span-2">{form.getValues('documentDate')}</span></div>
-                  </div>
-                  <div>
-                    <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Location:</span> <span className="col-span-2">{form.getValues('locationCity')}, {form.getValues('locationState')}</span></div>
-                    <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Fee:</span> <span className="col-span-2 font-medium">{form.getValues('feeWaived') ? 'Waived' : `$${Number(form.getValues('feeCharged')).toFixed(2)}`}</span></div>
-                    {!form.getValues('feeWaived') && (Number(form.getValues('additionalFee')) || 0) > 0 && (
-                      <div className="grid grid-cols-3 gap-1 text-xs text-muted-foreground mt-1">
-                        <span></span>
-                        <span className="col-span-2">
-                          Stamp: ${(() => {
-                            const c = Number(form.getValues('stampCount')) || 1;
-                            return (computeStampFeeCents(c, appSettings ?? undefined) / 100).toFixed(2);
-                          })()} · Additional: ${Number(form.getValues('additionalFee')).toFixed(2)}
-                        </span>
+                  {willSplitDocuments ? (
+                    <>
+                      <div className="md:col-span-2">
+                        <div className="grid grid-cols-3 gap-1 mb-2">
+                          <span className="text-muted-foreground">Acts:</span>
+                          <span className="col-span-2">
+                            <ul className="space-y-1">
+                              {parsedDocumentTypes.map((doc, i) => {
+                                const act = resolveActTypeForDocument(i);
+                                return (
+                                  <li key={`${doc}-${i}`} className="text-sm">
+                                    <span className="font-medium">{doc}</span>
+                                    <span className="text-muted-foreground"> — {act.replace(/_/g, ' ')}</span>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Completing will create {parsedDocumentTypes.length} separate journal entries (one line per document when printed).
+                        </p>
                       </div>
-                    )}
-                  </div>
+                      <div>
+                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Date:</span> <span className="col-span-2">{form.getValues('documentDate')}</span></div>
+                      </div>
+                      <div>
+                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Location:</span> <span className="col-span-2">{form.getValues('locationCity')}, {form.getValues('locationState')}</span></div>
+                        <div className="grid grid-cols-3 gap-1 mb-1">
+                          <span className="text-muted-foreground">Fee:</span>
+                          <span className="col-span-2 font-medium">
+                            {form.getValues('feeWaived')
+                              ? 'Waived'
+                              : `$${Number(form.getValues('feeCharged')).toFixed(2)} total`}
+                          </span>
+                        </div>
+                        {!form.getValues('feeWaived') && perActFeeDollars !== null && (
+                          <div className="grid grid-cols-3 gap-1 text-xs text-muted-foreground">
+                            <span></span>
+                            <span className="col-span-2">
+                              ${perActFeeDollars.toFixed(2)} × {parsedDocumentTypes.length} acts
+                              {(Number(form.getValues('additionalFee')) || 0) > 0 && (
+                                <> + ${Number(form.getValues('additionalFee')).toFixed(2)} additional</>
+                              )}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Act Type:</span> <span className="col-span-2 font-medium capitalize">{form.getValues('notarialActType').replace('_', ' ')}</span></div>
+                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Document:</span> <span className="col-span-2">{form.getValues('documentType')}</span></div>
+                        <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Date:</span> <span className="col-span-2">{form.getValues('documentDate')}</span></div>
+                      </div>
+                      <div>
+                        <div className="grid grid-cols-3 gap-1 mb-2"><span className="text-muted-foreground">Location:</span> <span className="col-span-2">{form.getValues('locationCity')}, {form.getValues('locationState')}</span></div>
+                        <div className="grid grid-cols-3 gap-1"><span className="text-muted-foreground">Fee:</span> <span className="col-span-2 font-medium">{form.getValues('feeWaived') ? 'Waived' : `$${Number(form.getValues('feeCharged')).toFixed(2)}`}</span></div>
+                        {!form.getValues('feeWaived') && (Number(form.getValues('additionalFee')) || 0) > 0 && (
+                          <div className="grid grid-cols-3 gap-1 text-xs text-muted-foreground mt-1">
+                            <span></span>
+                            <span className="col-span-2">
+                              Stamp: ${(() => {
+                                const c = Number(form.getValues('stampCount')) || 1;
+                                return (computeStampFeeCents(c, appSettings ?? undefined) / 100).toFixed(2);
+                              })()} · Additional: ${Number(form.getValues('additionalFee')).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -1957,7 +2253,11 @@ export function NewEntry() {
                 Save Draft
               </Button>
               <Button onClick={() => saveEntry('completed')} disabled={isSaving} className="flex-1 sm:flex-none">
-                {isSaving ? 'Completing...' : 'Complete Entry'}
+                {isSaving
+                  ? 'Completing...'
+                  : willSplitDocuments
+                    ? `Complete ${parsedDocumentTypes.length} Entries`
+                    : 'Complete Entry'}
               </Button>
             </div>
           )}
@@ -1972,15 +2272,21 @@ export function NewEntry() {
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
                 <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
               </div>
-              <h3 className="text-lg font-semibold">Entry Saved</h3>
+              <h3 className="text-lg font-semibold">
+                {lastCompletedCount > 1 ? `${lastCompletedCount} Entries Saved` : 'Entry Saved'}
+              </h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Add another signer to this same document?
+                {lastCompletedCount > 1
+                  ? 'Each document was saved as its own journal line. You can view them grouped in the journal.'
+                  : 'Add another signer to this same document?'}
               </p>
             </div>
             <div className="mt-5 flex flex-col gap-2">
+              {lastCompletedCount <= 1 && (
               <Button
                 onClick={() => {
                   setLastCompletedId(null);
+                  setLastCompletedCount(1);
                   setLocation(`/entry/new?multiSigner=${Date.now()}`);
                 }}
                 className="w-full"
@@ -1988,20 +2294,27 @@ export function NewEntry() {
                 <Plus className="mr-2 h-4 w-4" />
                 Add Another Signer
               </Button>
+              )}
               <Button
-                variant="outline"
+                variant={lastCompletedCount > 1 ? 'default' : 'outline'}
                 onClick={() => {
                   setLastCompletedId(null);
-                  setLocation(`/entry/${lastCompletedId}`);
+                  setLastCompletedCount(1);
+                  if (lastCompletedCount > 1) {
+                    setLocation('/journal');
+                  } else {
+                    setLocation(`/entry/${lastCompletedId}`);
+                  }
                 }}
                 className="w-full"
               >
-                View Entry
+                {lastCompletedCount > 1 ? 'View Journal' : 'View Entry'}
               </Button>
               <Button
                 variant="ghost"
                 onClick={() => {
                   setLastCompletedId(null);
+                  setLastCompletedCount(1);
                   setLocation('/journal');
                 }}
                 className="w-full text-muted-foreground"
@@ -2033,6 +2346,8 @@ export function NewEntry() {
             onClick={(e) => e.stopPropagation()}
           />
         </div>
+      )}
+      </>
       )}
     </div>
   );

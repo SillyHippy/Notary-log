@@ -4,6 +4,13 @@ packages:
   - lib/integrations/*
   - scripts
 
+allowBuilds:
+  core-js: true
+  esbuild: true
+  sharp: true
+  tesseract.js: true
+  workerd: true
+
 autoInstallPeers: false
 
 catalog:
@@ -28,8 +35,6 @@ catalog:
   zod: ^3.25.76
 
 minimumReleaseAge: 1440
-
-
 
 onlyBuiltDependencies:
   - '@swc/core'
