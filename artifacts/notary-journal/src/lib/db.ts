@@ -21,6 +21,7 @@ import {
 import {
   expandAppointmentToEntries,
   validateSigningAppointmentPayload,
+  validateSigningAppointmentForComplete,
   sanitizePayloadForDraft,
   type SigningAppointmentPayload,
 } from './signing-appointment';
