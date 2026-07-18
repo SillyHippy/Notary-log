@@ -169,8 +169,9 @@ export interface NotarySettings {
   /** When false, the signer signature step is skipped and not required for completion. */
   requireSignerSignature?: boolean;
   /**
-   * Shared-certificate journal layout: PA-style one line with all signers vs separate lines.
-   * When unset, PA defaults to combined_line; other states default to separate_lines.
+   * Shared-certificate journal layout: one line with all signers vs separate lines.
+   * When unset, all states (including PA) default to separate_lines.
+   * Ken/PA combined-line mode is opt-in via Settings or the per-signing checkbox.
    */
   journalSharedCertMode?: 'combined_line' | 'separate_lines';
   /**
