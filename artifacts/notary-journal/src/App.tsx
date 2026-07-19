@@ -22,8 +22,12 @@ const TermsOfUse = lazy(() => import("@/pages/terms-of-use").then(m => ({ defaul
 const NotFound = lazy(() => import("@/pages/not-found"));
 const ClientIntake = lazy(() => import("@/pages/client-intake").then(m => ({ default: m.ClientIntake })));
 const ClientRequests = lazy(() => import("@/pages/client-requests").then(m => ({ default: m.ClientRequests })));
+const PublicBook = lazy(() => import("@/pages/public-book").then(m => ({ default: m.PublicBook })));
+const BookingsPage = lazy(() => import("@/pages/bookings").then(m => ({ default: m.BookingsPage })));
 import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked, getSettings, saveSettings } from "@/lib/db";
+import { ensureNotaryAccount } from "@/lib/cal-api";
 import { isZoHost } from "@/lib/intake-api";
+import { isCalHostMode } from "@/lib/cal-link";
 import { apiPath, isPublicAppPath } from "@/lib/app-path";
 import { dismissSplash } from "@/lib/splash";
 
@@ -42,6 +46,7 @@ function PublicRoutes() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Switch>
+        <Route path="/book/:slug" component={PublicBook} />
         <Route path="/intake" component={ClientIntake} />
         <Route component={NotFound} />
       </Switch>
@@ -64,6 +69,7 @@ function Router() {
           <Route path="/entry/:id/edit" component={EditEntry} />
           <Route path="/entry/:id" component={EntryDetail} />
           <Route path="/requests" component={ClientRequests} />
+          <Route path="/bookings" component={BookingsPage} />
           <Route path="/reports" component={Reports} />
           <Route path="/settings" component={Settings} />
           <Route path="/privacy" component={PrivacyPolicy} />
@@ -171,9 +177,31 @@ function App() {
     };
   }, [mode]);
 
-  // On Zo deploys, auto-fill intake token from server when Settings has none yet.
+  // Cal multi-tenant host: auto-create personal account token on first unlock (per device).
   useEffect(() => {
-    if (mode !== 'unlocked' || !isZoHost()) return;
+    if (mode !== 'unlocked' || !isCalHostMode()) return;
+    void (async () => {
+      try {
+        const settings = await getSettings();
+        if (settings.zoComputerToken?.trim()) return;
+        const created = await ensureNotaryAccount({
+          name: settings.notaryName?.trim() || undefined,
+          email: settings.notaryEmail?.trim() || undefined,
+        });
+        await saveSettings({
+          ...settings,
+          zoComputerToken: created.token.trim(),
+        });
+      } catch {
+        // Settings page will retry and show errors.
+      }
+    })();
+  }, [mode]);
+
+  // On Zo deploys, auto-fill intake token from server when Settings has none yet.
+  // Cal multi-tenant host: each notary must create/use their own token — never share one.
+  useEffect(() => {
+    if (mode !== 'unlocked' || !isZoHost() || isCalHostMode()) return;
     void (async () => {
       try {
         const settings = await getSettings();

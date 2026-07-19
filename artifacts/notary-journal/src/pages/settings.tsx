@@ -3,8 +3,10 @@ import { Link } from 'wouter';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, ChevronDown, ChevronUp, Calendar, Copy } from 'lucide-react';
 import { appOriginPath } from '@/lib/app-path';
+import { getCalMe, patchCalMe } from '@/lib/cal-api';
+import { parseCalBookingUrl, isCalHostMode } from '@/lib/cal-link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -47,6 +49,7 @@ import {
   type ZoBackupFile,
 } from '@/lib/zo-backup';
 import { JournalLayoutHelp } from '@/components/journal-layout-help';
+import { CalSetupPanel } from '@/components/cal-setup-panel';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -164,6 +167,18 @@ export function Settings() {
   const [intakeSaving, setIntakeSaving] = useState(false);
   const [intakeTesting, setIntakeTesting] = useState(false);
 
+  // Cal.com scheduling (multi-tenant host)
+  const [calSlug, setCalSlug] = useState('');
+  const [calUsername, setCalUsername] = useState('');
+  const [calBookingUrl, setCalBookingUrl] = useState('');
+  const [calWebhookSecret, setCalWebhookSecret] = useState('');
+  const [calDisplayName, setCalDisplayName] = useState('');
+  const [calWebhookPath, setCalWebhookPath] = useState('/api/cal/webhook');
+  const [platformWebhookSecret, setPlatformWebhookSecret] = useState('');
+  const [calSaving, setCalSaving] = useState(false);
+  const [calLoaded, setCalLoaded] = useState(false);
+  const calHost = isCalHostMode();
+
   // Collapsible sections state — persisted to localStorage
   const [collapsedSections, setCollapsedSections] = React.useState<Set<string>>(() => {
     try {
@@ -241,6 +256,24 @@ export function Settings() {
       setManualBackupOnly(!!settings.manualBackupOnly);
       setWeb3formsKey(settings.web3formsKey ?? '');
       setZoComputerToken(settings.zoComputerToken ?? '');
+      // Cal host: CalSetupPanel owns token + Cal config (avoids stale-token 401 on load).
+      if (settings.zoComputerToken?.trim() && !isCalHostMode()) {
+        try {
+          const cal = await getCalMe();
+          setCalSlug(cal.slug || '');
+          setCalUsername(cal.calUsername || cal.slug || '');
+          setCalBookingUrl(cal.calBookingUrl || '');
+          setCalDisplayName(cal.displayName || '');
+          setCalWebhookPath(cal.webhookPath || '/api/cal/webhook');
+          setPlatformWebhookSecret(
+            (cal as { platformWebhookSecret?: string }).platformWebhookSecret ||
+              '',
+          );
+          setCalLoaded(true);
+        } catch {
+          setCalLoaded(false);
+        }
+      }
       const hasZoConfig = !!(
         localStorage.getItem(ZO_BACKUP_URL_KEY) ||
         localStorage.getItem(ZO_BACKUP_KEY_KEY) ||
@@ -969,7 +1002,58 @@ export function Settings() {
     setIntakeSaving(false);
   };
 
+  const handleSaveCalSettings = async () => {
+    setCalSaving(true);
+    try {
+      const rawCal = calBookingUrl.trim();
+      const parsed = rawCal ? parseCalBookingUrl(rawCal) : null;
+      if (rawCal && !parsed) {
+        throw new Error(
+          'Enter your Cal username (e.g. your-cal-username) or a cal.com link',
+        );
+      }
+
+      const result = await patchCalMe({
+        calBookingUrl: parsed?.bookingUrl || '',
+        displayName: calDisplayName.trim() || undefined,
+      });
+      setCalSlug(result.slug || '');
+      setCalUsername(result.calUsername || result.slug || '');
+      setCalBookingUrl(result.calBookingUrl || '');
+      setCalDisplayName(result.displayName || '');
+      setCalWebhookPath(result.webhookPath || '/api/cal/webhook');
+      setPlatformWebhookSecret(
+        (result as { platformWebhookSecret?: string }).platformWebhookSecret ||
+          platformWebhookSecret,
+      );
+      setCalWebhookSecret('');
+      setCalLoaded(true);
+      toast({ title: 'Cal settings saved', description: 'Public book link updated.' });
+    } catch (err) {
+      toast({
+        title: 'Cal save failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+    setCalSaving(false);
+  };
+
+  const copyText = async (label: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: 'Copied', description: label });
+    } catch {
+      toast({ title: 'Copy failed', variant: 'destructive' });
+    }
+  };
+
   const activeIntakeKey = zoComputerToken.trim() || web3formsKey.trim();
+  const publicBookUrl = calSlug.trim()
+    ? appOriginPath(`/book/${calSlug.trim().toLowerCase()}`)
+    : '';
+  const webhookFullUrl = `${window.location.origin}/api/cal/webhook`;
+  const webhookSecretDisplay = platformWebhookSecret || calWebhookSecret;
 
   const handleTestIntake = async () => {
     setIntakeTesting(true);
@@ -1003,7 +1087,7 @@ export function Settings() {
   };
 
   return (
-    <div className="p-6 lg:p-8 max-w-4xl mx-auto space-y-8 pb-32 md:pb-0">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto space-y-8 pb-32 md:pb-0 min-w-0 overflow-x-hidden">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
@@ -1017,6 +1101,10 @@ export function Settings() {
           Reports & Export →
         </Link>
       </div>
+
+      {calHost && (
+        <CalSetupPanel onTokenChange={setZoComputerToken} />
+      )}
 
       {/* ── Data & Integrity (top) ─────────────────────────────────────── */}
       <Card>
@@ -1903,6 +1991,141 @@ export function Settings() {
         </form>
       </Form>
 
+      {!calHost && (
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between w-full">
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-primary" />
+              Cal.com scheduling
+            </CardTitle>
+            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => toggleSection('cal-scheduling')}>
+              {collapsedSections.has('cal-scheduling') ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </Button>
+          </div>
+          <CardDescription>
+            Replace public intake with your Cal.com booking page. Clients open your book link; fees/payments stay in Cal.
+            {calHost
+              ? ' Requires your personal account token (create above) — not a shared server token.'
+              : ' Requires Zo Computer form token above (same token authenticates API).'}
+          </CardDescription>
+        </CardHeader>
+        {!collapsedSections.has('cal-scheduling') && (
+        <CardContent className="space-y-4">
+          {!zoComputerToken.trim() && (
+            <Alert>
+              <AlertDescription>
+                {calHost
+                  ? 'Create your personal account above first, then configure Cal here.'
+                  : 'Save a Zo Computer form token first, then configure Cal here.'}
+              </AlertDescription>
+            </Alert>
+          )}
+          <div>
+            <Label htmlFor="cal-display-name">Display name (public)</Label>
+            <Input
+              id="cal-display-name"
+              className="mt-1"
+              value={calDisplayName}
+              onChange={(e) => setCalDisplayName(e.target.value)}
+              placeholder="Jane Mobile Notary"
+            />
+          </div>
+          <div>
+            <Label htmlFor="cal-booking-url">Cal username or link</Label>
+            <Input
+              id="cal-booking-url"
+              className="mt-1 font-mono text-sm"
+              value={calBookingUrl}
+              onChange={(e) => setCalBookingUrl(e.target.value)}
+              placeholder="your-cal-username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Must match your Cal profile username exactly — webhooks route by this value.
+              Your public book link:
+              {" "}
+              <span className="font-mono">
+                {publicBookUrl || `${appOriginPath('/book/')}your-cal-username`}
+              </span>
+            </p>
+            {calUsername && (
+              <p className="text-xs mt-2">
+                Linked for webhooks: <span className="font-mono font-medium">{calUsername}</span>
+              </p>
+            )}
+          </div>
+          <div className="rounded-lg border bg-muted/50 p-3 space-y-3">
+            <p className="text-sm font-medium">Cal webhook (same for everyone)</p>
+            <p className="text-xs text-muted-foreground">
+              Cal.com usernames are unique — there is only one{" "}
+              <span className="font-mono">cal.com/your-cal-username</span>. All notaries paste{" "}
+              <strong>this same URL and secret</strong> into their own Cal account. Incoming
+              bookings go only to the notary whose username matches.
+            </p>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Subscriber URL</p>
+              <p className="text-sm font-mono break-all">{webhookFullUrl}</p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1 mt-2"
+                onClick={() => void copyText("Webhook URL", webhookFullUrl)}
+              >
+                <Copy className="w-3 h-3" /> Copy webhook URL
+              </Button>
+            </div>
+            {webhookSecretDisplay ? (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Shared secret</p>
+                <p className="text-sm font-mono break-all">{webhookSecretDisplay}</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1 mt-2"
+                  onClick={() => void copyText("Webhook secret", webhookSecretDisplay)}
+                >
+                  <Copy className="w-3 h-3" /> Copy secret
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Save Cal settings once (with Zo token) to load the shared secret.
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Cal → Settings → Developer → Webhooks → New → paste URL + secret → enable Booking
+              Created (and Cancelled/Rescheduled if you want).
+            </p>
+          </div>
+          {publicBookUrl && (
+            <div className="rounded-lg border bg-muted/50 p-3 space-y-2">
+              <p className="text-xs text-muted-foreground">Public book link</p>
+              <p className="text-sm font-mono break-all">{publicBookUrl}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="outline" className="gap-1" onClick={() => void copyText('Book link', publicBookUrl)}>
+                  <Copy className="w-3 h-3" /> Copy book link
+                </Button>
+              </div>
+            </div>
+          )}
+          <Button
+            onClick={() => void handleSaveCalSettings()}
+            disabled={calSaving || !zoComputerToken.trim()}
+            className="gap-2"
+          >
+            {calSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Cal settings
+          </Button>
+        </CardContent>
+        )}
+      </Card>
+      )}
+
       {/* ── Client Intake Form ─────────────────────────────────────────── */}
       <Card>
         <CardHeader>
@@ -1926,17 +2149,34 @@ export function Settings() {
         {!collapsedSections.has('client-intake') && (
         <CardContent className="space-y-4">
           <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">
-            <p className="font-medium">Zo Computer (recommended on Zo deploy)</p>
-            <p className="text-muted-foreground text-xs">
-              Paste the token from your Zo deploy prompt (SQLite user row). When set on Zo, intake uses the built-in server — no Web3Forms required.
-            </p>
-            <p className="font-medium mt-3">Web3Forms (Cloudflare, Netlify, static, or Zo fallback)</p>
-            <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-xs">
-              <li>Get a free key at <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline text-foreground">web3forms.com</a></li>
-              <li>Paste below — kept if you switch back from Zo intake</li>
-            </ol>
+            {calHost ? (
+              <>
+                <p className="font-medium">Cal host — account token</p>
+                <p className="text-muted-foreground text-xs">
+                  Your token is created automatically in <strong>Cal scheduling setup</strong> at the
+                  top of this page. Legacy intake form is optional on the Cal host.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium">Zo Computer (recommended on Zo deploy)</p>
+                <p className="text-muted-foreground text-xs">
+                  Paste the token from your Zo deploy prompt (SQLite user row). When set on Zo, intake uses the built-in server — no Web3Forms required.
+                </p>
+              </>
+            )}
+            {!calHost && (
+              <>
+                <p className="font-medium mt-3">Web3Forms (Cloudflare, Netlify, static, or Zo fallback)</p>
+                <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-xs">
+                  <li>Get a free key at <a href="https://web3forms.com" target="_blank" rel="noreferrer" className="underline text-foreground">web3forms.com</a></li>
+                  <li>Paste below — kept if you switch back from Zo intake</li>
+                </ol>
+              </>
+            )}
           </div>
 
+          {!calHost && (
           <div>
             <Label htmlFor="zo-computer-token">Zo Computer Form Token</Label>
             <Input
@@ -1947,10 +2187,19 @@ export function Settings() {
               className="mt-1 font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              On first Zo deploy, copy <strong>Zo Intake Token</strong> from server logs (created automatically). Clear to use Web3Forms only.
+              On first Zo deploy, copy Zo Intake Token from server logs (created automatically). Clear to use Web3Forms only.
             </p>
           </div>
+          )}
 
+          {calHost && zoComputerToken.trim() && (
+          <div className="rounded-lg border bg-muted/50 p-3">
+            <p className="text-xs text-muted-foreground mb-1">Your account token (from Cal setup above)</p>
+            <p className="text-sm font-mono break-all">{zoComputerToken}</p>
+          </div>
+          )}
+
+          {!calHost && (
           <div>
             <Label htmlFor="web3forms-key">Web3Forms Access Key</Label>
             <Input
@@ -1964,6 +2213,7 @@ export function Settings() {
               Found at web3forms.com — no account or signup required
             </p>
           </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
             <Button

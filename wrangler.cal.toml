@@ -1,0 +1,29 @@
+# Staging config for Cal-enabled Worker (NOT used by main auto-deploy).
+# Deploy manually: npx wrangler deploy -c wrangler.cal.toml
+#
+# 1. wrangler d1 create notary-log-cal
+# 2. Replace database_id below
+# 3. wrangler d1 execute notary-log-cal --file=cloudflare/d1-schema.sql --remote
+# 4. wrangler secret put CAL_WEBHOOK_SECRET -c wrangler.cal.toml
+
+name = "notary-log-cal-staging"
+main = "cloudflare/worker.ts"
+compatibility_date = "2024-04-05"
+
+[[kv_namespaces]]
+binding = "INTAKE_KV"
+# Reuse production KV or create staging namespace — set id in Cloudflare dashboard
+
+[[d1_databases]]
+binding = "CAL_DB"
+database_name = "notary-log-cal"
+database_id = "REPLACE_AFTER_wrangler_d1_create"
+
+[assets]
+directory = "artifacts/notary-journal/dist/public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[vars]
+# Non-secret flags
+CAL_ENABLED = "1"

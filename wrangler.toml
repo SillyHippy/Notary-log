@@ -5,6 +5,12 @@ compatibility_date = "2024-04-05"
 [[kv_namespaces]]
 binding = "INTAKE_KV"
 
+# Cal multi-tenant (enable when porting server/cal-routes.ts to Worker — see docs/CAL-CLOUDFLARE-WORKERS-PLAN.md)
+# [[d1_databases]]
+# binding = "CAL_DB"
+# database_name = "notary-log-cal"
+# database_id = "<from: wrangler d1 create notary-log-cal>"
+
 [assets]
 directory = "artifacts/notary-journal/dist/public"
 binding = "ASSETS"

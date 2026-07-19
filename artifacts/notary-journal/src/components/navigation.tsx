@@ -1,20 +1,28 @@
-import { Link, useLocation, Redirect } from 'wouter';
-import { LayoutDashboard, BookOpen, Plus, Settings, FileBarChart, Inbox } from 'lucide-react';
+import { Link, useLocation } from 'wouter';
+import { LayoutDashboard, BookOpen, Plus, Settings, FileBarChart, Inbox, Calendar } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isCalHostMode } from '@/lib/cal-link';
 
 export function Navigation() {
   const [location] = useLocation();
+  const calHost = isCalHostMode();
 
   const navItems = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/journal', label: 'Journal', icon: BookOpen },
-    { href: '/requests', label: 'Requests', icon: Inbox },
+    calHost
+      ? { href: '/bookings', label: 'Bookings', icon: Calendar }
+      : { href: '/requests', label: 'Requests', icon: Inbox },
     { href: '/reports', label: 'Reports', icon: FileBarChart },
   ];
 
   const secondaryNavItems = [
     { href: '/settings', label: 'Settings', icon: Settings },
   ];
+
+  const midHref = calHost ? '/bookings' : '/requests';
+  const midLabel = calHost ? 'Bookings' : 'Client Requests';
+  const MidIcon = calHost ? Calendar : Inbox;
 
   return (
     <>
@@ -31,9 +39,9 @@ export function Navigation() {
             <span className="sr-only">Journal</span>
           </Link>
 
-          <Link href="/requests" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location.startsWith('/requests') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-requests" aria-label="Client Requests" aria-current={location.startsWith('/requests') ? 'page' : undefined}>
-            <Inbox className="w-5 h-5 mb-1" aria-hidden="true" />
-            <span className="sr-only">Requests</span>
+          <Link href={midHref} className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location.startsWith(midHref) ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-requests" aria-label={midLabel} aria-current={location.startsWith(midHref) ? 'page' : undefined}>
+            <MidIcon className="w-5 h-5 mb-1" aria-hidden="true" />
+            <span className="sr-only">{midLabel}</span>
           </Link>
 
           <Link href="/reports" className={cn("flex flex-col items-center justify-center w-16 h-full text-xs font-medium transition-colors touch-target", location.startsWith('/reports') ? "text-primary" : "text-muted-foreground")} data-testid="link-nav-reports" aria-label="Reports" aria-current={location.startsWith('/reports') ? 'page' : undefined}>
@@ -41,7 +49,6 @@ export function Navigation() {
             <span className="sr-only">Reports</span>
           </Link>
 
-          {/* FAB slot — takes space of a nav item, button floats above */}
           <div className="flex flex-col items-center justify-center w-16 h-full" aria-hidden="true">
             <Link href="/entry/new" className="flex items-center justify-center w-14 h-14 -translate-y-1/2 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl transition-all active:translate-y-0 touch-target" data-testid="link-nav-new-entry" aria-label="New journal entry">
               <Plus className="w-6 h-6" aria-hidden="true" />
@@ -56,7 +63,6 @@ export function Navigation() {
         </div>
       </nav>
 
-      {/* Desktop Sidebar */}
       <div className="hidden md:flex flex-col w-64 h-screen fixed left-0 top-0 border-r border-border bg-sidebar text-sidebar-foreground">
         <div className="p-6 border-b border-border">
           <h1 className="text-xl font-bold tracking-tight text-sidebar-primary">Notary Journal</h1>

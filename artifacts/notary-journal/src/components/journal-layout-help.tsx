@@ -16,11 +16,12 @@ type PreviewRow = {
 
 function PrintPreviewTable({ rows, caption }: { rows: PreviewRow[]; caption: string }) {
   return (
-    <div className="rounded-md border overflow-hidden text-[10px] sm:text-xs font-mono bg-white">
+    <div className="rounded-md border overflow-x-auto text-[10px] sm:text-xs font-mono bg-white -mx-1">
+      <div className="min-w-[20rem]">
       <div className="bg-[#1e3a5f] text-white px-2 py-1.5 font-sans text-[10px] font-semibold">
         Print Journal — {caption}
       </div>
-      <div className="grid grid-cols-[minmax(1.5rem,auto)_minmax(3.5rem,auto)_1fr_1fr_minmax(3rem,auto)_minmax(2.5rem,auto)] gap-x-1 gap-y-0 border-b bg-slate-100 px-1 py-1 font-sans font-semibold text-muted-foreground">
+      <div className="grid grid-cols-[minmax(1.5rem,auto)_minmax(3.5rem,auto)_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(3rem,auto)_minmax(2.5rem,auto)] gap-x-1 gap-y-0 border-b bg-slate-100 px-1 py-1 font-sans font-semibold text-muted-foreground">
         <span>#</span>
         <span>Date</span>
         <span>Signer</span>
@@ -31,18 +32,19 @@ function PrintPreviewTable({ rows, caption }: { rows: PreviewRow[]; caption: str
       {rows.map((row, i) => (
         <div
           key={`${row.entry}-${i}`}
-          className={`grid grid-cols-[minmax(1.5rem,auto)_minmax(3.5rem,auto)_1fr_1fr_minmax(3rem,auto)_minmax(2.5rem,auto)] gap-x-1 px-1 py-1.5 border-b last:border-b-0 whitespace-pre-line leading-snug ${
+          className={`grid grid-cols-[minmax(1.5rem,auto)_minmax(3.5rem,auto)_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(3rem,auto)_minmax(2.5rem,auto)] gap-x-1 px-1 py-1.5 border-b last:border-b-0 whitespace-pre-line leading-snug break-words ${
             i % 2 === 0 ? 'bg-slate-50' : 'bg-white'
           } ${row.tall ? 'min-h-[3.5rem]' : ''}`}
         >
           <span>{row.entry}</span>
           <span>{row.date}</span>
-          <span>{row.signer}</span>
-          <span>{row.address}</span>
-          <span>{row.document}</span>
+          <span className="min-w-0 break-words">{row.signer}</span>
+          <span className="min-w-0 break-words">{row.address}</span>
+          <span className="min-w-0 break-words">{row.document}</span>
           <span className="text-right">{row.fee}</span>
         </div>
       ))}
+      </div>
     </div>
   );
 }
@@ -141,23 +143,29 @@ export function JournalLayoutHelp() {
           Tap each option to see how it looks when you print the journal. Settings set the default — you can still change the checkboxes during each signing.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="space-y-2 min-w-0">
         {HELP_TOPICS.map(topic => {
           const open = openId === topic.id;
           return (
-            <div key={topic.id} className="rounded-lg border shadow-sm overflow-hidden">
+            <div key={topic.id} className="rounded-lg border shadow-sm overflow-hidden min-w-0">
               <Button
                 type="button"
                 variant="ghost"
-                className="w-full justify-between h-auto py-3 px-4 rounded-none hover:bg-muted/50"
+                className="w-full max-w-full justify-start gap-2 h-auto py-3 px-3 sm:px-4 rounded-none hover:bg-muted/50"
                 onClick={() => setOpenId(open ? null : topic.id)}
                 data-testid={`help-topic-${topic.id}`}
               >
-                <span className="text-left font-medium text-sm">{topic.title}</span>
-                {open ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
+                <span className="flex-1 min-w-0 text-left font-medium text-sm whitespace-normal break-words leading-snug">
+                  {topic.title}
+                </span>
+                {open ? (
+                  <ChevronUp className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
+                ) : (
+                  <ChevronDown className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
+                )}
               </Button>
               {open && (
-                <div className="px-4 pb-4 space-y-3 border-t bg-muted/20">
+                <div className="px-3 sm:px-4 pb-4 space-y-3 border-t bg-muted/20 min-w-0 overflow-hidden">
                   <p className="text-sm text-muted-foreground pt-3">{topic.description}</p>
                   {topic.preview}
                 </div>

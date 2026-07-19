@@ -35,10 +35,13 @@
     "dev": "bun run --cwd artifacts/notary-journal dev",
     "build": "bun run --cwd artifacts/notary-journal build",
     "build:proxy": "BASE_PATH=/notary/ bun run --cwd artifacts/notary-journal build",
+    "build:cal": "VITE_CAL_HOST_MODE=1 bun run --cwd artifacts/notary-journal build",
     "build:pnpm": "pnpm run typecheck && pnpm -r --if-present run build",
     "prod": "bun run server.ts",
     "deploy:cloudflare": "node scripts/cloudflare-deploy.mjs",
     "deploy:cloudflare:ci": "node scripts/cloudflare-deploy.mjs --skip-build",
+    "deploy:cloudflare:cal:staging": "node scripts/cloudflare-deploy-cal.mjs",
+    "deploy:cloudflare:cal:staging:ci": "node scripts/cloudflare-deploy-cal.mjs --skip-build",
     "deploy:netlify": "pnpm run build && netlify deploy --prod",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"

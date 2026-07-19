@@ -47,7 +47,7 @@ export function Layout({ children }: LayoutProps) {
   }, []);
 
   return (
-    <div className="min-h-[100dvh] bg-background w-full">
+    <div className="min-h-[100dvh] bg-background w-full min-w-0 overflow-x-hidden">
       {!online && (
         <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500/90 dark:bg-amber-600/90 text-amber-950 dark:text-amber-100 text-xs font-medium text-center py-1.5 backdrop-blur-sm" data-testid="offline-banner">
           You're offline — entries are saved locally and will be backed up when you reconnect.
@@ -55,7 +55,7 @@ export function Layout({ children }: LayoutProps) {
       )}
       <Navigation />
       <InstallBanner />
-      <main className={`md:ml-64 pb-20 md:pb-0 min-h-[100dvh]${!online ? ' pt-6' : ''}`}>
+      <main className={`md:ml-64 pb-20 md:pb-0 min-h-[100dvh] min-w-0 overflow-x-hidden${!online ? ' pt-6' : ''}`}>
         {children}
       </main>
     </div>

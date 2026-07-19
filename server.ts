@@ -1,9 +1,12 @@
 import { Database } from "bun:sqlite";
 import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
+import { handleCalRoutes, migrateCalSchema } from "./server/cal-routes";
 
 const PUBLIC_DIR = "./artifacts/notary-journal/dist/public";
-const JOURNAL_DIR = "./Documents/Notary Journal";
+/** Isolated per-service data root. Cal host must use a different path than prod notary-log. */
+const JOURNAL_DIR =
+  process.env.JOURNAL_DIR?.trim() || "./Documents/Notary Journal";
 const BACKUP_DIR = join(JOURNAL_DIR, "backups");
 const INTAKE_LEGACY_DIR = join(JOURNAL_DIR, "intake");
 const DB_PATH = join(JOURNAL_DIR, "notary.db");
@@ -25,8 +28,9 @@ function json(data: unknown, init: ResponseInit = {}) {
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "Authorization, Content-Type, X-Notary-Token",
   };
 }
 
@@ -111,6 +115,8 @@ function initDatabase(): Database {
       FOREIGN KEY (user_token) REFERENCES users(token)
     )
   `);
+
+  migrateCalSchema(db);
 
   return db;
 }
@@ -638,10 +644,16 @@ function handleHealth() {
     status: "ok",
     timestamp: new Date().toISOString(),
     intake: "zo-sqlite",
+    cal: true,
+    calHostMode: process.env.CAL_HOST_MODE === "1",
   });
 }
 
 async function handleBootstrap() {
+  // Multi-tenant cal host: never auto-inject the server default token into every browser.
+  if (process.env.CAL_HOST_MODE === "1") {
+    return json({ intakeToken: null, calHostMode: true });
+  }
   const tokenFile = Bun.file(INTAKE_TOKEN_FILE);
   if (!(await tokenFile.exists())) {
     return json({ intakeToken: null });
@@ -658,6 +670,19 @@ const INTAKE_TOKEN_FILE = join(JOURNAL_DIR, ".zo-intake-token");
 
 async function logStartupCredentials() {
   await mkdir(JOURNAL_DIR, { recursive: true });
+
+  const calHost = process.env.CAL_HOST_MODE === "1";
+  if (calHost) {
+    console.log(
+      "Cal multi-tenant host: each device auto-creates a personal account token on first unlock.",
+    );
+    const backupKey = await ensureBackupKey();
+    console.log(`Zo Backup API URL: /api/backup`);
+    console.log(`Zo Backup Key: ${backupKey}`);
+    console.log(`Zo Backup Storage: ${BACKUP_DIR}`);
+    console.log(`Intake SQLite DB: ${DB_PATH}`);
+    return;
+  }
 
   const created = ensureDefaultNotaryUser(db);
   const intakeToken = created?.token ?? getPrimaryIntakeToken(db);
@@ -707,6 +732,11 @@ const server = Bun.serve({
 
     if (path.startsWith("/api/intake")) {
       return handleIntakeRequest(request, url, db);
+    }
+
+    const calResponse = await handleCalRoutes(request, url, db);
+    if (calResponse) {
+      return calResponse;
     }
 
     if (path === "/") {

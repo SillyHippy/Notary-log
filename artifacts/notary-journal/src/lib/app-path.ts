@@ -25,11 +25,16 @@ export function relativeAppPath(pathname: string): string {
   return pathname;
 }
 
-/** Public routes that must work without PIN (client intake form). */
+/** Public routes that must work without PIN (client intake + Cal book). */
 export function isPublicAppPath(pathname?: string): boolean {
   const p = pathname ?? (typeof window !== 'undefined' ? window.location.pathname : '/');
   const rel = relativeAppPath(p);
-  return rel === '/intake' || rel.startsWith('/intake/');
+  return (
+    rel === '/intake' ||
+    rel.startsWith('/intake/') ||
+    rel === '/book' ||
+    rel.startsWith('/book/')
+  );
 }
 
 /** Same-origin API path respecting base (e.g. /notary/api/intake behind reverse proxy). */

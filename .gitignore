@@ -50,3 +50,19 @@ Thumbs.db
 
 # Generated Wrangler config (scripts/cloudflare-deploy.mjs)
 .wrangler.deploy.toml
+
+# Local runtime data (SQLite, webhook secrets, intake tokens)
+Documents/
+*.db
+*.db-journal
+.cal-platform-webhook-secret
+.zo-intake-token
+
+# Local env (never commit)
+.env
+.env.*
+!.env.example
+artifacts/notary-journal/.env
+
+# Bun lock (repo uses pnpm)
+bun.lock
