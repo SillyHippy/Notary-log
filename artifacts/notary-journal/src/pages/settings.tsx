@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, ChevronDown, ChevronUp, Calendar, Copy } from 'lucide-react';
 import { appOriginPath } from '@/lib/app-path';
-import { getCalMe, patchCalMe, restoreCalOAuthBinding } from '@/lib/cal-api';
+import { getCalMe, patchCalMe, restoreCalOAuthBinding, fetchCalOAuthBinding } from '@/lib/cal-api';
 import { parseCalBookingUrl, isCalHostMode } from '@/lib/cal-link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -766,6 +766,12 @@ export function Settings() {
       const config = saveZoConfigFromState();
       const entries = await getAllEntries();
       const settings = await getSettings();
+      let calHostBinding = null;
+      try {
+        calHostBinding = await fetchCalOAuthBinding(settings.zoComputerToken);
+      } catch {
+        /* non-cal host or offline */
+      }
       const name = await uploadZoBackup({
         ...config,
         payload: {
@@ -773,6 +779,7 @@ export function Settings() {
           exportedAt: new Date().toISOString(),
           entries,
           settings,
+          ...(calHostBinding ? { calHostBinding } : {}),
         },
       });
       const now = new Date().toISOString();
