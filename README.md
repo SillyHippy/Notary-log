@@ -1,6 +1,6 @@
 # Notary Journal
 
-A fast Progressive Web App (PWA) for modern notaries: offline support, local encryption, ID scanning, signatures, and print-ready journal PDFs.
+A fast Progressive Web App (PWA) for modern notaries: offline support, local encryption, ID scanning, signatures, print-ready journal PDFs, and optional **Cal.com scheduling** (bookings → journal).
 
 > [!WARNING]
 > **STRICT NON-COMMERCIAL LICENSE**
@@ -48,7 +48,7 @@ Choose **one** option below. Each one produces a live URL you can open from any 
 | [Cloudflare Pages](#option-5-cloudflare-pages) | Git-connected with `_redirects` | No | Medium |
 | [Hostinger / Shared Hosting](#option-6-hostinger--shared-hosting) | Traditional web hosting | No | Easy |
 
-**Important:** Only **Zo Computer** includes the server-side backup API (`/api/backup`) and multi-user Zo intake (`/api/intake` with SQLite). Cloudflare, Netlify, and static hosts use Web3Forms for client intake only.
+**Important:** Only **Zo Computer** includes the server-side backup API (`/api/backup`) and multi-user Zo intake (`/api/intake` with SQLite). Cloudflare, Netlify, and static hosts use Web3Forms for client intake only. **Cal.com multi-tenant scheduling** (Connect Cal, webhooks, Bookings tab, `/book/{username}`) runs on a dedicated **cal host** build (`CAL_HOST_MODE=1`) — see [Cal.com scheduling integration](#calcom-scheduling-integration-optional) below.
 
 ---
 
@@ -527,6 +527,85 @@ You tap "Accept" -> Prefilled journal entry is created
 That's it. No webhook configuration needed — the form handles both email and in-app queue automatically.
 
 > The intake link includes your key (e.g., `?key=86e34...`). This is a public form identifier, not a secret. Share it freely via text, email, or QR code.
+
+---
+
+## Cal.com scheduling integration (optional)
+
+Notary Journal stays the **compliance journal**. **Cal.com** handles client booking, availability, payments at book, and reminders. The cal host wires them together so appointments land in a **Bookings** tab and can prefill a journal entry.
+
+This is an **integration**, not a built-in calendar clone. Each notary uses their own Cal.com account (free tier is enough for most solo notaries).
+
+### Benefits of the Cal integration
+
+| Benefit | What you get |
+|---------|----------------|
+| **No custom booking engine** | Clients pick times on Cal; you don’t build availability math |
+| **Public book page on your brand URL** | `https://your-host/book/{cal-username}` embeds Cal (or opens Cal) |
+| **One-click Connect Cal.com (OAuth)** | Pulls profile/username, can auto-register the shared webhook |
+| **Shared platform webhook** | One subscriber URL + secret for the whole host; routes by Cal username |
+| **Bookings tab** | Created / cancelled / rescheduled appointments in-app |
+| **Start journal from a booking** | Prefill signer/time/location when you begin an entry |
+| **Payments at booking** | Notary turns on **Stripe / PayPal in Cal** on the event type — money stays with Cal, not your journal server |
+| **Email confirmations & reminders** | Handled by Cal (SMS/WhatsApp via Cal paid messaging credits if desired) |
+| **Multi-notary on one deploy** | Each device gets its own account token; isolation by Cal username |
+| **Backup-friendly OAuth** | Journal JSON / Drive / Zo backups can include a `calHostBinding` (encrypted server ciphertext) so restore on a new phone can reattach Cal on the **same host** without re-authorizing |
+| **Paste-link fallback** | Manual Cal username + webhook paste still works if OAuth isn’t used |
+
+### What the notary does (happy path)
+
+1. Create a free account at [cal.com](https://cal.com) and an event type (e.g. Mobile notarization).
+2. Open the **cal host** app → Settings → **Connect Cal.com** (approve scopes).
+3. Share **`/book/your-cal-username`** with clients (or the Cal link).
+4. When a client books, the appointment appears under **Bookings**.
+5. Open the booking → start journal entry → complete ID/seal/hash flow as usual.
+
+Optional: configure **payment required** and reminders inside Cal’s event settings.
+
+### Cal.com Free vs paid (for notaries using this integration)
+
+Cal plans change over time — confirm on [cal.com/pricing](https://cal.com/pricing). What matters for **this app**:
+
+| Capability | **Cal Free** | **Cal paid (e.g. Teams)** | Needed for Notary Journal cal host? |
+|------------|--------------|---------------------------|--------------------------------------|
+| Own booking page / event types | Yes | Yes | **Yes** |
+| Embed in `/book/{slug}` | Yes | Yes | **Yes** |
+| Webhooks (booking created/cancelled/etc.) + HMAC secret | Yes | Yes | **Yes** (sync to Bookings tab) |
+| OAuth “Continue with Cal.com” (your app as client) | Yes\* | Yes\* | **Optional** (Connect button); paste-link works without it |
+| API v2 (read bookings, event types, manage webhooks) | Yes | Yes | Used by OAuth automation |
+| Stripe / PayPal collect at book | Yes | Yes | **Optional** (notary’s choice) |
+| Email confirmations | Yes | Yes | **Optional** |
+| SMS / WhatsApp reminder **credits** | Limited / purchase | Included allotments (plan-dependent) | **Optional** — not required for journal |
+| Multi-user team on one Cal org | No (1 user) | Yes | Not required — multi-notary is **your host**, one Cal account per notary |
+| Cal “Platform / managed users” | Deprecated for new signups | — | **Not used** — each notary owns their Cal login |
+
+\*OAuth **client** must be registered and approved by Cal once for your product; notaries then authorize that client. Redirect URIs are per deploy host (e.g. Zo cal host, Cloudflare Worker).
+
+**Practical guidance**
+
+- **Most solo notaries:** stay on **Cal Free** — book page, webhooks, payments-at-book, and email reminders are enough.
+- **Upgrade Cal paid when you want:** SMS/WhatsApp credits, team features inside Cal, or other Cal product extras — **not** because Notary Journal requires it.
+- **SMS without Cal paid:** possible later via a separate add-on (e.g. Twilio); not required for the core integration.
+
+### Cal host vs standard journal deploy
+
+| | Standard `notary-log` | Cal host (`CAL_HOST_MODE=1`) |
+|--|----------------------|------------------------------|
+| Journal / PIN / ID scan | Yes | Yes |
+| Client intake form | Yes (Zo token / Web3Forms) | Secondary; Cal is primary client path |
+| Bookings tab + `/book/{slug}` | No | Yes |
+| Connect Cal / webhooks | No | Yes |
+| Typical URL (example) | Zo reverse-proxy or CF Worker | e.g. Zo `notary-log-cal-*.zocomputer.io` or CF cal staging |
+
+Implementation detail and ops live in:
+
+- `docs/CAL-MULTI-TENANT-IMPLEMENTATION-PLAN.md`
+- `docs/CAL-OAUTH-IMPLEMENTATION-PLAN.md`
+- `docs/CAL-ZO-SERVICE.md`
+
+### Other schedulers (e.g. Setmore)
+
+A second scheduler (OAuth/API) is possible later if notaries already live there. **Cal remains the primary** path: free-tier webhooks + OAuth are stronger for multi-tenant sync. Setmore’s deep API is generally **Pro + access request**, and is not required to get free booking + journal flow today.
 
 ---
 
