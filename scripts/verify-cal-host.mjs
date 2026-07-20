@@ -9,6 +9,10 @@ const BASE =
   process.argv[2]?.replace(/\/$/, "") ||
   "https://notary-log-cal-sillyhippy.zocomputer.io";
 
+const WORKER_MODE =
+  process.argv.includes("--worker") ||
+  BASE.includes("workers.dev");
+
 const CAL_DB =
   process.env.CAL_VERIFY_DB ||
   "/home/workspace/Projects/Notary-log/Documents/Notary Journal Cal/notary.db";
@@ -106,14 +110,21 @@ async function fireWebhook(secret, organizerUsername, uid, opts = {}) {
 
 console.log(`\nCal host verification: ${BASE}\n`);
 
-// Clean slate for repeatable verify (keeps platform webhook secret file)
+// Clean slate for repeatable verify
 try {
-  const { Database } = await import("bun:sqlite");
-  const db = new Database(CAL_DB);
-  db.run("DELETE FROM bookings");
-  db.run("DELETE FROM users");
-  db.close();
-  ok("wiped users + bookings for clean verify");
+  if (WORKER_MODE) {
+    const res = await fetch(`${BASE}/api/cal/verify-reset`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) ok("wiped users + bookings for clean verify (D1)");
+    else fail("db wipe", JSON.stringify(data));
+  } else {
+    const { Database } = await import("bun:sqlite");
+    const db = new Database(CAL_DB);
+    db.run("DELETE FROM bookings");
+    db.run("DELETE FROM users");
+    db.close();
+    ok("wiped users + bookings for clean verify");
+  }
 } catch (e) {
   fail("db wipe", e.message);
 }

@@ -220,3 +220,105 @@ export async function markBookingJournalLinked(id: string): Promise<void> {
   );
   if (!res.ok) throw new Error('Link mark failed');
 }
+
+/** Server-side Cal OAuth ciphertext + profile for journal backup (same host). */
+export type CalOAuthBinding = {
+  v: number;
+  accessTokenEnc: string;
+  refreshTokenEnc?: string | null;
+  expiresAt?: string | null;
+  scope?: string | null;
+  connectedAt?: string | null;
+  calUsername?: string | null;
+  calBookingUrl?: string | null;
+  calUserId?: string | null;
+  calEventSlug?: string | null;
+  calDefaultEventTypeId?: number | null;
+  managedWebhookId?: string | null;
+  slug?: string | null;
+  displayName?: string | null;
+};
+
+export async function fetchCalOAuthBinding(
+  authToken?: string,
+): Promise<CalOAuthBinding | null> {
+  try {
+    const token = await resolveNotaryToken(authToken);
+    const res = await fetch(apiPath('/api/cal/oauth/binding'), {
+      headers: authHeaders(token),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { binding?: CalOAuthBinding | null };
+    return data.binding ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function restoreCalOAuthBinding(
+  binding: CalOAuthBinding,
+  authToken?: string,
+): Promise<{ ok: boolean; username?: string | null }> {
+  const token = await resolveNotaryToken(authToken);
+  const res = await fetch(apiPath('/api/cal/oauth/binding'), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ binding }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      (data as { error?: string }).error || `Restore OAuth failed (${res.status})`,
+    );
+  }
+  return data as { ok: boolean; username?: string | null };
+}
+
+export type CalOAuthStatus = {
+  oauthConfigured: boolean;
+  connected: boolean;
+  username: string | null;
+  calUserId: string | null;
+  calBookingUrl: string | null;
+  slug: string | null;
+  displayName: string | null;
+  scope: string | null;
+  connectedAt: string | null;
+  expiresAt: string | null;
+  managedWebhookId: string | null;
+  redirectUri: string;
+};
+
+export async function getCalOAuthStatus(authToken?: string): Promise<CalOAuthStatus> {
+  const token = await resolveNotaryToken(authToken);
+  const res = await fetch(apiPath('/api/cal/oauth/status'), {
+    headers: authHeaders(token),
+  });
+  if (res.status === 401) throw new Error('Unauthorized: invalid account token');
+  if (!res.ok) throw new Error('Failed to load OAuth status');
+  return res.json() as Promise<CalOAuthStatus>;
+}
+
+export async function startCalOAuth(authToken?: string): Promise<{ authorizeUrl: string }> {
+  const token = await resolveNotaryToken(authToken);
+  const res = await fetch(apiPath('/api/cal/oauth/start'), {
+    headers: authHeaders(token),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || `OAuth start failed (${res.status})`);
+  }
+  return data as { authorizeUrl: string };
+}
+
+export async function disconnectCalOAuth(authToken?: string): Promise<void> {
+  const token = await resolveNotaryToken(authToken);
+  const res = await fetch(apiPath('/api/cal/oauth/disconnect'), {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || 'Disconnect failed');
+  }
+}

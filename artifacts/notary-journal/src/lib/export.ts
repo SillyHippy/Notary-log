@@ -303,17 +303,42 @@ export function exportAllCSV(entries: JournalEntry[], settings?: NotarySettings 
 
 export const BACKUP_FORMAT_VERSION = 2;
 
+/** Optional Cal host OAuth ciphertext snapshot (same host restore only). */
+export type CalHostBinding = {
+  v: number;
+  accessTokenEnc: string;
+  refreshTokenEnc?: string | null;
+  expiresAt?: string | null;
+  scope?: string | null;
+  connectedAt?: string | null;
+  calUsername?: string | null;
+  calBookingUrl?: string | null;
+  calUserId?: string | null;
+  calEventSlug?: string | null;
+  calDefaultEventTypeId?: number | null;
+  managedWebhookId?: string | null;
+  slug?: string | null;
+  displayName?: string | null;
+};
+
 export interface BackupEnvelope {
   version: number;
   exportedAt: string;
   entries: JournalEntry[];
   settings: NotarySettings;
+  /**
+   * Cal.com OAuth binding for multi-tenant hosts (Zo/CF cal).
+   * Contains server-side ciphertext only (not raw Cal tokens).
+   * Restores only on a host that shares the same CAL_TOKEN_ENCRYPTION_KEY.
+   */
+  calHostBinding?: CalHostBinding | null;
 }
 
 export interface ParsedBackup {
   detectedVersion: 1 | 2;
   entries: JournalEntry[];
   settings: NotarySettings | null;
+  calHostBinding?: CalHostBinding | null;
 }
 
 // `idNumber` was historically required but is now optional (compliance
@@ -343,13 +368,20 @@ export function parseBackupFile(text: string): ParsedBackup {
 
   let entries: JournalEntry[] = [];
   let settings: NotarySettings | null = null;
+  let calHostBinding: CalHostBinding | null = null;
   let detectedVersion: 1 | 2 = 1;
 
   if (Array.isArray(parsed)) {
     entries = parsed as JournalEntry[];
     detectedVersion = 1;
   } else if (parsed && typeof parsed === 'object') {
-    const obj = parsed as { version?: unknown; entries?: unknown; settings?: unknown; entryNumber?: unknown };
+    const obj = parsed as {
+      version?: unknown;
+      entries?: unknown;
+      settings?: unknown;
+      entryNumber?: unknown;
+      calHostBinding?: unknown;
+    };
     if (Array.isArray(obj.entries)) {
       if (obj.version !== undefined && typeof obj.version !== 'number') {
         throw new Error('Backup file has an invalid version field.');
@@ -360,6 +392,12 @@ export function parseBackupFile(text: string): ParsedBackup {
       entries = obj.entries as JournalEntry[];
       if (obj.settings && typeof obj.settings === 'object') {
         settings = obj.settings as NotarySettings;
+      }
+      if (obj.calHostBinding && typeof obj.calHostBinding === 'object') {
+        const b = obj.calHostBinding as CalHostBinding;
+        if (typeof b.accessTokenEnc === 'string' && b.accessTokenEnc.length > 0) {
+          calHostBinding = b;
+        }
       }
     } else if ('entryNumber' in obj) {
       entries = [obj as unknown as JournalEntry];
@@ -379,15 +417,20 @@ export function parseBackupFile(text: string): ParsedBackup {
     if (typeof e.entryNumber !== 'number') throw new Error('Entry has non-numeric entryNumber.');
   }
 
-  return { detectedVersion, entries, settings };
+  return { detectedVersion, entries, settings, calHostBinding };
 }
 
-export function exportAllJSON(entries: JournalEntry[], settings: NotarySettings): void {
+export function exportAllJSON(
+  entries: JournalEntry[],
+  settings: NotarySettings,
+  calHostBinding?: CalHostBinding | null,
+): void {
   const payload: BackupEnvelope = {
     version: BACKUP_FORMAT_VERSION,
     exportedAt: new Date().toISOString(),
     entries,
     settings,
+    ...(calHostBinding ? { calHostBinding } : {}),
   };
   const jsonContent = JSON.stringify(payload, null, 2);
   downloadBlob(new Blob([jsonContent], { type: 'application/json' }), `notary-journal-export-${Date.now()}.json`);

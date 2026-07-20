@@ -5,7 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, CloudUpload, Cloud, CloudOff, RefreshCw, RotateCcw, CheckCircle2, ShieldCheck, ShieldAlert, Wallet, Stamp, Trash2, Fingerprint, ExternalLink, Loader2, ChevronDown, ChevronUp, Calendar, Copy } from 'lucide-react';
 import { appOriginPath } from '@/lib/app-path';
-import { getCalMe, patchCalMe } from '@/lib/cal-api';
+import { getCalMe, patchCalMe, restoreCalOAuthBinding } from '@/lib/cal-api';
 import { parseCalBookingUrl, isCalHostMode } from '@/lib/cal-link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -235,9 +235,15 @@ export function Settings() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const safety = window.setTimeout(() => {
+      if (!cancelled) setIsLoading(false);
+    }, 8000);
+
     async function loadData() {
       try {
       const settings = await getSettings();
+      if (cancelled) return;
       form.reset({
         notaryName: settings.notaryName || '',
         commissionNumber: settings.commissionNumber || '',
@@ -291,25 +297,41 @@ export function Settings() {
       hydrateFeeAndSealStateFrom(settings);
 
       // Biometric is "supported" only if both a platform authenticator and
-      // the WebAuthn PRF extension are available.
+      // the WebAuthn PRF extension are available. Cap wait so Settings never hangs.
       try {
-        const platform = await isPlatformAuthenticatorAvailable();
+        const platform = await Promise.race([
+          isPlatformAuthenticatorAvailable(),
+          new Promise<boolean>((r) => window.setTimeout(() => r(false), 1500)),
+        ]);
         if (!platform) {
           setBiometricSupported(false);
           setBiometricUnsupportedExplained('no-platform');
         } else {
-          const prfOk = await isPrfLikelySupported();
+          const prfOk = await Promise.race([
+            isPrfLikelySupported(),
+            new Promise<boolean>((r) => window.setTimeout(() => r(true), 1500)),
+          ]);
           setBiometricSupported(prfOk);
           setBiometricUnsupportedExplained(prfOk ? null : 'no-prf');
-          if (prfOk) setBiometricEnabled(await isBiometricEnabled());
+          if (prfOk) {
+            const enabled = await Promise.race([
+              isBiometricEnabled(),
+              new Promise<boolean>((r) => window.setTimeout(() => r(false), 1000)),
+            ]);
+            setBiometricEnabled(enabled);
+          }
         }
       } catch {
         setBiometricSupported(false);
         setBiometricUnsupportedExplained('no-platform');
       }
 
-      const entries = await getAllEntries();
-      setEntryCount(entries.length);
+      try {
+        const entries = await getAllEntries();
+        if (!cancelled) setEntryCount(entries.length);
+      } catch {
+        /* entry count optional on load */
+      }
       } catch (err) {
         console.error('Failed to load settings', err);
         toast({
@@ -318,10 +340,15 @@ export function Settings() {
           variant: 'destructive',
         });
       } finally {
-        setIsLoading(false);
+        window.clearTimeout(safety);
+        if (!cancelled) setIsLoading(false);
       }
     }
-    loadData();
+    void loadData();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(safety);
+    };
 
     // Load initial Google Drive state
     setIsConnected(!!getStoredToken());
@@ -626,7 +653,7 @@ export function Settings() {
     setImporting(true);
     try {
       const text = await file.text();
-      const { detectedVersion, entries, settings: importedSettings } = parseBackupFile(text);
+      const { detectedVersion, entries, settings: importedSettings, calHostBinding } = parseBackupFile(text);
 
       const startCount = (await getAllEntries()).length;
       const isEmptyJournal = startCount === 0;
@@ -673,11 +700,26 @@ export function Settings() {
         hydrateFeeAndSealStateFrom(await getSettings());
       }
 
+      // Cal OAuth binding (ciphertext) — same host only; best-effort after settings
+      let calRestored = false;
+      if (calHostBinding && isCalHostMode()) {
+        try {
+          const s = await getSettings();
+          if (s.zoComputerToken?.trim()) {
+            await restoreCalOAuthBinding(calHostBinding, s.zoComputerToken);
+            calRestored = true;
+          }
+        } catch (err) {
+          console.warn('Cal OAuth binding restore skipped', err);
+        }
+      }
+
       toast({
         title: 'Import complete',
         description: `Format v${detectedVersion}: imported ${imported}, skipped ${skipped} duplicates`
           + (restamped ? ', chain restamped' : '')
           + (settingsRestored ? ', settings restored' : '')
+          + (calRestored ? ', Cal.com connection restored' : '')
           + '.',
       });
       const all = await getAllEntries();
@@ -808,11 +850,25 @@ export function Settings() {
         hydrateFeeAndSealStateFrom(await getSettings());
       }
 
+      let calRestored = false;
+      if (parsed.calHostBinding && isCalHostMode()) {
+        try {
+          const s = await getSettings();
+          if (s.zoComputerToken?.trim()) {
+            await restoreCalOAuthBinding(parsed.calHostBinding, s.zoComputerToken);
+            calRestored = true;
+          }
+        } catch (err) {
+          console.warn('Cal OAuth binding restore skipped', err);
+        }
+      }
+
       toast({
         title: 'Zo restore complete',
         description: `Imported ${imported} entries. Skipped ${skipped} duplicates`
           + (restamped ? ', chain restamped' : '')
           + (settingsRestored ? ', settings restored' : '')
+          + (calRestored ? ', Cal.com connection restored' : '')
           + '.',
       });
       setSelectedZoFile(null);
@@ -959,11 +1015,26 @@ export function Settings() {
         hydrateFeeAndSealStateFrom(await getSettings());
       }
 
+      let calRestored = false;
+      const driveBinding = (payload as { calHostBinding?: import('@/lib/export').CalHostBinding | null }).calHostBinding;
+      if (driveBinding && isCalHostMode()) {
+        try {
+          const s = await getSettings();
+          if (s.zoComputerToken?.trim()) {
+            await restoreCalOAuthBinding(driveBinding, s.zoComputerToken);
+            calRestored = true;
+          }
+        } catch (err) {
+          console.warn('Cal OAuth binding restore skipped', err);
+        }
+      }
+
       toast({
         title: 'Restore complete',
         description: `Imported ${imported} entries. Skipped ${skipped} duplicates`
           + (restamped ? ', chain restamped' : '')
           + (settingsRestored ? ', settings restored' : '')
+          + (calRestored ? ', Cal.com connection restored' : '')
           + '.',
       });
       setSelectedFile(null);
@@ -2447,17 +2518,20 @@ export function Settings() {
                     onClick={async () => {
                       setWiping(true);
                       try {
-                        await wipeAllLocalData();
-                        // Hard reload so App.tsx re-runs init against the fresh DB.
-                        window.location.replace(import.meta.env.BASE_URL || '/');
+                        // Cap wipe so UI never freezes if IDB hangs
+                        await Promise.race([
+                          wipeAllLocalData(),
+                          new Promise<void>((resolve) =>
+                            window.setTimeout(resolve, 6000),
+                          ),
+                        ]);
                       } catch (err) {
-                        setWiping(false);
-                        toast({
-                          title: 'Could not reset',
-                          description: err instanceof Error ? err.message : 'Unknown error',
-                          variant: 'destructive',
-                        });
+                        console.warn('wipe incomplete', err);
                       }
+                      // Always hard-reload with cache buster so splash/init runs clean
+                      const base = import.meta.env.BASE_URL || '/';
+                      const url = `${base}${base.includes('?') ? '&' : '?'}reset=${Date.now()}`;
+                      window.location.replace(url);
                     }}
                     data-testid="button-confirm-reset"
                   >

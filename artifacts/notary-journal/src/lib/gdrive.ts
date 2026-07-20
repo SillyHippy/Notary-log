@@ -324,17 +324,28 @@ export interface BackupPayload {
   exportedAt: string;
   entries: JournalEntry[];
   settings: NotarySettings;
+  /** Optional Cal OAuth ciphertext for same-host phone transfer */
+  calHostBinding?: import('./export').CalHostBinding | null;
 }
 
 export async function backupToDrive(entries: JournalEntry[], settings: NotarySettings): Promise<string> {
   const token = await getValidToken();
   const folderId = await getOrCreateFolder(token);
 
+  let calHostBinding: import('./export').CalHostBinding | null = null;
+  try {
+    const { fetchCalOAuthBinding } = await import('./cal-api');
+    calHostBinding = await fetchCalOAuthBinding(settings.zoComputerToken);
+  } catch {
+    /* ignore */
+  }
+
   const payload: BackupPayload = {
     version: 2,
     exportedAt: new Date().toISOString(),
     entries,
     settings,
+    ...(calHostBinding ? { calHostBinding } : {}),
   };
   const content = JSON.stringify(payload, null, 2);
 
@@ -436,6 +447,7 @@ export async function restoreFromDrive(fileId: string): Promise<BackupPayload & 
     exportedAt: new Date().toISOString(),
     entries: parsed.entries as JournalEntry[],
     settings: (parsed.settings as NotarySettings) ?? ({} as NotarySettings),
+    calHostBinding: parsed.calHostBinding ?? null,
     detectedVersion: parsed.detectedVersion,
   };
 }

@@ -24,26 +24,29 @@ CREATE TABLE IF NOT EXISTS bookings (
   id TEXT PRIMARY KEY,
   user_token TEXT NOT NULL,
   cal_uid TEXT NOT NULL,
+  cal_booking_id INTEGER,
   status TEXT NOT NULL,
   title TEXT,
-  start_time TEXT,
+  start_time TEXT NOT NULL,
   end_time TEXT,
   attendee_name TEXT,
   attendee_email TEXT,
   attendee_phone TEXT,
   location TEXT,
-  notes TEXT,
-  fee TEXT,
-  payload_json TEXT,
+  price_cents INTEGER,
+  currency TEXT,
+  payload_json TEXT NOT NULL,
+  journal_linked_at TEXT,
+  dismissed_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT,
-  dismissed INTEGER DEFAULT 0,
   UNIQUE(user_token, cal_uid),
   FOREIGN KEY (user_token) REFERENCES users(token)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bookings_user_start ON bookings(user_token, start_time);
-CREATE INDEX IF NOT EXISTS idx_bookings_user_status ON bookings(user_token, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slug ON users(slug) WHERE slug IS NOT NULL AND slug != '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cal_username ON users(cal_username) WHERE cal_username IS NOT NULL AND cal_username != '';
 
 -- OAuth columns (Phase 1+ — optional until Connect Cal ships)
 -- ALTER TABLE users ADD COLUMN cal_oauth_access_token_enc TEXT;

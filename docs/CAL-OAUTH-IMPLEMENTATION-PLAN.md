@@ -1,6 +1,6 @@
 # Cal.com OAuth Integration — Implementation Plan (Harder Path)
 
-**Status:** Phase 0 **complete** (OAuth client registered 2026-07-19, **pending Cal admin approval**). Phase 1+ **do not implement until Joseph says go** after approval email.  
+**Status:** Phase 0 **complete** (OAuth client registered 2026-07-19, **approved 2026-07-20**). Phase 1–2 **implemented on Zo cal host** (`notary-log-cal` :3003) — start/callback/status/disconnect + Connect button. Do **not** push to GitHub / public Worker until Joseph says so.  
 **Prerequisite met (2026-07-19):** Cal embed multi-tenant MVP is live on `notary-log-cal` (:3003) — paste-link + shared webhook + slug=Cal username + auto token.
 
 | OAuth registration | Value |
@@ -9,7 +9,7 @@
 | Credentials file | `/root/.hermes/secrets/notary-log-cal-oauth.env` (agent-only, not committed) |
 | Redirect URI | `https://notary-log-cal-sillyhippy.zocomputer.io/api/cal/oauth/callback` |
 | Scopes | `PROFILE_READ EVENT_TYPE_READ BOOKING_READ WEBHOOK_READ WEBHOOK_WRITE` |
-| Approval | **Pending** — wait for Cal email before Phase 1 |  
+| Approval | **Approved** 2026-07-20 |  
 **Resume phrase:**  
 `Implement Cal OAuth per docs/CAL-OAUTH-IMPLEMENTATION-PLAN.md — Phase N Task T`
 

@@ -1,17 +1,14 @@
 /**
- * Cal.com multi-tenant booking APIs for Notary-log cal host.
- * Isolation: bookings scoped by user_token.
- * Shared webhook: POST /api/cal/webhook routes by unique Cal username
- * (Cal.com usernames are globally unique — no two people share cal.com/same-name).
+ * Cal.com multi-tenant booking APIs for Cloudflare Worker + D1.
+ * Port of server/cal-routes.ts — same business rules as Zo cal host.
  */
-import type { Database } from "bun:sqlite";
-import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
-import { join } from "node:path";
-import { mkdir } from "node:fs/promises";
-import {
-  handleCalOAuthRoutes,
-  migrateOAuthSchema,
-} from "./cal-oauth";
+import { verifyCalHmac } from "./cal-crypto";
+
+export type CalEnv = {
+  CAL_DB: D1Database;
+  CAL_WEBHOOK_SECRET?: string;
+  CAL_ENABLED?: string;
+};
 
 export type ZoUser = { id: string; name: string; email: string };
 
@@ -50,7 +47,8 @@ function json(data: unknown, init: ResponseInit = {}) {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...init.headers,
+      ...corsHeaders(),
+      ...(init.headers as Record<string, string> | undefined),
     },
   });
 }
@@ -64,62 +62,6 @@ function corsHeaders() {
   };
 }
 
-export function migrateCalSchema(db: Database): void {
-  const cols = db
-    .query(`PRAGMA table_info(users)`)
-    .all() as Array<{ name: string }>;
-  const have = new Set(cols.map((c) => c.name));
-  const add = (name: string, def: string) => {
-    if (!have.has(name)) {
-      db.run(`ALTER TABLE users ADD COLUMN ${name} ${def}`);
-    }
-  };
-  add("slug", "TEXT");
-  add("cal_booking_url", "TEXT");
-  add("cal_username", "TEXT");
-  add("cal_event_slug", "TEXT");
-  add("cal_webhook_secret", "TEXT");
-  add("display_name", "TEXT");
-  add("updated_at", "TEXT");
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS bookings (
-      id TEXT PRIMARY KEY,
-      user_token TEXT NOT NULL,
-      cal_uid TEXT NOT NULL,
-      cal_booking_id INTEGER,
-      status TEXT NOT NULL,
-      title TEXT,
-      start_time TEXT NOT NULL,
-      end_time TEXT,
-      attendee_name TEXT,
-      attendee_email TEXT,
-      attendee_phone TEXT,
-      location TEXT,
-      price_cents INTEGER,
-      currency TEXT,
-      payload_json TEXT NOT NULL,
-      journal_linked_at TEXT,
-      dismissed_at TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME,
-      UNIQUE(user_token, cal_uid),
-      FOREIGN KEY (user_token) REFERENCES users(token)
-    )
-  `);
-  db.run(
-    `CREATE INDEX IF NOT EXISTS idx_bookings_user_start ON bookings(user_token, start_time)`,
-  );
-  db.run(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slug ON users(slug) WHERE slug IS NOT NULL AND slug != ''`,
-  );
-  db.run(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cal_username ON users(cal_username) WHERE cal_username IS NOT NULL AND cal_username != ''`,
-  );
-
-  migrateOAuthSchema(db);
-}
-
 export function isValidSlug(slug: string): boolean {
   if (!slug || slug.length < 2 || slug.length > 48) return false;
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(slug)) return false;
@@ -131,13 +73,11 @@ export function parseCalBookingUrl(input: string): {
   calLink: string;
   username?: string;
   eventSlug?: string;
-  /** Canonical https://cal.com/... URL for storage / open-in-cal */
   bookingUrl: string;
 } | null {
   const raw = input.trim();
   if (!raw) return null;
 
-  // Bare username: your-cal-username
   if (/^[a-zA-Z0-9]([a-zA-Z0-9._+-]*[a-zA-Z0-9])?$/.test(raw) && !raw.includes("/")) {
     const username = raw.toLowerCase();
     return {
@@ -147,14 +87,12 @@ export function parseCalBookingUrl(input: string): {
     };
   }
 
-  // cal.com/user or cal.com/user/event (no scheme)
   let candidate = raw;
   if (!/^https?:\/\//i.test(candidate)) {
     candidate = candidate.replace(/^\/+/, "");
     if (/^(www\.)?cal\.com\//i.test(candidate) || /^app\.cal\.com\//i.test(candidate)) {
       candidate = `https://${candidate}`;
     } else if (/^[a-zA-Z0-9._+-]+(\/[a-zA-Z0-9._+-]+)?$/.test(candidate)) {
-      // user or user/event
       candidate = `https://cal.com/${candidate}`;
     } else {
       return null;
@@ -165,7 +103,6 @@ export function parseCalBookingUrl(input: string): {
     const u = new URL(candidate);
     const host = u.hostname.replace(/^www\./, "");
     if (host !== "cal.com" && host !== "app.cal.com") return null;
-    // allow http → normalize to https
     const parts = u.pathname.split("/").filter(Boolean);
     if (parts.length < 1) return null;
     const username = parts[0];
@@ -200,35 +137,23 @@ function getNotaryToken(request: Request, url: URL): string {
   return (url.searchParams.get("key") || "").trim();
 }
 
-function validateToken(db: Database, token: string): ZoUser | null {
+async function validateToken(
+  env: CalEnv,
+  token: string,
+): Promise<ZoUser | null> {
   if (!token) return null;
-  const row = db
-    .query("SELECT id, name, email FROM users WHERE token = ?")
-    .get(token) as ZoUser | null;
+  const row = await env.CAL_DB.prepare(
+    "SELECT id, name, email FROM users WHERE token = ?",
+  )
+    .bind(token)
+    .first<ZoUser>();
   return row ?? null;
 }
 
-function verifyCalHmac(
-  rawBody: string,
-  signature: string | null,
-  secret: string,
-): boolean {
-  if (!secret) {
-    return process.env.CAL_WEBHOOK_ALLOW_INSECURE === "1";
-  }
-  if (!signature) return false;
-  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
-  const a = Buffer.from(expected, "utf8");
-  const b = Buffer.from(signature.trim(), "utf8");
-  if (a.length !== b.length) return false;
-  try {
-    return timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
+function getPlatformWebhookSecret(env: CalEnv): string {
+  return env.CAL_WEBHOOK_SECRET?.trim() || "";
 }
 
-/** Prefer HTTPS behind Zo reverse proxy (x-forwarded-* often missing). */
 export function requestOrigin(request: Request, url: URL): string {
   const proto =
     request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ||
@@ -242,35 +167,11 @@ export function requestOrigin(request: Request, url: URL): string {
   return `${proto}://${host}`;
 }
 
-/** One shared secret for all notaries (Cal usernames route the event). */
-export async function getPlatformWebhookSecret(): Promise<string> {
-  const fromEnv = process.env.CAL_WEBHOOK_SECRET?.trim();
-  if (fromEnv) return fromEnv;
-  const dir = process.env.JOURNAL_DIR?.trim() || "./Documents/Notary Journal";
-  await mkdir(dir, { recursive: true });
-  const filePath = join(dir, ".cal-platform-webhook-secret");
-  const f = Bun.file(filePath);
-  if (await f.exists()) {
-    const existing = (await f.text()).trim();
-    if (existing) return existing;
-  }
-  const generated = randomBytes(32).toString("hex");
-  await Bun.write(filePath, `${generated}\n`);
-  console.log(
-    `Cal platform webhook secret created (all notaries use the same URL+secret): ${filePath}`,
-  );
-  return generated;
-}
-
 function extractOrganizerUsername(
   payload: Record<string, unknown>,
 ): string | null {
   const org = payload.organizer as Record<string, unknown> | undefined;
   if (org) {
-    const u =
-      org.username ||
-      org.usernameInOrg ||
-      (typeof org.email === "string" ? null : null);
     if (typeof org.username === "string" && org.username.trim()) {
       return org.username.trim().toLowerCase();
     }
@@ -278,35 +179,63 @@ function extractOrganizerUsername(
       return org.usernameInOrg.trim().toLowerCase();
     }
   }
-  // type field sometimes holds event slug only; bookerUrl not useful
-  // metadata / userFields — skip
   return null;
 }
 
-function findUserTokenByCalUsername(
-  db: Database,
+async function findUserTokenByCalUsername(
+  env: CalEnv,
   username: string,
-): string | null {
+): Promise<string | null> {
   const uname = username.toLowerCase();
-  const row = db
-    .query(
-      `SELECT token FROM users
-       WHERE lower(cal_username) = ?
-          OR lower(cal_booking_url) LIKE ?
-          OR lower(slug) = ?
-       LIMIT 1`,
-    )
-    .get(uname, `%cal.com/${uname}%`, uname) as { token: string } | null;
+  const row = await env.CAL_DB.prepare(
+    `SELECT token FROM users
+     WHERE lower(cal_username) = ?
+        OR lower(cal_booking_url) LIKE ?
+        OR lower(slug) = ?
+     LIMIT 1`,
+  )
+    .bind(uname, `%cal.com/${uname}%`, uname)
+    .first<{ token: string }>();
   return row?.token ?? null;
 }
 
-function upsertBookingFromPayload(
-  db: Database,
+function extractAttendee(payload: Record<string, unknown>) {
+  const attendees = payload.attendees as
+    | Array<Record<string, unknown>>
+    | undefined;
+  const first = attendees?.[0] || {};
+  const responses = (payload.responses || {}) as Record<
+    string,
+    { value?: unknown }
+  >;
+  const name =
+    String(first.name || responses.name?.value || "").trim() || null;
+  const email =
+    String(first.email || responses.email?.value || "").trim() || null;
+  const phone = first.phoneNumber
+    ? String(first.phoneNumber)
+    : responses.attendeePhoneNumber?.value
+      ? String(responses.attendeePhoneNumber.value)
+      : null;
+  return { name, email, phone };
+}
+
+function priceCents(payload: Record<string, unknown>): number | null {
+  const p = payload.price;
+  if (typeof p === "number" && Number.isFinite(p)) {
+    if (Number.isInteger(p) && p >= 100) return p;
+    return Math.round(p * 100);
+  }
+  return null;
+}
+
+async function upsertBookingFromPayload(
+  env: CalEnv,
   token: string,
   trigger: string,
   payload: Record<string, unknown>,
   rawBody: string,
-): { id: string; created: boolean } | { error: string; status: number } {
+): Promise<{ id: string; created: boolean } | { error: string; status: number }> {
   const calUid = String(payload.uid || "").trim();
   if (!calUid) {
     return { error: "Missing booking uid", status: 400 };
@@ -319,7 +248,6 @@ function upsertBookingFromPayload(
   else if (triggerUpper.includes("REJECT")) status = "REJECTED";
   else if (triggerUpper.includes("RESCHEDULE")) status = "ACCEPTED";
   else if (triggerUpper.includes("PAID")) status = status || "ACCEPTED";
-  // Cal sends requiresConfirmation on event types that need host approval
   if (
     payload.requiresConfirmation === true &&
     status !== "CANCELLED" &&
@@ -349,21 +277,22 @@ function upsertBookingFromPayload(
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
 
-  const existing = db
-    .query(
-      `SELECT id FROM bookings WHERE user_token = ? AND cal_uid = ? LIMIT 1`,
-    )
-    .get(token, calUid) as { id: string } | null;
+  const existing = await env.CAL_DB.prepare(
+    `SELECT id FROM bookings WHERE user_token = ? AND cal_uid = ? LIMIT 1`,
+  )
+    .bind(token, calUid)
+    .first<{ id: string }>();
 
   if (existing) {
-    db.run(
+    await env.CAL_DB.prepare(
       `UPDATE bookings SET
         status = ?, title = ?, start_time = ?, end_time = ?,
         attendee_name = ?, attendee_email = ?, attendee_phone = ?,
         location = ?, price_cents = ?, currency = ?, cal_booking_id = ?,
         payload_json = ?, updated_at = ?
        WHERE id = ? AND user_token = ?`,
-      [
+    )
+      .bind(
         status,
         title,
         startTime,
@@ -379,18 +308,19 @@ function upsertBookingFromPayload(
         now,
         existing.id,
         token,
-      ],
-    );
+      )
+      .run();
     return { id: existing.id, created: false };
   }
 
-  db.run(
+  await env.CAL_DB.prepare(
     `INSERT INTO bookings (
       id, user_token, cal_uid, cal_booking_id, status, title,
       start_time, end_time, attendee_name, attendee_email, attendee_phone,
-      location, price_cents, currency, payload_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
+      location, price_cents, currency, payload_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
       id,
       token,
       calUid,
@@ -407,72 +337,40 @@ function upsertBookingFromPayload(
       currency,
       rawBody,
       now,
-    ],
-  );
+      now,
+    )
+    .run();
   return { id, created: true };
-}
-
-function extractAttendee(payload: Record<string, unknown>) {
-  const attendees = payload.attendees as
-    | Array<Record<string, unknown>>
-    | undefined;
-  const first = attendees?.[0] || {};
-  const responses = (payload.responses || {}) as Record<
-    string,
-    { value?: unknown }
-  >;
-  const name =
-    String(first.name || responses.name?.value || "").trim() || null;
-  const email =
-    String(first.email || responses.email?.value || "").trim() || null;
-  const phone = first.phoneNumber
-    ? String(first.phoneNumber)
-    : responses.attendeePhoneNumber?.value
-      ? String(responses.attendeePhoneNumber.value)
-      : null;
-  return { name, email, phone };
-}
-
-function priceCents(payload: Record<string, unknown>): number | null {
-  const p = payload.price;
-  if (typeof p === "number" && Number.isFinite(p)) {
-    // Cal may send dollars or cents; if small integer treat as dollars*100 when < 1000 and has decimals... use dollars*100 if price looks like dollars
-    if (Number.isInteger(p) && p >= 100) return p; // already cents-ish
-    return Math.round(p * 100);
-  }
-  return null;
 }
 
 export async function handleCalRoutes(
   request: Request,
   url: URL,
-  db: Database,
+  env: CalEnv,
 ): Promise<Response | null> {
+  if (!env.CAL_DB) return null;
+
   const path = url.pathname;
   const headers = corsHeaders();
-
-  // OAuth first (includes its own OPTIONS)
-  const oauthRes = await handleCalOAuthRoutes(request, url, db);
-  if (oauthRes) return oauthRes;
 
   if (request.method === "OPTIONS" && path.startsWith("/api/")) {
     if (
       path.startsWith("/api/book") ||
       path.startsWith("/api/cal") ||
       path.startsWith("/api/me") ||
-      path.startsWith("/api/me/cal") ||
       path.startsWith("/api/bookings") ||
-      path.startsWith("/api/notary/register")
+      path.startsWith("/api/notary/register") ||
+      path === "/api/health" ||
+      path === "/api/bootstrap"
     ) {
       return new Response(null, { status: 204, headers });
     }
   }
 
-  // GET /api/cal/platform — shared webhook URL + secret (no auth)
   if (path === "/api/cal/platform" && request.method === "GET") {
     const origin = requestOrigin(request, url);
     const webhookPath = "/api/cal/webhook";
-    const platformSecret = await getPlatformWebhookSecret();
+    const platformSecret = getPlatformWebhookSecret(env);
     return json(
       {
         webhookPath,
@@ -485,25 +383,24 @@ export async function handleCalRoutes(
     );
   }
 
-  // GET /api/book/:slug
   const bookMatch = path.match(/^\/api\/book\/([^/]+)$/);
   if (bookMatch && request.method === "GET") {
     const slug = decodeURIComponent(bookMatch[1]).toLowerCase();
     if (!isValidSlug(slug)) {
       return json({ error: "Invalid slug" }, { status: 400, headers });
     }
-    const row = db
-      .query(
-        `SELECT name, display_name, cal_booking_url, cal_username, cal_event_slug
-         FROM users WHERE lower(slug) = ? LIMIT 1`,
-      )
-      .get(slug) as {
-      name: string;
-      display_name: string | null;
-      cal_booking_url: string | null;
-      cal_username: string | null;
-      cal_event_slug: string | null;
-    } | null;
+    const row = await env.CAL_DB.prepare(
+      `SELECT name, display_name, cal_booking_url, cal_username, cal_event_slug
+       FROM users WHERE lower(slug) = ? LIMIT 1`,
+    )
+      .bind(slug)
+      .first<{
+        name: string;
+        display_name: string | null;
+        cal_booking_url: string | null;
+        cal_username: string | null;
+        cal_event_slug: string | null;
+      }>();
     if (!row?.cal_booking_url) {
       return json({ error: "Not found" }, { status: 404, headers });
     }
@@ -523,20 +420,18 @@ export async function handleCalRoutes(
     );
   }
 
-  // GET /api/me — lightweight token check (no Cal config required)
   if (path === "/api/me" && request.method === "GET") {
     const token = getNotaryToken(request, url);
-    const user = validateToken(db, token);
+    const user = await validateToken(env, token);
     if (!user) {
       return json({ error: "Unauthorized" }, { status: 401, headers });
     }
     return json({ ok: true, name: user.name, email: user.email }, { headers });
   }
 
-  // PATCH /api/me/cal
   if (path === "/api/me/cal" && request.method === "PATCH") {
     const token = getNotaryToken(request, url);
-    const user = validateToken(db, token);
+    const user = await validateToken(env, token);
     if (!user) {
       return json({ error: "Unauthorized" }, { status: 401, headers });
     }
@@ -565,7 +460,6 @@ export async function handleCalRoutes(
         updates.push("cal_booking_url = NULL");
         updates.push("cal_username = NULL");
         updates.push("cal_event_slug = NULL");
-        // Clearing Cal also clears public book page
         updates.push("slug = NULL");
       } else {
         parsedCal = parseCalBookingUrl(urlStr);
@@ -585,7 +479,6 @@ export async function handleCalRoutes(
         updates.push("cal_event_slug = ?");
         params.push(parsedCal.eventSlug || null);
 
-        // FORCE slug = Cal username (globally unique on Cal — no collisions).
         const forcedSlug = (parsedCal.username || "")
           .toLowerCase()
           .replace(/[^a-z0-9-]+/g, "-")
@@ -602,16 +495,15 @@ export async function handleCalRoutes(
           );
         }
         if (forcedSlug) {
-          const taken = db
-            .query(
-              `SELECT token FROM users WHERE lower(slug) = ? AND token != ? LIMIT 1`,
-            )
-            .get(forcedSlug, token) as { token: string } | null;
+          const taken = await env.CAL_DB.prepare(
+            `SELECT token FROM users WHERE lower(slug) = ? AND token != ? LIMIT 1`,
+          )
+            .bind(forcedSlug, token)
+            .first<{ token: string }>();
           if (taken) {
             return json(
               {
-                error:
-                  `Cal username "${parsedCal.username}" is already linked by another notary on this host.`,
+                error: `Cal username "${parsedCal.username}" is already linked by another notary on this host.`,
               },
               { status: 409, headers },
             );
@@ -640,69 +532,69 @@ export async function handleCalRoutes(
     params.push(new Date().toISOString());
     params.push(token);
 
-    db.run(
+    await env.CAL_DB.prepare(
       `UPDATE users SET ${updates.join(", ")} WHERE token = ?`,
-      params as never[],
-    );
+    )
+      .bind(...params)
+      .run();
 
-    const row = db
-      .query(
-        `SELECT slug, cal_booking_url, cal_webhook_secret, display_name, name, cal_username
-         FROM users WHERE token = ?`,
-      )
-      .get(token) as {
-      slug: string | null;
-      cal_booking_url: string | null;
-      cal_webhook_secret: string | null;
-      display_name: string | null;
-      name: string;
-      cal_username: string | null;
-    };
+    const row = await env.CAL_DB.prepare(
+      `SELECT slug, cal_booking_url, cal_webhook_secret, display_name, name, cal_username
+       FROM users WHERE token = ?`,
+    )
+      .bind(token)
+      .first<{
+        slug: string | null;
+        cal_booking_url: string | null;
+        cal_webhook_secret: string | null;
+        display_name: string | null;
+        name: string;
+        cal_username: string | null;
+      }>();
 
     return json(
       {
         ok: true,
-        slug: row.slug,
-        calBookingUrl: row.cal_booking_url,
-        calUsername: row.cal_username,
-        displayName: row.display_name || row.name,
+        slug: row?.slug,
+        calBookingUrl: row?.cal_booking_url,
+        calUsername: row?.cal_username,
+        displayName: row?.display_name || row?.name,
         hasWebhookSecret: true,
         webhookPath: `/api/cal/webhook`,
         webhookUrlHint:
           "Same URL + secret for every notary. Cal routes by your unique Cal username.",
-        platformWebhookSecret: await getPlatformWebhookSecret(),
+        platformWebhookSecret: getPlatformWebhookSecret(env),
       },
       { headers },
     );
   }
 
-  // GET /api/me/cal
   if (path === "/api/me/cal" && request.method === "GET") {
     const token = getNotaryToken(request, url);
-    const user = validateToken(db, token);
+    const user = await validateToken(env, token);
     if (!user) {
       return json({ error: "Unauthorized" }, { status: 401, headers });
     }
-    const row = db
-      .query(
-        `SELECT slug, cal_booking_url, cal_webhook_secret, display_name, name, cal_username
-         FROM users WHERE token = ?`,
-      )
-      .get(token) as {
-      slug: string | null;
-      cal_booking_url: string | null;
-      cal_webhook_secret: string | null;
-      display_name: string | null;
-      name: string;
-      cal_username: string | null;
-    };
-    const platformSecret = await getPlatformWebhookSecret();
+    const row = await env.CAL_DB.prepare(
+      `SELECT slug, cal_booking_url, cal_webhook_secret, display_name, name, cal_username
+       FROM users WHERE token = ?`,
+    )
+      .bind(token)
+      .first<{
+        slug: string | null;
+        cal_booking_url: string | null;
+        cal_webhook_secret: string | null;
+        display_name: string | null;
+        name: string;
+        cal_username: string | null;
+      }>();
+    const platformSecret = getPlatformWebhookSecret(env);
     return json(
       {
-        slug: row.slug,
-        calBookingUrl: row.cal_booking_url,
-        calUsername: row.cal_username,
-        displayName: row.display_name || row.name,
+        slug: row?.slug,
+        calBookingUrl: row?.cal_booking_url,
+        calUsername: row?.cal_username,
+        displayName: row?.display_name || row?.name,
         hasWebhookSecret: true,
         webhookPath: `/api/cal/webhook`,
         platformWebhookSecret: platformSecret,
@@ -713,7 +605,6 @@ export async function handleCalRoutes(
     );
   }
 
-  // POST /api/cal/webhook — SHARED for all notaries; route by Cal organizer username
   if (path === "/api/cal/webhook" && request.method === "POST") {
     if (!rateLimit("wh:shared", 300, 60_000)) {
       return json({ error: "Rate limit" }, { status: 429, headers });
@@ -739,7 +630,6 @@ export async function handleCalRoutes(
         ? envelope
         : {})) as Record<string, unknown>;
 
-    // Cal "Ping test" and other non-booking payloads — return 200 before signature gate
     const calUid = String(payload.uid || "").trim();
     const organizerUser = extractOrganizerUsername(payload);
     const isPingLike =
@@ -761,8 +651,9 @@ export async function handleCalRoutes(
     }
 
     const sig = request.headers.get("x-cal-signature-256");
-    const platformSecret = await getPlatformWebhookSecret();
-    if (!verifyCalHmac(rawBody, sig, platformSecret)) {
+    const platformSecret = getPlatformWebhookSecret(env);
+    const sigOk = await verifyCalHmac(rawBody, sig, platformSecret);
+    if (!sigOk) {
       return json({ error: "Invalid signature" }, { status: 401, headers });
     }
 
@@ -775,11 +666,8 @@ export async function handleCalRoutes(
         { status: 400, headers },
       );
     }
-    const token = findUserTokenByCalUsername(db, organizerUser);
-    if (!token) {
-      console.warn(
-        `[cal-webhook] No notary for organizer.username="${organizerUser}" — save that exact Cal username in Settings`,
-      );
+    const userToken = await findUserTokenByCalUsername(env, organizerUser);
+    if (!userToken) {
       return json(
         {
           error: `No notary linked to Cal username "${organizerUser}". In Notary-log Settings, paste that exact Cal username and Save.`,
@@ -788,9 +676,9 @@ export async function handleCalRoutes(
         { status: 404, headers },
       );
     }
-    const result = upsertBookingFromPayload(
-      db,
-      token,
+    const result = await upsertBookingFromPayload(
+      env,
+      userToken,
       trigger,
       payload,
       rawBody,
@@ -809,30 +697,33 @@ export async function handleCalRoutes(
     );
   }
 
-  // POST /api/cal/webhook/:token — legacy per-token URL (still works)
   const whMatch = path.match(/^\/api\/cal\/webhook\/([^/]+)$/);
   if (whMatch && request.method === "POST") {
     const token = decodeURIComponent(whMatch[1]);
     if (!rateLimit(`wh:${token}`, 120, 60_000)) {
       return json({ error: "Rate limit" }, { status: 429, headers });
     }
-    const user = validateToken(db, token);
+    const user = await validateToken(env, token);
     if (!user) {
       return json({ error: "Not found" }, { status: 404, headers });
     }
-    const row = db
-      .query(`SELECT cal_webhook_secret FROM users WHERE token = ?`)
-      .get(token) as { cal_webhook_secret: string | null };
+    const row = await env.CAL_DB.prepare(
+      `SELECT cal_webhook_secret FROM users WHERE token = ?`,
+    )
+      .bind(token)
+      .first<{ cal_webhook_secret: string | null }>();
     const rawBody = await request.text();
     if (rawBody.length > 512_000) {
       return json({ error: "Payload too large" }, { status: 413, headers });
     }
     const sig = request.headers.get("x-cal-signature-256");
-    const platformSecret = await getPlatformWebhookSecret();
-    const userSecret = row.cal_webhook_secret || "";
+    const platformSecret = getPlatformWebhookSecret(env);
+    const userSecret = row?.cal_webhook_secret || "";
     const okSig =
-      verifyCalHmac(rawBody, sig, platformSecret) ||
-      (userSecret ? verifyCalHmac(rawBody, sig, userSecret) : false);
+      (await verifyCalHmac(rawBody, sig, platformSecret)) ||
+      (userSecret
+        ? await verifyCalHmac(rawBody, sig, userSecret)
+        : false);
     if (!okSig) {
       return json({ error: "Invalid signature" }, { status: 401, headers });
     }
@@ -847,8 +738,8 @@ export async function handleCalRoutes(
     }
     const trigger = String(envelope.triggerEvent || "");
     const payload = (envelope.payload || envelope) as Record<string, unknown>;
-    const result = upsertBookingFromPayload(
-      db,
+    const result = await upsertBookingFromPayload(
+      env,
       token,
       trigger,
       payload,
@@ -863,10 +754,9 @@ export async function handleCalRoutes(
     );
   }
 
-  // GET /api/bookings
   if (path === "/api/bookings" && request.method === "GET") {
     const token = getNotaryToken(request, url);
-    if (!validateToken(db, token)) {
+    if (!(await validateToken(env, token))) {
       return json({ error: "Unauthorized" }, { status: 401, headers });
     }
     const status = url.searchParams.get("status");
@@ -884,70 +774,70 @@ export async function handleCalRoutes(
       params.push(status.toUpperCase());
     }
     sql += ` ORDER BY start_time ASC LIMIT 200`;
-    const rows = db.query(sql).all(...(params as never[]));
-    return json({ bookings: rows }, { headers });
+    const { results: rows } = await env.CAL_DB.prepare(sql)
+      .bind(...params)
+      .all();
+    return json({ bookings: rows || [] }, { headers });
   }
 
-  // GET /api/bookings/:id
   const bidMatch = path.match(/^\/api\/bookings\/([^/]+)$/);
   if (bidMatch && request.method === "GET") {
     const token = getNotaryToken(request, url);
-    if (!validateToken(db, token)) {
+    if (!(await validateToken(env, token))) {
       return json({ error: "Unauthorized" }, { status: 401, headers });
     }
     const id = decodeURIComponent(bidMatch[1]);
-    const row = db
-      .query(
-        `SELECT id, cal_uid, status, title, start_time, end_time,
-          attendee_name, attendee_email, attendee_phone, location,
-          price_cents, currency, journal_linked_at, dismissed_at, created_at,
-          payload_json
-         FROM bookings WHERE id = ? AND user_token = ?`,
-      )
-      .get(id, token);
+    const row = await env.CAL_DB.prepare(
+      `SELECT id, cal_uid, status, title, start_time, end_time,
+        attendee_name, attendee_email, attendee_phone, location,
+        price_cents, currency, journal_linked_at, dismissed_at, created_at,
+        payload_json
+       FROM bookings WHERE id = ? AND user_token = ?`,
+    )
+      .bind(id, token)
+      .first();
     if (!row) {
       return json({ error: "Not found" }, { status: 404, headers });
     }
     return json({ booking: row }, { headers });
   }
 
-  // POST /api/bookings/:id/dismiss
   const dismissMatch = path.match(/^\/api\/bookings\/([^/]+)\/dismiss$/);
   if (dismissMatch && request.method === "POST") {
     const token = getNotaryToken(request, url);
-    if (!validateToken(db, token)) {
+    if (!(await validateToken(env, token))) {
       return json({ error: "Unauthorized" }, { status: 401, headers });
     }
     const id = decodeURIComponent(dismissMatch[1]);
-    const r = db.run(
+    const r = await env.CAL_DB.prepare(
       `UPDATE bookings SET dismissed_at = ?, updated_at = ? WHERE id = ? AND user_token = ?`,
-      [new Date().toISOString(), new Date().toISOString(), id, token],
-    );
-    if (r.changes === 0) {
+    )
+      .bind(new Date().toISOString(), new Date().toISOString(), id, token)
+      .run();
+    if (!r.meta.changes) {
       return json({ error: "Not found" }, { status: 404, headers });
     }
     return json({ ok: true }, { headers });
   }
 
-  // POST /api/bookings/:id/journal-linked
   const jlMatch = path.match(/^\/api\/bookings\/([^/]+)\/journal-linked$/);
   if (jlMatch && request.method === "POST") {
     const token = getNotaryToken(request, url);
-    if (!validateToken(db, token)) {
+    if (!(await validateToken(env, token))) {
       return json({ error: "Unauthorized" }, { status: 401, headers });
     }
     const id = decodeURIComponent(jlMatch[1]);
-    const r = db.run(
+    const r = await env.CAL_DB.prepare(
       `UPDATE bookings SET journal_linked_at = ?, updated_at = ? WHERE id = ? AND user_token = ?`,
-      [new Date().toISOString(), new Date().toISOString(), id, token],
-    );
-    if (r.changes === 0) {
+    )
+      .bind(new Date().toISOString(), new Date().toISOString(), id, token)
+      .run();
+    if (!r.meta.changes) {
       return json({ error: "Not found" }, { status: 404, headers });
     }
     return json({ ok: true }, { headers });
   }
 
-  // POST /api/notary/register — create extra notary user (rate limited)
   if (path === "/api/notary/register" && request.method === "POST") {
     const ip =
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -961,7 +851,7 @@ export async function handleCalRoutes(
     } catch {
       /* empty ok */
     }
-    const token =
+    const newToken =
       crypto.randomUUID().replace(/-/g, "") +
       crypto.randomUUID().replace(/-/g, "");
     const id = crypto.randomUUID();
@@ -969,12 +859,43 @@ export async function handleCalRoutes(
     const email =
       String(body.email || "notary@localhost").trim().slice(0, 200) ||
       "notary@localhost";
-    db.run(
-      `INSERT INTO users (id, token, name, email) VALUES (?, ?, ?, ?)`,
-      [id, token, name, email],
+    const now = new Date().toISOString();
+    await env.CAL_DB.prepare(
+      `INSERT INTO users (id, token, name, email, created_at) VALUES (?, ?, ?, ?, ?)`,
+    )
+      .bind(id, newToken, name, email, now)
+      .run();
+    return json(
+      { ok: true, token: newToken, id, name, email },
+      { headers },
     );
-    return json({ ok: true, token, id, name, email }, { headers });
   }
 
   return null;
+}
+
+export async function handleCalHealth(
+  env: CalEnv,
+): Promise<Response> {
+  return json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    intake: "cloudflare-kv",
+    cal: true,
+    calHostMode: env.CAL_ENABLED === "1",
+  });
+}
+
+export async function handleCalBootstrap(env: CalEnv): Promise<Response> {
+  return json({
+    intakeToken: null,
+    calHostMode: env.CAL_ENABLED === "1",
+  });
+}
+
+/** Wipe users + bookings for verify script (staging only). */
+export async function handleCalVerifyReset(env: CalEnv): Promise<Response> {
+  await env.CAL_DB.prepare("DELETE FROM bookings").run();
+  await env.CAL_DB.prepare("DELETE FROM users").run();
+  return json({ ok: true, wiped: true });
 }

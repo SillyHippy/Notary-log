@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { handleCalRoutes, migrateCalSchema } from "./server/cal-routes";
+import { loadOAuthEncryptionKeyFromDisk } from "./server/cal-oauth";
 
 const PUBLIC_DIR = "./artifacts/notary-journal/dist/public";
 /** Isolated per-service data root. Cal host must use a different path than prod notary-log. */
@@ -665,6 +666,7 @@ async function handleBootstrap() {
 /* ── Server ─────────────────────────────────────────────────────── */
 
 await mkdir(JOURNAL_DIR, { recursive: true });
+await loadOAuthEncryptionKeyFromDisk();
 const db = initDatabase();
 const INTAKE_TOKEN_FILE = join(JOURNAL_DIR, ".zo-intake-token");
 
@@ -748,7 +750,27 @@ const server = Bun.serve({
       const file = Bun.file(filePath);
 
       if (await file.exists()) {
-        return new Response(file);
+        const headers = new Headers();
+        // Prevent Cloudflare/browser from serving stale SW or HTML after deploys
+        if (
+          path === "/sw.js" ||
+          path === "/index.html" ||
+          path === "/offline.html" ||
+          path === "/manifest.json"
+        ) {
+          headers.set(
+            "Cache-Control",
+            "no-cache, no-store, must-revalidate, max-age=0",
+          );
+          headers.set("CDN-Cache-Control", "no-store");
+          headers.set("Cloudflare-CDN-Cache-Control", "no-store");
+        } else if (path.startsWith("/assets/")) {
+          headers.set(
+            "Cache-Control",
+            "public, max-age=31536000, immutable",
+          );
+        }
+        return new Response(file, { headers });
       }
     } catch (error) {
       console.error("File error:", error);
@@ -756,7 +778,12 @@ const server = Bun.serve({
 
     const indexFile = Bun.file(`${PUBLIC_DIR}/index.html`);
     return new Response(indexFile, {
-      headers: { "Content-Type": "text/html" },
+      headers: {
+        "Content-Type": "text/html",
+        "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+        "CDN-Cache-Control": "no-store",
+        "Cloudflare-CDN-Cache-Control": "no-store",
+      },
     });
   },
 });

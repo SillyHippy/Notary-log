@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { getAllEntries, getSettings } from '@/lib/db';
 import { exportAllCSV, exportAllJSON, exportAllPDF, exportJournalTablePDF } from '@/lib/export';
+import { fetchCalOAuthBinding } from '@/lib/cal-api';
 import { useToast } from '@/hooks/use-toast';
 
 export function useJournalExport() {
@@ -20,7 +21,14 @@ export function useJournalExport() {
   const handleExportJSON = useCallback(async () => {
     const entries = await getAllEntries();
     const settings = await getSettings();
-    exportAllJSON(entries, settings);
+    // Include Cal OAuth ciphertext binding when on a cal host (best-effort)
+    let binding = null;
+    try {
+      binding = await fetchCalOAuthBinding(settings.zoComputerToken);
+    } catch {
+      /* non-cal host or offline */
+    }
+    exportAllJSON(entries, settings, binding);
   }, []);
 
   const handlePrintJournal = useCallback(async () => {

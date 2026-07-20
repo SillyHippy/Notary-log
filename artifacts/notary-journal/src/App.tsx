@@ -98,10 +98,37 @@ function App() {
   const isPublic = useIsPublicRoute();
 
   useEffect(() => {
+    let finished = false;
     const finishInit = (next: AppMode) => {
+      if (finished) return;
+      finished = true;
       dismissSplash();
       setMode(next);
     };
+
+    // Hard ceiling: never leave the static HTML splash forever (IDB hang after wipe).
+    const safety = window.setTimeout(() => {
+      console.warn('App init timed out — forcing PIN setup');
+      finishInit('setup');
+    }, 6000);
+
+    const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+      new Promise((resolve, reject) => {
+        const t = window.setTimeout(
+          () => reject(new Error(`${label} timed out after ${ms}ms`)),
+          ms,
+        );
+        p.then(
+          (v) => {
+            window.clearTimeout(t);
+            resolve(v);
+          },
+          (e) => {
+            window.clearTimeout(t);
+            reject(e);
+          },
+        );
+      });
 
     (async () => {
       try {
@@ -109,16 +136,21 @@ function App() {
         const dark = getDarkModePref();
         document.documentElement.classList.toggle('dark', dark);
 
-        if (await hasCryptoSetup()) {
+        const hasCrypto = await withTimeout(hasCryptoSetup(), 4000, 'hasCryptoSetup');
+        if (hasCrypto) {
           // Try to restore the in-memory key from sessionStorage so a tab
           // refresh / Vite HMR full-reload doesn't drop the user back to
           // the PIN screen. The cache is bound to the tab's lifetime and
           // expires after a sliding idle timeout — see `db.ts`.
-          const restored = await tryRestoreFromSessionCache();
+          const restored = await withTimeout(
+            tryRestoreFromSessionCache(),
+            3000,
+            'tryRestoreFromSessionCache',
+          );
           finishInit(restored ? 'unlocked' : 'locked');
         } else {
           // Look at legacy plaintext data to tailor the setup copy
-          const legacy = await inspectLegacy();
+          const legacy = await withTimeout(inspectLegacy(), 3000, 'inspectLegacy');
           // If they had darkMode in legacy plaintext settings, mirror it now
           if (legacy.entryCount > 0 && legacy.darkMode) {
             document.documentElement.classList.add('dark');
@@ -131,8 +163,14 @@ function App() {
         console.error("Failed to initialize app", err);
         // Fail open to setup so the user is never locked out of a fresh install
         finishInit('setup');
+      } finally {
+        window.clearTimeout(safety);
       }
     })();
+
+    return () => {
+      window.clearTimeout(safety);
+    };
   }, []);
 
   // Self-heal "Database is locked" errors that can happen when the in-memory

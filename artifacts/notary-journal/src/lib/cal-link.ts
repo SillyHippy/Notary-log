@@ -84,13 +84,8 @@ export function slugFromCalUsername(username: string): string {
 
 export function isCalHostMode(): boolean {
   if (typeof window === 'undefined') return false;
+  if (import.meta.env.VITE_CAL_HOST_MODE === '1') return true;
   const host = window.location.hostname;
   if (host.includes('notary-log-cal')) return true;
-  if (
-    (host === 'localhost' || host === '127.0.0.1') &&
-    import.meta.env.VITE_CAL_HOST_MODE === '1'
-  ) {
-    return true;
-  }
   return false;
 }

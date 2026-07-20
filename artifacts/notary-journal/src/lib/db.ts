@@ -335,7 +335,7 @@ export async function tryRestoreFromSessionCache(): Promise<boolean> {
  */
 export function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
+    const opening = openDB(DB_NAME, DB_VERSION, {
       upgrade(db, _oldVersion, _newVersion, tx) {
         if (!db.objectStoreNames.contains('entries')) {
           const entryStore = db.createObjectStore('entries', { keyPath: 'id', autoIncrement: true });
@@ -359,8 +359,48 @@ export function getDB(): Promise<IDBPDatabase> {
         }
       },
     });
+
+    // Race open with a timeout. A hung openDB after wipe was caching forever
+    // and left the app on the splash screen.
+    const timed = new Promise<IDBPDatabase>((resolve, reject) => {
+      const t = setTimeout(() => {
+        reject(new Error('IndexedDB open timed out'));
+      }, 5000);
+      opening.then(
+        (db) => {
+          clearTimeout(t);
+          resolve(db);
+        },
+        (err) => {
+          clearTimeout(t);
+          reject(err);
+        },
+      );
+    });
+
+    dbPromise = timed.then(
+      (db) => {
+        try {
+          db.addEventListener('close', () => {
+            dbPromise = null;
+          });
+        } catch {
+          /* ignore */
+        }
+        return db;
+      },
+      (err) => {
+        dbPromise = null;
+        throw err;
+      },
+    );
   }
   return dbPromise;
+}
+
+/** Drop cached IDB open promise so the next getDB() opens fresh. */
+export function resetDBConnection(): void {
+  dbPromise = null;
 }
 
 // ── Lock state ─────────────────────────────────────────────────────────────
@@ -389,16 +429,33 @@ export async function wipeAllLocalData(): Promise<void> {
 
   // 2. Close the existing connection before deleting the DB; otherwise
   //    deleteDB blocks indefinitely waiting for "versionchange".
+  //    Cap wait — a hung getDB() must not block wipe.
   try {
-    const db = await getDB();
-    db.close();
+    const db = await Promise.race([
+      getDB(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+    ]);
+    if (db) db.close();
   } catch {
     // Ignore: a fresh install may not have an open DB yet.
   }
   dbPromise = null;
 
   // 3. Delete the IndexedDB database itself.
-  await deleteDB(DB_NAME);
+  // deleteDB can hang forever if another tab still holds a connection —
+  // race with a timeout so Clear Data never freezes the UI.
+  try {
+    await Promise.race([
+      deleteDB(DB_NAME),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('deleteDB timeout')), 3000),
+      ),
+    ]);
+  } catch (err) {
+    console.warn('deleteDB incomplete (will retry on next open):', err);
+  }
+  // Always force a clean open path after wipe
+  dbPromise = null;
 
   // 4. Clear any localStorage keys this app owns. Keep the list narrow so
   //    we don't nuke unrelated origin storage.
@@ -415,6 +472,25 @@ export async function wipeAllLocalData(): Promise<void> {
   }
   if (typeof sessionStorage !== 'undefined') {
     try { sessionStorage.clear(); } catch { /* ignore */ }
+  }
+
+  // 5. Unregister service workers so the next load isn't a poisoned cache
+  //    holding a half-wiped origin state.
+  try {
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
+    }
+  } catch {
+    /* non-fatal */
+  }
+  try {
+    if (typeof caches !== 'undefined') {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch {
+    /* non-fatal */
   }
 }
 

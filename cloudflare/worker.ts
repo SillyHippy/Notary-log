@@ -1,13 +1,25 @@
 export interface Env {
   ASSETS: Fetcher;
   INTAKE_KV?: KVNamespace;
+  CAL_DB?: D1Database;
+  CAL_WEBHOOK_SECRET?: string;
+  CAL_ENABLED?: string;
 }
+
+import {
+  handleCalRoutes,
+  handleCalHealth,
+  handleCalBootstrap,
+  handleCalVerifyReset,
+  type CalEnv,
+} from "./cal-handlers";
 
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "Content-Type, Authorization, X-Notary-Token",
   };
 }
 
@@ -75,7 +87,6 @@ async function handleIntake(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET") {
     const file = url.searchParams.get("file");
     if (file) {
-      // Return a single submission's contents
       const kvKey = `user:${accessKey}:${file}`;
       const raw = await env.INTAKE_KV.get(kvKey);
       if (!raw) {
@@ -83,7 +94,6 @@ async function handleIntake(request: Request, env: Env): Promise<Response> {
       }
       return jsonResponse(200, JSON.parse(raw));
     }
-    // List all submissions for this user
     const list = await env.INTAKE_KV.list({ prefix: `user:${accessKey}:` });
     const files = list.keys.map((k) => ({
       name: k.name.replace(`user:${accessKey}:`, ""),
@@ -96,10 +106,37 @@ async function handleIntake(request: Request, env: Env): Promise<Response> {
   return jsonResponse(405, { error: "Method not allowed" });
 }
 
+function calEnv(env: Env): CalEnv | null {
+  if (!env.CAL_DB) return null;
+  return {
+    CAL_DB: env.CAL_DB,
+    CAL_WEBHOOK_SECRET: env.CAL_WEBHOOK_SECRET,
+    CAL_ENABLED: env.CAL_ENABLED,
+  };
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+    const cal = calEnv(env);
+
+    if (path === "/api/health" && cal) {
+      return handleCalHealth(cal);
+    }
+
+    if (path === "/api/bootstrap" && cal) {
+      return handleCalBootstrap(cal);
+    }
+
+    if (path === "/api/cal/verify-reset" && cal && request.method === "POST") {
+      return handleCalVerifyReset(cal);
+    }
+
+    if (cal) {
+      const calResponse = await handleCalRoutes(request, url, cal);
+      if (calResponse) return calResponse;
+    }
 
     if (path === "/api/intake-webhook") {
       return handleIntakeWebhook(request, env);

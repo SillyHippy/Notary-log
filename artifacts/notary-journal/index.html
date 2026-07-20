@@ -60,6 +60,20 @@
       <p>Notary Journal</p>
     </div>
     <div id="root"></div>
+    <!-- Failsafe: if React never boots (stale SW / hung IDB), drop splash after 8s -->
+    <script>
+      (function () {
+        var done = false;
+        function kill() {
+          if (done) return;
+          done = true;
+          var el = document.getElementById('splash');
+          if (el) el.remove();
+        }
+        setTimeout(kill, 8000);
+        window.addEventListener('notary-splash-dismiss', kill);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

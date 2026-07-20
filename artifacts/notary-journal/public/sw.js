@@ -1,4 +1,4 @@
-const CACHE_NAME = 'notary-journal-v10';
+const CACHE_NAME = 'notary-journal-v11';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -34,6 +34,12 @@ self.addEventListener('fetch', event => {
 
   if (request.method !== 'GET') return;
 
+  // Never cache API — always network
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
   if (url.origin !== location.origin) {
     event.respondWith(
       fetch(request).catch(() => caches.match(request))
@@ -42,7 +48,7 @@ self.addEventListener('fetch', event => {
   }
 
   // Network-first for navigations / HTML so a bad deploy can't poison
-  // returning visitors with a stale shell. Cache-first for hashed assets.
+  // returning visitors with a stale shell.
   const isNavigation =
     request.mode === 'navigate' ||
     (request.destination === '' && request.headers.get('accept')?.includes('text/html'));
@@ -60,6 +66,25 @@ self.addEventListener('fetch', event => {
         .catch(async () => {
           const cached = await caches.match(request);
           return cached || caches.match('/index.html') || caches.match('/offline.html') || new Response('Offline', { status: 503 });
+        })
+    );
+    return;
+  }
+
+  // Hashed assets — network-first so deploys beat stale SW cache
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      fetch(request)
+        .then(response => {
+          if (response && response.status === 200 && response.type !== 'opaque') {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached = await caches.match(request);
+          return cached || new Response('Offline', { status: 503 });
         })
     );
     return;

@@ -21,10 +21,14 @@ import {
   ensureNotaryAccount,
   fetchCalPlatformConfig,
   getCalMe,
+  getCalOAuthStatus,
   patchCalMe,
   resolveWorkingNotaryToken,
+  startCalOAuth,
+  disconnectCalOAuth,
   verifyNotaryToken,
   type CalPlatformConfig,
+  type CalOAuthStatus,
 } from '@/lib/cal-api';
 import { getSettings, saveSettings } from '@/lib/db';
 
@@ -52,6 +56,8 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
   const [calUsername, setCalUsername] = useState('');
   const [bookSlug, setBookSlug] = useState('');
   const [platform, setPlatform] = useState<CalPlatformConfig | null>(null);
+  const [oauth, setOauth] = useState<CalOAuthStatus | null>(null);
+  const [oauthBusy, setOauthBusy] = useState(false);
 
   const copyText = useCallback(
     async (label: string, text: string) => {
@@ -83,6 +89,12 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
     setBookSlug(cal.slug || '');
     setCalInput(cal.calBookingUrl || cal.calUsername || '');
     setDisplayName(cal.displayName || '');
+    try {
+      const st = await getCalOAuthStatus(authToken);
+      setOauth(st);
+    } catch {
+      setOauth(null);
+    }
   }, []);
 
   const bootstrapAccount = useCallback(async () => {
@@ -91,7 +103,7 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
       const settings = await getSettings();
       const working = await resolveWorkingNotaryToken({
         name: settings.notaryName?.trim() || undefined,
-        email: settings.notaryEmail?.trim() || undefined,
+        email: (settings as { notaryEmail?: string }).notaryEmail?.trim() || undefined,
       });
       const ok = await verifyNotaryToken(working);
       if (!ok) {
@@ -111,13 +123,68 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
 
   useEffect(() => {
     let cancelled = false;
+    const safety = window.setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 10000);
+
     void (async () => {
       try {
-        const platformConfig = await fetchCalPlatformConfig();
+        const platformConfig = await Promise.race([
+          fetchCalPlatformConfig(),
+          new Promise<never>((_, rej) =>
+            window.setTimeout(() => rej(new Error('platform config timeout')), 5000),
+          ),
+        ]);
         if (cancelled) return;
         setPlatform(platformConfig);
-        await bootstrapAccount();
-        if (!cancelled) {
+        await Promise.race([
+          bootstrapAccount(),
+          new Promise<never>((_, rej) =>
+            window.setTimeout(() => rej(new Error('account bootstrap timeout')), 8000),
+          ),
+        ]);
+        // Surface OAuth callback result from Cal redirect
+        const params = new URLSearchParams(window.location.search);
+        const calFlag = params.get('cal');
+        if (calFlag === 'connected' && !cancelled) {
+          // Refresh config after OAuth redirect so username/book link appear
+          try {
+            if (token) await loadCalConfig(token);
+            else {
+              const t = await resolveWorkingNotaryToken();
+              await applyToken(t, true);
+              await loadCalConfig(t);
+            }
+          } catch {
+            /* ignore */
+          }
+          toast({
+            title: 'Cal connected',
+            description: params.get('username')
+              ? `Linked as ${params.get('username')} — webhook auto-setup when available.`
+              : 'OAuth connected. Profile and webhook syncing.',
+          });
+          // clean query params
+          const u = new URL(window.location.href);
+          u.searchParams.delete('cal');
+          u.searchParams.delete('username');
+          u.searchParams.delete('webhook');
+          window.history.replaceState({}, '', u.pathname + u.search);
+        } else if (calFlag === 'oauth_error' && !cancelled) {
+          toast({
+            title: 'Cal OAuth failed',
+            description:
+              params.get('error_description') ||
+              params.get('error') ||
+              'Authorization failed',
+            variant: 'destructive',
+          });
+          const u = new URL(window.location.href);
+          ['cal', 'error', 'error_description', 'username'].forEach((k) =>
+            u.searchParams.delete(k),
+          );
+          window.history.replaceState({}, '', u.pathname + u.search);
+        } else if (!cancelled) {
           toast({
             title: 'Account ready',
             description: 'Your personal token is shown below. Link your Cal username next.',
@@ -132,34 +199,87 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
           });
         }
       } finally {
+        window.clearTimeout(safety);
         if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      window.clearTimeout(safety);
     };
   }, [bootstrapAccount, toast]);
 
+  const handleConnectCal = async () => {
+    setOauthBusy(true);
+    try {
+      const settings = await getSettings();
+      const authToken = await resolveWorkingNotaryToken({
+        name: settings.notaryName?.trim() || undefined,
+        email: (settings as { notaryEmail?: string }).notaryEmail?.trim() || undefined,
+      });
+      await applyToken(authToken, true);
+      const { authorizeUrl } = await startCalOAuth(authToken);
+      window.location.href = authorizeUrl;
+    } catch (err) {
+      toast({
+        title: 'Connect Cal failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+      setOauthBusy(false);
+    }
+  };
+
+  const handleDisconnectCal = async () => {
+    if (!window.confirm('Disconnect Cal.com OAuth? Paste-link settings stay unless you clear them.')) {
+      return;
+    }
+    setOauthBusy(true);
+    try {
+      await disconnectCalOAuth(token);
+      const st = await getCalOAuthStatus(token);
+      setOauth(st);
+      toast({ title: 'Disconnected', description: 'Cal OAuth tokens removed.' });
+    } catch (err) {
+      toast({
+        title: 'Disconnect failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+    setOauthBusy(false);
+  };
+
   const publicBookUrl = bookSlug.trim()
-    ? `${window.location.origin}${appOriginPath(`/book/${bookSlug.trim().toLowerCase()}`)}`
+    ? appOriginPath(`/book/${bookSlug.trim().toLowerCase()}`)
     : calUsername.trim()
-      ? `${window.location.origin}${appOriginPath(`/book/${calUsername.trim().toLowerCase()}`)}`
+      ? appOriginPath(`/book/${calUsername.trim().toLowerCase()}`)
       : '';
 
-  const webhookUrl = platform?.webhookUrl || `${window.location.origin}/api/cal/webhook`;
+  const webhookUrl = platform?.webhookUrl || appOriginPath('/api/cal/webhook');
   const webhookSecret = platform?.webhookSecret || '';
 
   const hasToken = accountReady && !!token.trim();
-  const hasCal = !!calUsername.trim();
+  const oauthConnected = !!oauth?.connected;
+  const hasCal = !!calUsername.trim() || !!(oauthConnected && oauth?.username);
   const hasBookLink = !!publicBookUrl;
+  const webhookAuto = oauthConnected && !!oauth?.managedWebhookId;
 
   const steps = useMemo(() => {
     const s1: StepState = hasToken ? 'done' : creating ? 'current' : 'current';
-    const s2: StepState = hasCal ? 'done' : hasToken ? 'current' : 'upcoming';
-    const s3: StepState = hasCal ? 'current' : 'upcoming';
-    const s4: StepState = hasBookLink ? 'done' : hasCal ? 'current' : 'upcoming';
+    const s2: StepState =
+      oauthConnected || hasCal ? 'done' : hasToken ? 'current' : 'upcoming';
+    // With OAuth, webhook is automatic — mark done when connected (or known id)
+    const s3: StepState = oauthConnected
+      ? webhookAuto || hasCal
+        ? 'done'
+        : 'current'
+      : hasCal
+        ? 'current'
+        : 'upcoming';
+    const s4: StepState = hasBookLink ? 'done' : hasCal || oauthConnected ? 'current' : 'upcoming';
     return { s1, s2, s3, s4 };
-  }, [creating, hasBookLink, hasCal, hasToken]);
+  }, [creating, hasBookLink, hasCal, hasToken, oauthConnected, webhookAuto]);
 
   const handleSaveCal = async () => {
     setSaving(true);
@@ -167,7 +287,7 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
       const settings = await getSettings();
       const authToken = await resolveWorkingNotaryToken({
         name: settings.notaryName?.trim() || undefined,
-        email: settings.notaryEmail?.trim() || undefined,
+        email: (settings as { notaryEmail?: string }).notaryEmail?.trim() || undefined,
       });
       await applyToken(authToken, true);
 
@@ -216,7 +336,7 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
       await saveSettings({ ...settings, zoComputerToken: undefined });
       const created = await ensureNotaryAccount({
         name: settings.notaryName?.trim() || undefined,
-        email: settings.notaryEmail?.trim() || undefined,
+        email: (settings as { notaryEmail?: string }).notaryEmail?.trim() || undefined,
         force: true,
       });
       await applyToken(created.token, true);
@@ -308,50 +428,138 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
           <div className="flex items-start gap-3">
             <StepIcon state={steps.s2} />
             <div className="min-w-0 flex-1 space-y-3">
-              <p className="font-medium">2. Link your Cal.com profile</p>
+              <p className="font-medium">2. Connect Cal.com</p>
               <p className="text-sm text-muted-foreground">
-                Paste your Cal username or profile link. Your public book URL will match your Cal
-                username (unique — no collisions).
+                {oauthConnected
+                  ? 'Your Cal account is linked. Username, book page, and webhook are handled automatically.'
+                  : 'One tap — we pull your username, build your book page, and register the webhook.'}
               </p>
-              <div>
-                <Label htmlFor="cal-setup-username">Cal username or link</Label>
-                <Input
-                  id="cal-setup-username"
-                  className="mt-1 font-mono text-sm"
-                  value={calInput}
-                  onChange={(e) => setCalInput(e.target.value)}
-                  placeholder="your-cal-username"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  disabled={!hasToken || creating}
-                />
-              </div>
-              <div>
-                <Label htmlFor="cal-setup-display">Display name (public)</Label>
-                <Input
-                  id="cal-setup-display"
-                  className="mt-1"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Jane Mobile Notary"
-                  disabled={!hasToken || creating}
-                />
-              </div>
-              {calUsername && (
-                <p className="text-xs">
-                  Linked: <span className="font-mono font-medium">{calUsername}</span>
-                </p>
+
+              {oauth?.oauthConfigured !== false && (
+                <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 space-y-2">
+                  {oauthConnected ? (
+                    <>
+                      <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                        Cal.com connected
+                        {(oauth?.username || calUsername) ? (
+                          <>
+                            {' '}
+                            as{' '}
+                            <span className="font-mono">
+                              {oauth?.username || calUsername}
+                            </span>
+                          </>
+                        ) : null}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {webhookAuto
+                          ? 'Webhook auto-registered. Bookings will land in the Bookings tab.'
+                          : 'Access granted. Webhook will auto-register on reconnect if missing — you do not need to paste anything in Cal.'}
+                      </p>
+                      {displayName ? (
+                        <p className="text-xs text-muted-foreground">
+                          Display name: <span className="font-medium">{displayName}</span>
+                        </p>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={oauthBusy || !hasToken}
+                          onClick={() => void handleConnectCal()}
+                        >
+                          {oauthBusy ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <ExternalLink className="w-3 h-3" />
+                          )}
+                          Reconnect
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={oauthBusy || !hasToken}
+                          onClick={() => void handleDisconnectCal()}
+                        >
+                          Disconnect
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm">
+                        Approve access on Cal.com — profile, event types, and webhook setup are
+                        automatic. No manual paste required.
+                      </p>
+                      <Button
+                        type="button"
+                        className="gap-2"
+                        disabled={oauthBusy || !hasToken || creating}
+                        onClick={() => void handleConnectCal()}
+                        data-testid="button-connect-cal"
+                      >
+                        {oauthBusy ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ExternalLink className="w-4 h-4" />
+                        )}
+                        Connect Cal.com
+                      </Button>
+                    </>
+                  )}
+                </div>
               )}
-              <Button
-                type="button"
-                onClick={() => void handleSaveCal()}
-                disabled={saving || !hasToken || creating || !calInput.trim()}
-                className="gap-2"
-              >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Save Cal link
-              </Button>
+
+              {/* Manual paste path only when NOT on OAuth */}
+              {!oauthConnected && (
+                <details className="rounded-lg border bg-muted/20 p-3">
+                  <summary className="cursor-pointer text-sm font-medium">
+                    Advanced: paste Cal username manually
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <Label htmlFor="cal-setup-username">Cal username or link</Label>
+                      <Input
+                        id="cal-setup-username"
+                        className="mt-1 font-mono text-sm"
+                        value={calInput}
+                        onChange={(e) => setCalInput(e.target.value)}
+                        placeholder="your-cal-username"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        disabled={!hasToken || creating}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="cal-setup-display">Display name (public)</Label>
+                      <Input
+                        id="cal-setup-display"
+                        className="mt-1"
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        placeholder="Jane Mobile Notary"
+                        disabled={!hasToken || creating}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() => void handleSaveCal()}
+                      disabled={saving || !hasToken || creating || !calInput.trim()}
+                      className="gap-2"
+                    >
+                      {saving ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      Save Cal link
+                    </Button>
+                  </div>
+                </details>
+              )}
             </div>
           </div>
         </section>
@@ -360,46 +568,65 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
           <div className="flex items-start gap-3">
             <StepIcon state={steps.s3} />
             <div className="min-w-0 flex-1 space-y-3">
-              <p className="font-medium">3. Cal webhook (same for every notary)</p>
-              <p className="text-sm text-muted-foreground">
-                In your Cal account → Settings → Developer → Webhooks → New. Paste both values
-                below. Bookings route by your unique Cal username — not by token.
-              </p>
-              <div className="rounded-lg border bg-muted/40 p-3 space-y-3">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Subscriber URL</p>
-                  <p className="text-sm font-mono break-all">{webhookUrl}</p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="gap-1 mt-2"
-                    onClick={() => void copyText('Webhook URL', webhookUrl)}
-                  >
-                    <Copy className="w-3 h-3" /> Copy URL
-                  </Button>
+              <p className="font-medium">3. Webhook</p>
+              {oauthConnected ? (
+                <div className="rounded-lg border bg-emerald-50/50 dark:bg-emerald-950/20 p-3 space-y-1">
+                  <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+                    {webhookAuto ? 'Auto-registered via OAuth' : 'Handled by Connect Cal.com'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    You do not need to copy URL/secret into Cal when OAuth is connected.
+                    {oauth?.managedWebhookId
+                      ? ` Webhook id: ${oauth.managedWebhookId}`
+                      : ' Reconnect once if a booking does not appear.'}
+                  </p>
                 </div>
-                {webhookSecret ? (
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">Secret</p>
-                    <p className="text-sm font-mono break-all">{webhookSecret}</p>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="gap-1 mt-2"
-                      onClick={() => void copyText('Webhook secret', webhookSecret)}
-                    >
-                      <Copy className="w-3 h-3" /> Copy secret
-                    </Button>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Only needed if you skipped OAuth. In Cal → Settings → Developer → Webhooks →
+                    New. Paste both values below.
+                  </p>
+                  <div className="rounded-lg border bg-muted/40 p-3 space-y-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Subscriber URL</p>
+                      <p className="text-sm font-mono break-all">{webhookUrl}</p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="gap-1 mt-2"
+                        onClick={() => void copyText('Webhook URL', webhookUrl)}
+                      >
+                        <Copy className="w-3 h-3" /> Copy URL
+                      </Button>
+                    </div>
+                    {webhookSecret ? (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Secret</p>
+                        <p className="text-sm font-mono break-all">{webhookSecret}</p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="gap-1 mt-2"
+                          onClick={() => void copyText('Webhook secret', webhookSecret)}
+                        >
+                          <Copy className="w-3 h-3" /> Copy secret
+                        </Button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Webhook secret not configured on server.
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Enable <strong>Booking created</strong> (and cancelled/rescheduled if you
+                      want).
+                    </p>
                   </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">Webhook secret not configured on server.</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Enable <strong>Booking created</strong> (and cancelled/rescheduled if you want).
-                </p>
-              </div>
+                </>
+              )}
             </div>
           </div>
         </section>
@@ -434,7 +661,11 @@ export function CalSetupPanel({ onTokenChange }: CalSetupPanelProps) {
                 </div>
               ) : (
                 <Alert>
-                  <AlertDescription>Save your Cal username in step 2 to get your book link.</AlertDescription>
+                  <AlertDescription>
+                    {oauthConnected
+                      ? 'Reconnect Cal.com once to finish linking your book page.'
+                      : 'Connect Cal.com (or paste username under Advanced) to get your book link.'}
+                  </AlertDescription>
                 </Alert>
               )}
             </div>
