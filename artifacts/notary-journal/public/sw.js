@@ -1,4 +1,4 @@
-const CACHE_NAME = 'notary-journal-v11';
+const CACHE_NAME = 'notary-journal-v16';
 
 const PRECACHE_ASSETS = [
   '/',

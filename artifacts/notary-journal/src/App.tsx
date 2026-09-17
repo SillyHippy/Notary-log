@@ -20,9 +20,9 @@ const Reports = lazy(() => import("@/pages/reports").then(m => ({ default: m.Rep
 const PrivacyPolicy = lazy(() => import("@/pages/privacy-policy").then(m => ({ default: m.PrivacyPolicy })));
 const TermsOfUse = lazy(() => import("@/pages/terms-of-use").then(m => ({ default: m.TermsOfUse })));
 const NotFound = lazy(() => import("@/pages/not-found"));
-const ClientIntake = lazy(() => import("@/pages/client-intake").then(m => ({ default: m.ClientIntake })));
 const ClientRequests = lazy(() => import("@/pages/client-requests").then(m => ({ default: m.ClientRequests })));
 const PublicBook = lazy(() => import("@/pages/public-book").then(m => ({ default: m.PublicBook })));
+const FeaturesPage = lazy(() => import("@/pages/features").then(m => ({ default: m.FeaturesPage })));
 const BookingsPage = lazy(() => import("@/pages/bookings").then(m => ({ default: m.BookingsPage })));
 import { hasCryptoSetup, inspectLegacy, getDarkModePref, tryRestoreFromSessionCache, isUnlocked, getSettings, saveSettings } from "@/lib/db";
 import { ensureNotaryAccount } from "@/lib/cal-api";
@@ -46,8 +46,9 @@ function PublicRoutes() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Switch>
+        <Route path="/features" component={FeaturesPage} />
+        <Route path="/about" component={FeaturesPage} />
         <Route path="/book/:slug" component={PublicBook} />
-        <Route path="/intake" component={ClientIntake} />
         <Route component={NotFound} />
       </Switch>
     </Suspense>
@@ -73,6 +74,8 @@ function Router() {
           <Route path="/reports" component={Reports} />
           <Route path="/settings" component={Settings} />
           <Route path="/privacy" component={PrivacyPolicy} />
+          <Route path="/features" component={FeaturesPage} />
+          <Route path="/about" component={FeaturesPage} />
           <Route path="/terms" component={TermsOfUse} />
           <Route component={NotFound} />
         </Switch>
