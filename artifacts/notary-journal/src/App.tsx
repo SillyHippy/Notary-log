@@ -1,5 +1,6 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { Switch, Route, Router as WouterRouter, Redirect } from "wouter";
+import { useBrowserLocation } from "wouter/use-browser-location";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -48,6 +49,8 @@ function PublicRoutes() {
       <Switch>
         <Route path="/features" component={FeaturesPage} />
         <Route path="/about" component={FeaturesPage} />
+        <Route path="/privacy" component={PrivacyPolicy} />
+        <Route path="/terms" component={TermsOfUse} />
         <Route path="/book/:slug" component={PublicBook} />
         <Route component={NotFound} />
       </Switch>
@@ -89,7 +92,9 @@ function Router() {
  * This ensures clients can access the intake form without any PIN.
  */
 function useIsPublicRoute(): boolean {
-  return isPublicAppPath();
+  // Subscribe at the branch owner, not only inside the nested route trees.
+  const [pathname] = useBrowserLocation();
+  return isPublicAppPath(pathname);
 }
 
 type AppMode = 'loading' | 'setup' | 'locked' | 'unlocked';

@@ -595,7 +595,7 @@ export function FeaturesPage() {
       <footer className="mt-auto border-t py-8 bg-muted/20 text-xs text-muted-foreground">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© {new Date().getFullYear()} Notary-Log. Built for independent professional mobile notaries.</p>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-1">
             <FeedbackDialog
               trigger={
                 <button className="hover:underline text-muted-foreground hover:text-foreground">
@@ -603,8 +603,8 @@ export function FeaturesPage() {
                 </button>
               }
             />
-            <Link href="/privacy" className="hover:underline">Privacy Policy</Link>
-            <Link href="/terms" className="hover:underline">Terms of Use</Link>
+            <Link href="/privacy" className="inline-flex min-h-11 items-center hover:underline">Privacy Policy</Link>
+            <Link href="/terms" className="inline-flex min-h-11 items-center hover:underline">Terms of Use</Link>
             <a href="https://github.com/SillyHippy/Notary-log" target="_blank" rel="noreferrer" className="hover:underline">
               GitHub Source
             </a>
