@@ -156,6 +156,21 @@ export function exportEntryPDF(entry: JournalEntry, settings: NotarySettings): v
       console.warn('Failed to embed ID back photo:', err);
     }
   }
+  if (entry.thumbprintImage) {
+    try {
+      const { format, base64 } = extractImageFormat(entry.thumbprintImage);
+      if (photoY + 70 > doc.internal.pageSize.height - 20) {
+        doc.addPage();
+        photoY = 20;
+      }
+      doc.setFontSize(8);
+      doc.text('Thumbprint', 20, photoY);
+      doc.addImage(base64, format, 20, photoY + 3, 40, 53);
+      photoY += 62;
+    } catch (err) {
+      console.warn('Failed to embed thumbprint:', err);
+    }
+  }
 
   // Footer
   doc.setFontSize(9);
@@ -208,6 +223,7 @@ const CSV_HEADERS = [
   'Has ID Front Image',
   'Has ID Back Image',
   'Has Signature',
+  'Has Thumbprint',
 ];
 
 function csvField(value: unknown): string {
@@ -260,6 +276,7 @@ export function generateCSVRow(entry: JournalEntry, settings?: NotarySettings | 
     entry.idFrontImage ? 'true' : 'false',
     entry.idBackImage ? 'true' : 'false',
     entry.signatureImage ? 'true' : 'false',
+    entry.thumbprintImage ? 'true' : 'false',
   ].map(csvField).join(',');
 }
 
@@ -664,11 +681,11 @@ export function exportJournalTablePDF(
   });
 
   // Add ID photos section
-  const entriesWithPhotos = entries.filter(e => e.idFrontImage || e.idBackImage);
+  const entriesWithPhotos = entries.filter(e => e.idFrontImage || e.idBackImage || e.thumbprintImage);
   if (entriesWithPhotos.length > 0) {
     doc.addPage();
     doc.setFontSize(14);
-    doc.text('ID Photos', 20, 20);
+    doc.text('ID Photos & Thumbprints', 20, 20);
     let py = 30;
     for (const entry of entriesWithPhotos) {
       if (py + 70 > doc.internal.pageSize.height - 20) {
@@ -688,6 +705,12 @@ export function exportJournalTablePDF(
         try {
           const { format, base64 } = extractImageFormat(entry.idBackImage);
           doc.addImage(base64, format, 85, py, 60, 40);
+        } catch { /* skip */ }
+      }
+      if (entry.thumbprintImage) {
+        try {
+          const { format, base64 } = extractImageFormat(entry.thumbprintImage);
+          doc.addImage(base64, format, 150, py, 30, 40);
         } catch { /* skip */ }
       }
       py += 50;

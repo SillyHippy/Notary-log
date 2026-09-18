@@ -147,6 +147,25 @@ export function isGdriveSetUp(): boolean {
   );
 }
 
+/**
+ * Settings "connected" UI. GIS access tokens last ~1h and are not restored
+ * after reload — do not require a live token. Email in IndexedDB or any
+ * durable Drive setup flag is enough. Disconnect must clear both.
+ */
+export function shouldShowDriveConnected(opts: {
+  googleEmail?: string | null;
+  isSetUp: boolean;
+}): boolean {
+  return !!(opts.googleEmail?.trim() || opts.isSetUp);
+}
+
+export function isDriveSessionEstablished(googleEmail?: string | null): boolean {
+  return shouldShowDriveConnected({
+    googleEmail,
+    isSetUp: isGdriveSetUp(),
+  });
+}
+
 export function disconnectGdrive(): void {
   const token = localStorage.getItem(TOKEN_KEY);
   if (token && isGdriveReady()) {

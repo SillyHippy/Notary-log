@@ -53,9 +53,9 @@ export function PrivacyPolicy() {
         </section>
 
         <section>
-          <h2 className="text-xl font-semibold mb-3">Client Intake Form (Web3Forms)</h2>
+          <h2 className="text-xl font-semibold mb-3">Client Booking & Intake</h2>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            If you share your client intake form link with clients, their submissions are sent via the Web3Forms webhook service. Intake submissions include the client&apos;s name, contact information, ID details, ID photos, and service preferences. These submissions are stored temporarily on your device until you review and accept or deny them. Accepted submissions are converted into journal entries; denied submissions are deleted.
+            If you share your booking link with clients, scheduling information and booking details are processed directly through your connected Cal.com account. Booking details are stored on your device when converted into journal entries.
           </p>
         </section>
 

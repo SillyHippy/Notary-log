@@ -75,6 +75,8 @@ export interface JournalEntry {
   signatureImage?: string;
   idFrontImage?: string;
   idBackImage?: string;
+  /** Optional signer thumbprint (PNG/JPEG data URL) from Unity 20 BLE or photo. */
+  thumbprintImage?: string;
 
   // Extraction metadata
   extractedRawText?: string;
@@ -132,6 +134,7 @@ export interface NotarySettings {
   /** Backup frequency: 'off' | 'after-entry' (current auto-backup) | 'daily' */
   backupFrequency?: string;
   googleEmail?: string;
+  notaryEmail?: string;
   // Per-fee-type default amounts in cents, e.g. { Acknowledgment: 1000 }.
   // Used by the new-entry wizard to auto-fill the fee. Stored encrypted.
   defaultFees?: Record<string, number>;
@@ -166,6 +169,11 @@ export interface NotarySettings {
   stampFeeByState?: Record<string, number>;
   /** When true, require a front-of-ID photo before completing an entry (after barcode scan too). */
   requireIdFrontPhoto?: boolean;
+  /**
+   * When true, show Capture thumbprint on entries (Unity 20 BLE in the Android APK).
+   * Off by default — optional convenience, not a CA paper-ink substitute.
+   */
+  enableThumbprintCapture?: boolean;
   /** When false, the signer signature step is skipped and not required for completion. */
   requireSignerSignature?: boolean;
   /**
@@ -891,7 +899,7 @@ const IMMUTABLE_FIELDS: Array<keyof JournalEntry> = [
   'documentType', 'documentDate', 'documentDescription',
   'notarialActType', 'feeCharged', 'feeWaived', 'feeType',
   'locationCity', 'locationState', 'locationAddress',
-  'idFrontImage', 'idBackImage', 'signatureImage',
+  'idFrontImage', 'idBackImage', 'signatureImage', 'thumbprintImage',
 ];
 
 /**

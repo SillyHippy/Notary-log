@@ -6,7 +6,7 @@ import * as z from 'zod';
 import SignaturePad from 'signature_pad';
 import { BrowserPDF417Reader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
-import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen, Plus, Save, Eye, ZoomIn } from 'lucide-react';
+import { Camera, Upload, Check, ChevronRight, AlertTriangle, ScanLine, X, Eraser, CheckCircle2, Loader2, MapPin, IdCard, BookOpen, Plus, Save, Eye, ZoomIn, Fingerprint } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +33,7 @@ import {
   type NotarySettings,
 } from '@/lib/db';
 import { shouldDefaultSplitDocuments } from '@/lib/fee-rules';
+import { captureUnity20Thumbprint, isUnity20NativeAvailable } from '@/lib/unity20-thumbprint';
 import { NotarizationTimeInput } from '@/components/notarization-time-input';
 import {
   getDefaultNotarizationDate,
@@ -148,7 +149,7 @@ function applyMultiSignerDocumentPrefill(
   if (prefill.documentDate) form.setValue('documentDate', prefill.documentDate as string);
   if (prefill.documentDescription) form.setValue('documentDescription', prefill.documentDescription as string);
   if (prefill.notarialActType) form.setValue('notarialActType', prefill.notarialActType as JournalEntry['notarialActType']);
-  if (prefill.feeType) form.setValue('feeType', prefill.feeType as string);
+  if (prefill.feeType) form.setValue('feeType', prefill.feeType as EntryFormValues['feeType']);
   if (prefill.feeCharged !== undefined) {
     form.setValue('feeCharged', (prefill.feeCharged as number) / 100);
     isFeeAppDerivedRef.current = false;
@@ -222,6 +223,8 @@ export function NewEntry() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [idFrontImage, setIdFrontImage] = useState<string | undefined>();
   const [idBackImage, setIdBackImage] = useState<string | undefined>();
+  const [thumbprintImage, setThumbprintImage] = useState<string | undefined>();
+  const [thumbprintBusy, setThumbprintBusy] = useState(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [signatureImage, setSignatureImage] = useState<string | undefined>();
   const [needsReview, setNeedsReview] = useState(false);
@@ -1087,6 +1090,7 @@ export function NewEntry() {
           idExpirationDate: entryFormFields.idExpirationDate,
           idFrontImage,
           idBackImage,
+          thumbprintImage,
           signatureImage: shouldRequireSignature(appSettings ?? undefined) ? signatureImage : undefined,
           locationCity: entryFormFields.locationCity,
           locationState: entryFormFields.locationState,
@@ -1100,7 +1104,7 @@ export function NewEntry() {
             : scanResult?.method === 'mrz' ? 'mrz' as const
             : scanResult?.method === 'ocr' ? 'ocr' as const
             : undefined,
-          extractionConfidence: scanResult?.confidence,
+          extractionConfidence: scanResult && 'confidence' in scanResult ? scanResult.confidence : undefined,
         };
 
         const ids = await createAndCompleteSigningSession({
@@ -1163,6 +1167,7 @@ export function NewEntry() {
         stampCount: Math.max(1, Math.round(Number(data.stampCount) || 1)),
         idFrontImage,
         idBackImage,
+        thumbprintImage,
         signatureImage: shouldRequireSignature(appSettings ?? undefined) ? signatureImage : undefined,
         needsReview,
       };
@@ -1642,6 +1647,60 @@ export function NewEntry() {
                       <ZoomIn className="w-3 h-3" />
                     </div>
                   </div>
+                )}
+              </div>
+            )}
+
+            {appSettings?.enableThumbprintCapture && (
+              <div className="rounded-xl border p-4 space-y-3" data-testid="thumbprint-capture-panel">
+                <p className="text-sm font-medium">Thumbprint (optional)</p>
+                {thumbprintImage ? (
+                  <div className="relative rounded-lg overflow-hidden border w-32">
+                    <img
+                      src={thumbprintImage}
+                      alt="Thumbprint"
+                      className="w-full h-40 object-contain bg-white cursor-pointer"
+                      onClick={() => setExpandedImage(thumbprintImage)}
+                    />
+                    <button
+                      className="absolute top-1 right-1 bg-black/60 text-white p-1 rounded-full hover:bg-red-600"
+                      onClick={() => setThumbprintImage(undefined)}
+                      aria-label="Delete thumbprint"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2"
+                    disabled={thumbprintBusy}
+                    data-testid="button-capture-thumbprint"
+                    onClick={async () => {
+                      setThumbprintBusy(true);
+                      try {
+                        const result = await captureUnity20Thumbprint();
+                        setThumbprintImage(result.pngDataUrl);
+                        toast({ title: 'Thumbprint captured' });
+                      } catch (err) {
+                        toast({
+                          title: 'Thumbprint capture failed',
+                          description: err instanceof Error ? err.message : 'Unknown error',
+                          variant: 'destructive',
+                        });
+                      }
+                      setThumbprintBusy(false);
+                    }}
+                  >
+                    {thumbprintBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Fingerprint className="w-4 h-4" />}
+                    {isUnity20NativeAvailable() ? 'Capture with Unity 20' : 'Capture thumbprint (Android APK + Unity 20)'}
+                  </Button>
+                )}
+                {!isUnity20NativeAvailable() && (
+                  <p className="text-xs text-muted-foreground">
+                    Scanner capture needs the Android APK and a blue-label SecuGen Unity 20 Bluetooth. This browser cannot talk to the reader.
+                  </p>
                 )}
               </div>
             )}

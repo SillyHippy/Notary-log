@@ -761,6 +761,9 @@ export async function handleCalRoutes(
     }
     const status = url.searchParams.get("status");
     const includeDismissed = url.searchParams.get("dismissed") === "1";
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 1), 100);
+    const cursor = url.searchParams.get("cursor");
+
     let sql = `SELECT id, cal_uid, status, title, start_time, end_time,
       attendee_name, attendee_email, attendee_phone, location,
       price_cents, currency, journal_linked_at, dismissed_at, created_at
@@ -773,14 +776,46 @@ export async function handleCalRoutes(
       sql += ` AND upper(status) = ?`;
       params.push(status.toUpperCase());
     }
-    sql += ` ORDER BY start_time ASC LIMIT 200`;
+    if (cursor) {
+      sql += ` AND start_time > ?`;
+      params.push(cursor);
+    }
+    sql += ` ORDER BY start_time ASC LIMIT ?`;
+    params.push(limit + 1);
+
     const { results: rows } = await env.CAL_DB.prepare(sql)
       .bind(...params)
       .all();
-    return json({ bookings: rows || [] }, { headers });
+
+    const resultRows = (rows || []) as Record<string, unknown>[];
+    let nextCursor: string | null = null;
+    if (resultRows.length > limit) {
+      resultRows.pop();
+      const lastRow = resultRows[resultRows.length - 1];
+      nextCursor = (lastRow?.start_time as string) || null;
+    }
+
+    return json({ bookings: resultRows, nextCursor }, { headers });
   }
 
   const bidMatch = path.match(/^\/api\/bookings\/([^/]+)$/);
+  if (bidMatch && request.method === "DELETE") {
+    const token = getNotaryToken(request, url);
+    if (!(await validateToken(env, token))) {
+      return json({ error: "Unauthorized" }, { status: 401, headers });
+    }
+    const id = decodeURIComponent(bidMatch[1]);
+    const r = await env.CAL_DB.prepare(
+      `DELETE FROM bookings WHERE id = ? AND user_token = ?`,
+    )
+      .bind(id, token)
+      .run();
+    if (!r.meta.changes) {
+      return json({ error: "Not found" }, { status: 404, headers });
+    }
+    return json({ ok: true, deleted: id }, { headers });
+  }
+
   if (bidMatch && request.method === "GET") {
     const token = getNotaryToken(request, url);
     if (!(await validateToken(env, token))) {

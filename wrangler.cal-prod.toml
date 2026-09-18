@@ -1,0 +1,20 @@
+# Production config for Cal-enabled Worker (notarylog.net).
+# Deploy manually: pnpm run deploy:cloudflare:cal:prod
+
+name = "notary-log-cal"
+main = "cloudflare/worker.ts"
+compatibility_date = "2024-04-05"
+account_id = "966abe0fc380ff8b07e6c7f138a0e921"
+
+[[d1_databases]]
+binding = "CAL_DB"
+database_name = "notary-log-cal-prod"
+database_id = "79a3730c-a6ba-443e-842b-8e54f192e1f3"
+
+[assets]
+directory = "artifacts/notary-journal/dist/public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[vars]
+CAL_ENABLED = "1"

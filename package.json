@@ -41,6 +41,7 @@
     "deploy:cloudflare": "node scripts/cloudflare-deploy.mjs",
     "deploy:cloudflare:ci": "node scripts/cloudflare-deploy.mjs --skip-build",
     "deploy:cloudflare:cal:staging": "node scripts/cloudflare-deploy-cal.mjs",
+    "deploy:cloudflare:cal:prod": "node scripts/cloudflare-deploy-cal-prod.mjs",
     "deploy:cloudflare:cal:staging:ci": "node scripts/cloudflare-deploy-cal.mjs --skip-build",
     "deploy:netlify": "pnpm run build && netlify deploy --prod",
     "typecheck:libs": "tsc --build",

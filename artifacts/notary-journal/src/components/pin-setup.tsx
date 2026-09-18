@@ -66,8 +66,8 @@ export function PinSetup({ hasLegacyData, legacyPinHash, onComplete }: PinSetupP
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background text-foreground p-6">
-      <div className="max-w-md w-full space-y-6">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background text-foreground overflow-x-hidden overflow-y-auto px-4">
+      <div className="min-w-0 w-full max-w-[20rem] space-y-6 py-6">
         <div className="flex flex-col items-center text-center">
           <div className="p-4 bg-primary/10 rounded-full mb-4">
             <ShieldCheck className="w-12 h-12 text-primary" />
@@ -166,6 +166,12 @@ export function PinSetup({ hasLegacyData, legacyPinHash, onComplete }: PinSetupP
             <Button className="w-full" onClick={submit} disabled={busy} data-testid="button-setup-submit">
               {busy ? 'Setting up…' : hasLegacyData ? 'Encrypt journal' : 'Create PIN'}
             </Button>
+            <a
+              href="/features"
+              className="block w-full max-w-full px-1 text-center text-xs font-medium leading-snug text-muted-foreground whitespace-normal break-words hover:text-foreground transition-colors"
+            >
+              What is Notary-Log? →
+            </a>
           </div>
         )}
       </div>

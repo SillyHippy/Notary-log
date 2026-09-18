@@ -190,17 +190,32 @@ export async function patchCalMe(
 
 export async function listBookings(opts?: {
   status?: string;
-}): Promise<CalBooking[]> {
+  limit?: number;
+  cursor?: string;
+}): Promise<{ bookings: CalBooking[]; nextCursor?: string | null }> {
   const token = await resolveNotaryToken();
   const q = new URLSearchParams();
   if (opts?.status) q.set('status', opts.status);
+  if (opts?.limit) q.set('limit', String(opts.limit));
+  if (opts?.cursor) q.set('cursor', opts.cursor);
   const qs = q.toString();
   const res = await fetch(apiPath(`/api/bookings${qs ? `?${qs}` : ''}`), {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error('Failed to load bookings');
-  const data = (await res.json()) as { bookings: CalBooking[] };
-  return data.bookings || [];
+  const data = (await res.json()) as { bookings: CalBooking[]; nextCursor?: string | null };
+  return { bookings: data.bookings || [], nextCursor: data.nextCursor };
+}
+
+export async function deleteBooking(id: string): Promise<void> {
+  const token = await resolveNotaryToken();
+  const res = await fetch(apiPath(`/api/bookings/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error('Delete booking failed');
+  }
 }
 
 export async function dismissBooking(id: string): Promise<void> {

@@ -154,8 +154,8 @@ export function PinLock({ onUnlock }: PinLockProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background text-foreground">
-      <div className="flex flex-col items-center justify-center max-w-sm w-full p-6">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background text-foreground overflow-x-hidden overflow-y-auto px-4">
+      <div className="flex min-w-0 w-full max-w-[20rem] flex-col items-center justify-center py-6">
         <div className="mb-8 p-4 bg-primary/10 rounded-full">
           <LockKeyhole className="w-12 h-12 text-primary" />
         </div>
@@ -248,6 +248,13 @@ export function PinLock({ onUnlock }: PinLockProps) {
             <Delete className="w-6 h-6" />
           </Button>
         </div>
+
+        <a
+          href="/features"
+          className="mt-6 block w-full max-w-full px-1 text-center text-xs font-medium leading-snug text-muted-foreground whitespace-normal break-words hover:text-foreground transition-colors"
+        >
+          Features & compliance →
+        </a>
       </div>
     </div>
   );

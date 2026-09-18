@@ -4,6 +4,7 @@ export interface Env {
   CAL_DB?: D1Database;
   CAL_WEBHOOK_SECRET?: string;
   CAL_ENABLED?: string;
+  BREVO_API_KEY?: string;
 }
 
 import {
@@ -106,6 +107,112 @@ async function handleIntake(request: Request, env: Env): Promise<Response> {
   return jsonResponse(405, { error: "Method not allowed" });
 }
 
+async function handleFeedback(request: Request, env: Env): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return jsonResponse(204, null);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse(405, { error: "Method not allowed" });
+  }
+
+  if (!env.BREVO_API_KEY) {
+    return jsonResponse(503, { error: "Feedback service not configured" });
+  }
+
+  let body: {
+    name?: string;
+    email?: string;
+    state?: string;
+    type?: string;
+    message?: string;
+    screenshotBase64?: string;
+    screenshotFilename?: string;
+    userAgent?: string;
+  } = {};
+
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse(400, { error: "Invalid JSON body" });
+  }
+
+  if (!body.message || body.message.trim().length === 0) {
+    return jsonResponse(400, { error: "Message is required" });
+  }
+
+  const senderEmail = body.email && body.email.includes("@") ? body.email.trim() : "no-reply@notarylog.net";
+  const senderName = body.name?.trim() || "Notary User";
+  const category = body.type || "General Feedback / Request";
+  const userState = body.state?.trim() || "Unspecified";
+
+  // Escape HTML in user message
+  const escapedMessage = body.message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const emailHtml = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; padding: 20px;">
+      <h2 style="color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">
+        [Notary-Log] ${category}
+      </h2>
+      <p><strong>From:</strong> ${senderName} (&lt;${senderEmail}&gt;)</p>
+      <p><strong>State of Practice:</strong> ${userState}</p>
+      <p><strong>Category:</strong> ${category}</p>
+      <div style="background: #f8fafc; border-left: 4px solid #3b82f6; padding: 12px 16px; margin: 20px 0; border-radius: 4px;">
+        <p style="white-space: pre-wrap; margin: 0; font-size: 15px; line-height: 1.5;">${escapedMessage}</p>
+      </div>
+      <p style="font-size: 12px; color: #64748b; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 10px;">
+        <strong>Device info:</strong> ${body.userAgent || "Unknown"}<br />
+        <strong>Timestamp:</strong> ${new Date().toISOString()}
+      </p>
+    </div>
+  `;
+
+  const payload: Record<string, unknown> = {
+    sender: { name: "Notary-Log Feedback", email: "feedback@notarylog.net" },
+    to: [{ email: "info@justlegalsolutions.org", name: "Just Legal Solutions" }],
+    replyTo: { email: senderEmail, name: senderName },
+    subject: `[Notary-Log Feedback] ${category} - ${userState}`,
+    htmlContent: emailHtml,
+  };
+
+  if (body.screenshotBase64) {
+    const cleanBase64 = body.screenshotBase64.replace(/^data:image\/[a-z]+;base64,/, "");
+    // Brevo attachment limit ~10MB; truncate if huge
+    if (cleanBase64.length > 7 * 1024 * 1024) {
+      return jsonResponse(413, { error: "Screenshot too large (max ~5MB)" });
+    }
+    payload.attachment = [
+      {
+        name: body.screenshotFilename || "screenshot.png",
+        content: cleanBase64,
+      },
+    ];
+  }
+
+  try {
+    const brevoRes = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "api-key": env.BREVO_API_KEY,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!brevoRes.ok) {
+      const errText = await brevoRes.text();
+      console.error("Brevo API error:", errText);
+      return jsonResponse(502, { error: "Failed to deliver email", detail: errText.slice(0, 500) });
+    }
+
+    return jsonResponse(200, { success: true, message: "Feedback delivered successfully" });
+  } catch (err) {
+    console.error("Feedback dispatch error:", err);
+    return jsonResponse(500, { error: "Internal server error" });
+  }
+}
+
 function calEnv(env: Env): CalEnv | null {
   if (!env.CAL_DB) return null;
   return {
@@ -127,6 +234,10 @@ export default {
 
     if (path === "/api/bootstrap" && cal) {
       return handleCalBootstrap(cal);
+    }
+
+    if (path === "/api/feedback") {
+      return handleFeedback(request, env);
     }
 
     if (path === "/api/cal/verify-reset" && cal && request.method === "POST") {

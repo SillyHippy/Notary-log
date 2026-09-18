@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
 import {
+  deleteBooking,
   dismissBooking,
   listBookings,
   markBookingJournalLinked,
@@ -39,7 +40,7 @@ export function BookingsPage() {
     setError(null);
     try {
       const data = await listBookings();
-      setRows(data);
+      setRows(data.bookings || []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load');
       setRows([]);
@@ -69,6 +70,8 @@ export function BookingsPage() {
 
   async function startEntry(b: CalBooking) {
     stashBookingPrefill(b);
+    // Best-effort delete-on-start to keep D1 storage minimal; never block navigation
+    deleteBooking(b.id).catch(() => {});
     try {
       await markBookingJournalLinked(b.id);
     } catch {
@@ -243,7 +246,7 @@ export function BookingsPage() {
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
             Past / other
           </h2>
-          {past.map(renderCard)}
+          {past.map((b) => renderCard(b))}
         </section>
       )}
     </div>

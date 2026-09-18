@@ -7,6 +7,7 @@ import { Save, Lock, Download, Upload, Database, Moon, Sun, AlertTriangle, Cloud
 import { appOriginPath } from '@/lib/app-path';
 import { getCalMe, patchCalMe, restoreCalOAuthBinding, fetchCalOAuthBinding } from '@/lib/cal-api';
 import { parseCalBookingUrl, isCalHostMode } from '@/lib/cal-link';
+import { isZoHost } from '@/lib/intake-api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -26,15 +27,15 @@ import {
   clearBiometric,
 } from '@/lib/biometric';
 import { THRESHOLD_OPTIONS, DEFAULT_THRESHOLD_DAYS, clearSnooze } from '@/lib/backup-nudge';
-import { loadBackupPanelVisibility, resolveBackupPanelVisibility } from '@/lib/backup-visibility';
+import { loadBackupPanelVisibility, resolveBackupPanelVisibility, saveBackupPanelVisibility } from '@/lib/backup-visibility';
 import { DEFAULT_STAMP_FEE_CENTS, FEE_TYPES, type FeeType } from '@/lib/fees';
 import { BACKUP_FORMAT_VERSION, parseBackupFile } from '@/lib/export';
 import {
   isGdriveConfigured,
   isGdriveReady,
   ensureGoogleIdentityLoaded,
-  getStoredToken,
   getLastBackupTime,
+  isDriveSessionEstablished,
   signInAndGetEmail,
   disconnectGdrive,
   backupToDrive,
@@ -50,6 +51,7 @@ import {
 } from '@/lib/zo-backup';
 import { JournalLayoutHelp } from '@/components/journal-layout-help';
 import { CalSetupPanel } from '@/components/cal-setup-panel';
+import { FeedbackDialog } from '@/components/feedback-dialog';
 
 const settingsSchema = z.object({
   notaryName: z.string().min(1, 'Notary name is required'),
@@ -111,6 +113,7 @@ export function Settings() {
   const [stampFeeDollars, setStampFeeDollars] = useState('');
   const [savingStampFee, setSavingStampFee] = useState(false);
   const [requireIdPhoto, setRequireIdPhoto] = useState(false);
+  const [enableThumbprintCapture, setEnableThumbprintCapture] = useState(false);
   const [requireSignature, setRequireSignature] = useState(true);
   const [journalCombinedLine, setJournalCombinedLine] = useState(false);
   const [journalSplitDocuments, setJournalSplitDocuments] = useState(true);
@@ -258,6 +261,8 @@ export function Settings() {
       });
       setBackupFrequency((settings.backupFrequency as 'off' | 'after-entry' | 'daily') ?? (settings.autoBackup ? 'after-entry' : 'off'));
       setGoogleEmail(settings.googleEmail ?? '');
+      setIsConnected(isDriveSessionEstablished(settings.googleEmail));
+      setLastBackup(getLastBackupTime());
       setBackupReminderDays(settings.backupReminderDays ?? DEFAULT_THRESHOLD_DAYS);
       setManualBackupOnly(!!settings.manualBackupOnly);
       setWeb3formsKey(settings.web3formsKey ?? '');
@@ -293,6 +298,13 @@ export function Settings() {
       });
       setShowGoogleBackup(settingsVisibility.google);
       setShowZoBackup(settingsVisibility.zo);
+
+      const storedZoApiUrl = localStorage.getItem(ZO_BACKUP_URL_KEY) ?? '';
+      const storedZoBackupKey = localStorage.getItem(ZO_BACKUP_KEY_KEY) ?? '';
+      const storedZoLastBackup = localStorage.getItem(ZO_LAST_BACKUP_KEY);
+      setZoApiUrl(storedZoApiUrl);
+      setZoBackupKey(storedZoBackupKey);
+      setZoLastBackup(storedZoLastBackup);
 
       hydrateFeeAndSealStateFrom(settings);
 
@@ -349,24 +361,6 @@ export function Settings() {
       cancelled = true;
       window.clearTimeout(safety);
     };
-
-    // Load initial Google Drive state
-    setIsConnected(!!getStoredToken());
-    setLastBackup(getLastBackupTime());
-
-    const storedZoApiUrl = localStorage.getItem(ZO_BACKUP_URL_KEY) ?? '';
-    const storedZoBackupKey = localStorage.getItem(ZO_BACKUP_KEY_KEY) ?? '';
-    const storedZoLastBackup = localStorage.getItem(ZO_LAST_BACKUP_KEY);
-    setZoApiUrl(storedZoApiUrl);
-    setZoBackupKey(storedZoBackupKey);
-    setZoLastBackup(storedZoLastBackup);
-
-    const visibility = loadBackupPanelVisibility(
-      localStorage,
-      !!(storedZoApiUrl || storedZoBackupKey || storedZoLastBackup),
-    );
-    setShowGoogleBackup(visibility.google);
-    setShowZoBackup(visibility.zo);
   }, [form]);
 
   const onSubmit = async (data: SettingsFormValues) => {
@@ -643,6 +637,7 @@ export function Settings() {
     const stampCents = settings.stampFeeCents ?? DEFAULT_STAMP_FEE_CENTS;
     setStampFeeDollars(stampCents > 0 ? (stampCents / 100).toFixed(2) : '');
     setRequireIdPhoto(!!settings.requireIdFrontPhoto);
+    setEnableThumbprintCapture(!!settings.enableThumbprintCapture);
     setRequireSignature(settings.requireSignerSignature !== false);
     setJournalCombinedLine(resolveJournalSharedCertMode(settings) === 'combined_line');
     setJournalSplitDocuments(settings.journalSplitDocumentsDefault !== false);
@@ -937,10 +932,6 @@ export function Settings() {
       toast({ title: 'Backup complete', description: 'Journal backed up to Google Drive.' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Backup failed';
-      // If token expired, clear connected state
-      if (msg.includes('401') || msg.includes('403')) {
-        setIsConnected(false);
-      }
       toast({ title: 'Backup failed', description: msg, variant: 'destructive' });
     }
     setIsBackingUp(false);
@@ -1294,6 +1285,7 @@ export function Settings() {
             />
           </div>
 
+          {isZoHost() && (
           <div className="flex flex-row items-center justify-between rounded-lg border p-4 shadow-sm">
             <div className="space-y-0.5 pr-4">
               <p className="text-sm font-medium">Show Zo backup</p>
@@ -1305,6 +1297,7 @@ export function Settings() {
               data-testid="switch-show-zo-backup"
             />
           </div>
+          )}
 
           <input
             ref={fileInputRef}
@@ -1327,7 +1320,7 @@ export function Settings() {
             <Upload className="w-4 h-4" /> {importing ? 'Importing…' : 'Import from JSON file'}
           </Button>
 
-          {showZoBackup && (
+          {isZoHost() && showZoBackup && (
           <div className="rounded-lg border">
             <button
               type="button"
@@ -1490,16 +1483,16 @@ export function Settings() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex items-center gap-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 border rounded-lg overflow-hidden">
+                    <div className="flex items-start gap-3 min-w-0">
                       {isConnected
-                        ? <CheckCircle2 className="w-5 h-5 text-green-600" />
-                        : <CloudOff className="w-5 h-5 text-muted-foreground" />
+                        ? <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
+                        : <CloudOff className="w-5 h-5 text-muted-foreground shrink-0" />
                       }
-                      <div>
+                      <div className="min-w-0">
                         <p className="font-medium text-sm">{isConnected ? 'Google Drive connected' : 'Not connected'}</p>
                         {isConnected && googleEmail && (
-                          <p className="text-xs text-muted-foreground">{googleEmail}</p>
+                          <p className="text-xs text-muted-foreground break-all">{googleEmail}</p>
                         )}
                         {isConnected && lastBackup && (
                           <p className="text-xs text-muted-foreground">Last backup: {formatRelativeTime(lastBackup)}</p>
@@ -1509,13 +1502,13 @@ export function Settings() {
                         )}
                       </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex shrink-0 w-full sm:w-auto">
                       {!isConnected ? (
-                        <Button size="sm" onClick={handleConnect} disabled={!gisReady} data-testid="button-connect-gdrive">
+                        <Button size="sm" className="w-full sm:w-auto" onClick={handleConnect} disabled={!gisReady} data-testid="button-connect-gdrive">
                           {gisReady ? 'Connect Google Drive' : 'Loading...'}
                         </Button>
                       ) : (
-                        <Button size="sm" variant="outline" onClick={handleDisconnect} data-testid="button-disconnect-gdrive">
+                        <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={handleDisconnect} data-testid="button-disconnect-gdrive">
                           Disconnect
                         </Button>
                       )}
@@ -1824,6 +1817,24 @@ export function Settings() {
                     toast({ title: checked ? 'ID photo required' : 'ID photo optional', description: 'Preference saved.' });
                   }}
                   data-testid="switch-require-id-photo"
+                />
+              </div>
+              <div className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
+                <div className="space-y-0.5">
+                  <p className="text-base font-medium">Enable thumbprint capture (optional)</p>
+                  <p className="text-sm text-muted-foreground">
+                    Off by default. On the Android APK, Capture thumbprint talks to a SecuGen Unity 20 Bluetooth (blue label). Browser/PWA cannot reach the scanner. Not a California paper-ink substitute.
+                  </p>
+                </div>
+                <Switch
+                  checked={enableThumbprintCapture}
+                  onCheckedChange={async (checked) => {
+                    setEnableThumbprintCapture(checked);
+                    const current = await getSettings();
+                    await saveSettings({ ...current, enableThumbprintCapture: checked } as NotarySettings);
+                    toast({ title: checked ? 'Thumbprint capture on' : 'Thumbprint capture off', description: 'Preference saved.' });
+                  }}
+                  data-testid="switch-enable-thumbprint"
                 />
               </div>
               <div className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4 shadow-sm">
@@ -2554,9 +2565,21 @@ export function Settings() {
         </CardContent>
       </Card>
 
-      <div className="text-center text-sm text-muted-foreground pt-4 pb-8 space-y-1">
+      <div className="text-center text-sm text-muted-foreground pt-4 pb-8 space-y-2">
         <p>Notary Journal App v1.1.0</p>
-        <div className="flex items-center justify-center gap-3">
+        <div className="flex items-center justify-center gap-3 text-xs flex-wrap">
+          <FeedbackDialog
+            trigger={
+              <button className="text-primary hover:underline font-medium">
+                Suggest a Feature / Report Issue
+              </button>
+            }
+          />
+          <span>·</span>
+          <Link href="/features" className="text-primary hover:underline">
+            Features & Compliance Guide
+          </Link>
+          <span>·</span>
           <Link href="/privacy" className="text-primary hover:underline">
             Privacy Policy
           </Link>

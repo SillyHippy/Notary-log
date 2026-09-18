@@ -26,6 +26,7 @@ export interface SigningSessionShared {
   idExpirationDate?: string;
   idFrontImage?: string;
   idBackImage?: string;
+  thumbprintImage?: string;
   signatureImage?: string;
   locationCity: string;
   locationState: string;
@@ -133,6 +134,7 @@ export function buildDraftEntriesFromSession(
     idExpirationDate: payload.shared.idExpirationDate,
     idFrontImage: payload.shared.idFrontImage,
     idBackImage: payload.shared.idBackImage,
+    thumbprintImage: payload.shared.thumbprintImage,
     signatureImage: payload.shared.signatureImage,
     documentType: act.documentType,
     documentDescription: act.documentDescription,
